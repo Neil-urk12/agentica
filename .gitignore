@@ -1,0 +1,12 @@
+node_modules/
+.pnpm-store/
+dist/
+target/
+apps/desktop/src-tauri/gen/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db

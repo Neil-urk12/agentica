@@ -1,0 +1,31 @@
+{
+  "name": "agentica",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "packageManager": "pnpm@11.6.0",
+  "engines": {
+    "node": ">=24 <25",
+    "pnpm": ">=11 <12"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @agentica/desktop tauri dev",
+    "dev:web": "pnpm --filter @agentica/desktop dev",
+    "build": "pnpm -r build",
+    "build:desktop": "pnpm --filter @agentica/desktop tauri build --no-bundle",
+    "check": "pnpm --filter @agentica/protocol build && pnpm -r check",
+    "check:rust": "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check && cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml",
+    "test": "pnpm --filter @agentica/agent-runtime... build && node --test",
+    "runtime": "pnpm --filter @agentica/agent-runtime start",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@agentica/protocol": "workspace:*",
+    "@types/node": "^24.19.2",
+    "prettier": "^3.9.10",
+    "prettier-plugin-svelte": "^4.1.1",
+    "typescript": "~6.0.3"
+  }
+}
