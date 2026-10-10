@@ -1,0 +1,12 @@
+[package]
+name = "agentica-desktop"
+version = "0.0.0"
+description = "Agentica desktop host"
+edition = "2021"
+license = "MIT"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
