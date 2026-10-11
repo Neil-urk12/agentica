@@ -10,14 +10,16 @@
     "pnpm": ">=11 <12"
   },
   "scripts": {
-    "dev": "pnpm --filter @agentica/desktop tauri dev",
-    "dev:web": "pnpm --filter @agentica/desktop dev",
-    "build": "pnpm -r build",
-    "build:desktop": "pnpm --filter @agentica/desktop tauri build --no-bundle",
+    "dev": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop tauri dev",
+    "dev:backend": "cargo run --locked -p agentica-runtime --bin agentica-backend",
+    "dev:web": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop dev",
+    "build": "pnpm -r build && cargo build --locked -p agentica-runtime",
+    "build:desktop": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop tauri build --no-bundle",
     "check": "pnpm --filter @agentica/protocol build && pnpm -r check",
-    "check:rust": "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check && cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml",
-    "test": "pnpm --filter @agentica/agent-runtime... build && node --test",
-    "runtime": "pnpm --filter @agentica/agent-runtime start",
+    "check:rust": "cargo fmt --all --check && cargo clippy --locked --workspace --all-targets --all-features -- -D warnings",
+    "test:rust": "cargo test --locked --workspace",
+    "test": "pnpm --filter @agentica/protocol build && cargo test --locked -p agentica-runtime && cargo build --locked -p agentica-runtime && node --test",
+    "build:backend": "cargo build --locked --release -p agentica-runtime --bin agentica-backend",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
