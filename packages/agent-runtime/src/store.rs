@@ -1,12 +1,21 @@
-//! Workspace writer-lock foundation shared by runtime launch modes.
+//! Workspace storage owned by the shared runtime.
 
 use std::{
     fs::{self, File, OpenOptions, TryLockError},
     io,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
+use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior};
+
 const LOCK_FILE: &str = "writer.lock";
+const DATABASE_FILE: &str = "workspace.sqlite3";
+/// `AGNT`: identifies Agentica workspace databases.
+pub(crate) const APPLICATION_ID: i64 = 0x4147_4e54;
+/// Ordered migrations; index + 1 is the resulting `user_version`.
+const MIGRATIONS: &[&str] = &[include_str!("schema_v1.sql")];
+pub const STORAGE_VERSION: i64 = MIGRATIONS.len() as i64;
 
 /// A runtime error reported to clients with a stable code.
 #[derive(Debug)]
@@ -93,6 +102,180 @@ pub(crate) fn lock_workspace(dir: &Path, id: &str) -> Result<File, RuntimeError>
         )),
         Err(TryLockError::Error(error)) => Err(error.into()),
     }
+}
+
+impl From<rusqlite::Error> for RuntimeError {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::new(
+            "STORAGE_ERROR",
+            format!("Workspace storage failed: {error}. The change was not saved; keep your edits and retry."),
+        )
+    }
+}
+
+fn unsupported(message: String) -> RuntimeError {
+    RuntimeError::new(
+        "UNSUPPORTED_STORAGE",
+        format!("{message} The workspace was not modified."),
+    )
+}
+
+/// Open a connection with foreign keys and durable transaction commits.
+fn connect(path: &Path, create: bool) -> rusqlite::Result<Connection> {
+    let mut flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    if create {
+        flags |= OpenFlags::SQLITE_OPEN_CREATE;
+    }
+    let conn = Connection::open_with_flags(path, flags)?;
+    // Listing readers may briefly hold shared locks.
+    conn.busy_timeout(Duration::from_secs(2))?;
+    conn.pragma_update(None, "foreign_keys", true)?;
+    conn.pragma_update(None, "synchronous", "FULL")?;
+    Ok(conn)
+}
+
+/// Apply `migrations[from..]` in the caller's transaction; the caller commits.
+fn migrate(tx: &Transaction, from: i64, migrations: &[&str]) -> rusqlite::Result<()> {
+    for sql in migrations.iter().skip(from as usize) {
+        tx.execute_batch(sql)?;
+    }
+    if from == 0 {
+        tx.pragma_update(None, "application_id", APPLICATION_ID)?;
+    }
+    tx.pragma_update(None, "user_version", migrations.len() as i64)
+}
+
+fn header(conn: &Connection) -> rusqlite::Result<(i64, i64)> {
+    Ok((
+        conn.pragma_query_value(None, "application_id", |row| row.get(0))?,
+        conn.pragma_query_value(None, "user_version", |row| row.get(0))?,
+    ))
+}
+
+/// An open workspace. Fields drop in order, so the connection closes before
+/// the writer lock is released.
+pub(crate) struct Workspace {
+    pub id: String,
+    pub conn: Connection,
+    _lock: File,
+}
+
+impl Workspace {
+    /// Create a workspace: schema and workspace row commit together.
+    pub(crate) fn create(data_root: Option<&Path>, name: &str) -> Result<Self, RuntimeError> {
+        let id = new_id()?;
+        let dir = workspaces_dir(data_root)?.join(&id);
+        fs::create_dir(&dir)?;
+        let lock = lock_workspace(&dir, &id)?;
+        let mut conn = connect(&dir.join(DATABASE_FILE), true)?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        migrate(&tx, 0, MIGRATIONS)?;
+        tx.execute(
+            "INSERT INTO workspace (id, name) VALUES (?1, ?2)",
+            (&id, name),
+        )?;
+        tx.commit()?;
+        Ok(Self {
+            id,
+            conn,
+            _lock: lock,
+        })
+    }
+
+    /// Lock, validate, and migrate an existing workspace. Unsupported or
+    /// incomplete storage is rejected before any change.
+    pub(crate) fn open(data_root: Option<&Path>, id: &str) -> Result<Self, RuntimeError> {
+        let dir = workspaces_dir(data_root)?.join(id);
+        let database = dir.join(DATABASE_FILE);
+        if !database.is_file() {
+            return Err(RuntimeError::new("NOT_FOUND", "Workspace not found."));
+        }
+        let lock = lock_workspace(&dir, id)?;
+        let mut conn = connect(&database, false)?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (application_id, version) = header(&tx)?;
+        if application_id == 0 && version == 0 {
+            return Err(RuntimeError::new(
+                "NOT_FOUND",
+                "This workspace was not fully created and cannot be opened.",
+            ));
+        }
+        if application_id != APPLICATION_ID {
+            return Err(unsupported(
+                "This file is not an Agentica workspace database.".to_owned(),
+            ));
+        }
+        if version > STORAGE_VERSION {
+            return Err(unsupported(format!(
+                "Workspace storage version {version} is newer than this Agentica build supports ({STORAGE_VERSION}). Update Agentica to open it."
+            )));
+        }
+        if version < STORAGE_VERSION {
+            migrate(&tx, version, MIGRATIONS)?;
+        }
+        let stored: Option<String> = tx
+            .query_row("SELECT id FROM workspace", [], |row| row.get(0))
+            .optional()?;
+        if stored.as_deref() != Some(id) {
+            return Err(unsupported(
+                "The workspace record is missing or does not match its directory.".to_owned(),
+            ));
+        }
+        tx.commit()?;
+        Ok(Self {
+            id: id.to_owned(),
+            conn,
+            _lock: lock,
+        })
+    }
+}
+
+/// Committed workspaces as `(id, name)`; `name` is `None` when the workspace
+/// cannot be read by this build. Incomplete creations are skipped. Readers
+/// never take the writer lock and never modify storage.
+pub(crate) fn list_workspaces(
+    data_root: Option<&Path>,
+) -> Result<Vec<(String, Option<String>)>, RuntimeError> {
+    let mut workspaces = Vec::new();
+    for entry in fs::read_dir(workspaces_dir(data_root)?)? {
+        let entry = entry?;
+        let Some(id) = entry
+            .file_name()
+            .to_str()
+            .filter(|id| is_id(id))
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let database = entry.path().join(DATABASE_FILE);
+        if !database.is_file() {
+            continue;
+        }
+        let read = || -> rusqlite::Result<Option<Option<String>>> {
+            let conn = Connection::open_with_flags(
+                &database,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )?;
+            conn.busy_timeout(Duration::from_secs(1))?;
+            match header(&conn)? {
+                (0, 0) => Ok(None),
+                (APPLICATION_ID, 1..=STORAGE_VERSION) => Ok(Some(
+                    conn.query_row("SELECT name FROM workspace WHERE id = ?1", [&id], |row| {
+                        row.get(0)
+                    })
+                    .optional()?,
+                )),
+                _ => Ok(Some(None)),
+            }
+        };
+        match read() {
+            Ok(None) => {}
+            Ok(Some(name)) => workspaces.push((id, name)),
+            Err(_) => workspaces.push((id, None)),
+        }
+    }
+    workspaces.sort();
+    Ok(workspaces)
 }
 
 #[cfg(test)]
@@ -223,5 +406,195 @@ mod tests {
         let error = workspaces_dir(None).unwrap_err();
         assert_eq!(error.code, "STORAGE_ERROR");
         assert!(error.message.contains("AGENTICA_DATA_DIR"));
+    }
+
+    const TORN_WRITE_ENV: &str = "AGENTICA_TEST_TORN_WRITE";
+
+    fn database(root: &Path, id: &str) -> PathBuf {
+        root.join("workspaces").join(id).join(DATABASE_FILE)
+    }
+
+    fn created(root: &Path, name: &str) -> String {
+        Workspace::create(Some(root), name).unwrap().id.clone()
+    }
+
+    fn name(workspace: &Workspace) -> String {
+        workspace
+            .conn
+            .query_row("SELECT name FROM workspace", [], |row| row.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn workspaces_are_created_versioned_and_reopened_without_changes() {
+        let _serial = serial();
+        let temp = tempfile::tempdir().unwrap();
+        let id = created(temp.path(), "Research");
+        let path = database(temp.path(), &id);
+        let bytes = fs::read(&path).unwrap();
+        for _ in 0..2 {
+            let workspace = Workspace::open(Some(temp.path()), &id).unwrap();
+            assert_eq!(header(&workspace.conn).unwrap(), (APPLICATION_ID, 1));
+            assert_eq!(name(&workspace), "Research");
+            let foreign_keys: bool = workspace
+                .conn
+                .pragma_query_value(None, "foreign_keys", |row| row.get(0))
+                .unwrap();
+            assert!(foreign_keys);
+        }
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_eq!(
+            list_workspaces(Some(temp.path())).unwrap(),
+            [(id.clone(), Some("Research".to_owned()))]
+        );
+        // The open workspace stays listed; listing never takes the lock.
+        let _open = Workspace::open(Some(temp.path()), &id).unwrap();
+        assert_eq!(list_workspaces(Some(temp.path())).unwrap().len(), 1);
+        assert_eq!(
+            Workspace::open(Some(temp.path()), &id).err().unwrap().code,
+            "WORKSPACE_LOCKED"
+        );
+    }
+
+    #[test]
+    fn newer_or_foreign_storage_is_rejected_without_modification() {
+        let _serial = serial();
+        let temp = tempfile::tempdir().unwrap();
+        for (pragma, value) in [("user_version", 2), ("application_id", 7)] {
+            let id = created(temp.path(), "Later");
+            let path = database(temp.path(), &id);
+            Connection::open(&path)
+                .unwrap()
+                .pragma_update(None, pragma, value)
+                .unwrap();
+            let bytes = fs::read(&path).unwrap();
+            let error = Workspace::open(Some(temp.path()), &id).err().unwrap();
+            assert_eq!(error.code, "UNSUPPORTED_STORAGE");
+            assert!(error.message.contains("not modified"), "{}", error.message);
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+            assert!(list_workspaces(Some(temp.path()))
+                .unwrap()
+                .contains(&(id.clone(), None)));
+            // The failed open released its lock.
+            drop(lock_workspace(path.parent().unwrap(), &id).unwrap());
+        }
+        let id = created(temp.path(), "Newer");
+        Connection::open(database(temp.path(), &id))
+            .unwrap()
+            .pragma_update(None, "user_version", STORAGE_VERSION + 1)
+            .unwrap();
+        let message = Workspace::open(Some(temp.path()), &id)
+            .err()
+            .unwrap()
+            .message;
+        assert!(message.contains("Update Agentica"), "{message}");
+    }
+
+    #[test]
+    fn failed_migrations_roll_back_completely() {
+        let _serial = serial();
+        let temp = tempfile::tempdir().unwrap();
+        let mut conn = connect(&temp.path().join("db"), true).unwrap();
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        assert!(migrate(&tx, 0, &[MIGRATIONS[0], "CREATE TABLE broken (;"]).is_err());
+        drop(tx);
+        assert_eq!(header(&conn).unwrap(), (0, 0));
+        let tables: i64 = conn
+            .query_row("SELECT count(*) FROM sqlite_schema", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(tables, 0);
+    }
+
+    #[test]
+    fn incomplete_creations_are_skipped_and_never_deleted() {
+        let _serial = serial();
+        let temp = tempfile::tempdir().unwrap();
+        let id = new_id().unwrap();
+        let path = database(temp.path(), &id);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch("CREATE TABLE partial (x)")
+            .unwrap();
+        let bytes = fs::read(&path).unwrap();
+        assert!(list_workspaces(Some(temp.path())).unwrap().is_empty());
+        assert_eq!(
+            Workspace::open(Some(temp.path()), &id).err().unwrap().code,
+            "NOT_FOUND"
+        );
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_eq!(
+            Workspace::open(Some(temp.path()), &new_id().unwrap())
+                .err()
+                .unwrap()
+                .code,
+            "NOT_FOUND"
+        );
+    }
+
+    #[test]
+    fn torn_write_process() {
+        let Some(path) = std::env::var_os(TORN_WRITE_ENV) else {
+            return;
+        };
+        let mut conn = connect(Path::new(&path), false).unwrap();
+        // A tiny cache forces uncommitted pages onto disk before the crash.
+        conn.pragma_update(None, "cache_size", 1).unwrap();
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        tx.execute("UPDATE workspace SET name = 'Torn'", [])
+            .unwrap();
+        for index in 0..200 {
+            tx.execute(
+                "INSERT INTO text_content (id, body) VALUES (?1, ?2)",
+                (index.to_string(), "x".repeat(4096)),
+            )
+            .unwrap();
+        }
+        println!("WRITING");
+        let _ = io::stdin().lines().count();
+    }
+
+    #[test]
+    fn a_writer_killed_mid_transaction_leaves_the_last_committed_state() {
+        let _serial = serial();
+        let temp = tempfile::tempdir().unwrap();
+        let id = created(temp.path(), "Before");
+        let path = database(temp.path(), &id);
+        let committed = fs::read(&path).unwrap();
+        let mut writer = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "store::tests::torn_write_process", "--nocapture"])
+            .env(TORN_WRITE_ENV, &path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut lines = BufReader::new(writer.stdout.take().unwrap()).lines();
+        assert!(lines.any(|line| line.unwrap() == "WRITING"));
+        writer.kill().unwrap();
+        writer.wait().unwrap();
+        // The crash left a hot journal and uncommitted pages in the database.
+        assert!(path.with_extension("sqlite3-journal").is_file());
+        assert_ne!(fs::read(&path).unwrap(), committed);
+
+        let workspace = Workspace::open(Some(temp.path()), &id).unwrap();
+        assert_eq!(name(&workspace), "Before");
+        let rows: i64 = workspace
+            .conn
+            .query_row("SELECT count(*) FROM text_content", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 0);
+        let check: String = workspace
+            .conn
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(check, "ok");
+        workspace
+            .conn
+            .execute("UPDATE workspace SET name = 'After'", [])
+            .unwrap();
     }
 }

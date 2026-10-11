@@ -34,6 +34,14 @@ interactive diagram of both launch modes, health-check responses, and lifecycle
 behavior. Its editable source is [application-flow.architecture.json](application-flow.architecture.json).
 The bundled viewer's attribution is in [third-party notices](../../THIRD_PARTY_NOTICES.md).
 
+## Storage foundation
+
+The shared runtime now implements SQLite workspace creation, opening, and listing,
+with writer locks acquired before writes. Initialization and migrations are
+transactional; newer or foreign databases are rejected without modification.
+Crash recovery restores the last committed state. Protocol commands and launch
+mode wiring follow in M0-07.
+
 ## Initial storage design
 
 The shared runtime will store one SQLite database per workspace under

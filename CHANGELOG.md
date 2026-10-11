@@ -25,6 +25,10 @@ validation evidence in the [development docs](docs/development/README.md).
   actionable `WORKSPACE_LOCKED` errors. Linux tests cover same-process and
   cross-process contention, path aliases, normal exit, and termination.
   Command integration follows in M0-07; Windows execution remains pending.
+- Runtime-owned SQLite workspace storage with transactional initialization and
+  versioned migrations. Storage acquires the writer lock before any write;
+  newer or foreign databases are rejected without modification. Tests cover
+  migration rollback, unchanged reopen, incomplete creation, and crash recovery.
 - Detached Rust/Axum backend for the same frontend in a local browser, with
   authenticated loopback HTTP, strict origin/host checks, and graceful shutdown.
 - Desktop and browser connection health, visible failures, and explicit
