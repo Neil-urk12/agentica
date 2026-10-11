@@ -11,6 +11,8 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@agentica/protocol": "workspace:*",
+    "@tauri-apps/api": "^2.12.3",
     "@xyflow/svelte": "^1.7.0",
     "svelte": "^5.57.2"
   },

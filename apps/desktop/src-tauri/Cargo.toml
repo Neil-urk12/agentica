@@ -9,4 +9,6 @@ license = "MIT"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+agentica-runtime = { path = "../../../packages/agent-runtime" }
+serde_json = "1"
 tauri = { version = "2", features = [] }

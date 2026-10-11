@@ -1,6 +1,10 @@
 use std::{io, process::ExitCode};
 
-use agentica_runtime::http::{serve, BACKEND_PORT, FRONTEND_ORIGIN};
+use agentica_runtime::{
+    default_data_root,
+    http::{serve, BACKEND_PORT, FRONTEND_ORIGIN},
+    Runtime,
+};
 use tokio::net::TcpListener;
 
 async fn shutdown_signal() -> io::Result<()> {
@@ -22,11 +26,16 @@ async fn run() -> io::Result<()> {
     let mut random = [0_u8; 32];
     getrandom::fill(&mut random).map_err(|error| io::Error::other(error.to_string()))?;
     let connection_key: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+    let runtime = Runtime::new(default_data_root());
+    let data = runtime.data_root().map_or_else(
+        || "unavailable; set AGENTICA_DATA_DIR".to_owned(),
+        |path| path.display().to_string(),
+    );
     println!(
-        "Agentica backend: http://127.0.0.1:{BACKEND_PORT}\nFrontend: {FRONTEND_ORIGIN}\nConnection key: {connection_key}\nKeep this terminal running. Each restart creates a new key."
+        "Agentica backend: http://127.0.0.1:{BACKEND_PORT}\nFrontend: {FRONTEND_ORIGIN}\nData directory: {data}\nConnection key: {connection_key}\nKeep this terminal running. Each restart creates a new key."
     );
     tokio::select! {
-        result = serve(listener, &connection_key) => result,
+        result = serve(listener, &connection_key, runtime) => result,
         result = shutdown_signal() => result,
     }
 }

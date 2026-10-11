@@ -42,6 +42,14 @@ impl From<io::Error> for RuntimeError {
     }
 }
 
+/// `AGENTICA_DATA_DIR`, or the OS data directory joined with `agentica`.
+pub fn default_data_root() -> Option<PathBuf> {
+    match std::env::var_os("AGENTICA_DATA_DIR") {
+        Some(path) if !path.is_empty() => Some(PathBuf::from(path)),
+        _ => dirs::data_dir().map(|path| path.join("agentica")),
+    }
+}
+
 /// Lowercase hyphenated UUID, the only accepted form of client-supplied IDs.
 pub(crate) fn is_id(value: &str) -> bool {
     value.len() == 36

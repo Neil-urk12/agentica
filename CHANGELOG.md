@@ -15,20 +15,20 @@ validation evidence in the [development docs](docs/development/README.md).
 
 #### Added
 
-- Initial storage design: one SQLite database per workspace under
-  `AGENTICA_DATA_DIR` or the OS data directory. The shared Rust runtime owns
-  writes and an exclusive OS file lock provides one canonical writer identity.
-  Artifact identity/content is separate from canvas placements and view state;
-  text and metadata share a durable transaction. Storage versions and revisions
-  support safe migrations and stale-edit checks without separate file staging.
-- Exclusive workspace writer-lock primitives with canonical data roots and
-  actionable `WORKSPACE_LOCKED` errors. Linux tests cover same-process and
-  cross-process contention, path aliases, normal exit, and termination.
-  Command integration follows in M0-07; Windows execution remains pending.
-- Runtime-owned SQLite workspace storage with transactional initialization and
-  versioned migrations. Storage acquires the writer lock before any write;
-  newer or foreign databases are rejected without modification. Tests cover
-  migration rollback, unchanged reopen, incomplete creation, and crash recovery.
+- Workspace storage owned by the shared Rust runtime: one SQLite database per
+  workspace under `AGENTICA_DATA_DIR` or the OS data directory. Text content and
+  metadata share a transaction so saves and crash recovery need no separate file
+  staging. Artifact identity is separate from placement so canvases can share
+  content. Schema changes are transactional; newer or foreign storage is rejected
+  without modification.
+- An exclusive per-workspace writer lock taken by both launch modes before any
+  write; a second writer gets `WORKSPACE_LOCKED` with an actionable message. An OS
+  file lock makes path aliases contend and releases ownership on process exit.
+- Validated `workspace.*`, `canvas.*`, `node.createText`, `edge.create`, and
+  `artifact.saveText` protocol commands with Zod schemas, expected-revision
+  conflict checks, and correlated error codes. The UI does not use them yet.
+- A shared round-trip fixture run through the desktop transport and
+  authenticated HTTP, plus lock-contention, migration, and crash-recovery tests.
 - Detached Rust/Axum backend for the same frontend in a local browser, with
   authenticated loopback HTTP, strict origin/host checks, and graceful shutdown.
 - Desktop and browser connection health, visible failures, and explicit
@@ -48,7 +48,13 @@ validation evidence in the [development docs](docs/development/README.md).
 
 - Replaced the TypeScript stdio runtime with a shared Rust runtime. Tauri calls
   it directly through a scoped command; the detached Axum executable uses the
-  same request handler.
+  same request handler, keeping domain validation and writer ownership in one
+  implementation without a Node sidecar.
+- Limited HTTP request reading and runtime admission to five seconds. Expired
+  queued calls cannot mutate storage; admitted calls return their committed
+  outcome instead of a timeout while saving in the background. Browser health
+  checks retain their three-second deadline; persistence calls await the result.
+  A lost connection can still leave an uncertain outcome; reload before retrying.
 - Moved desktop and backend builds into the shared Cargo workspace. Compiled
   runtime binaries do not require Node.js or Cargo to run; frontend development
   still uses Node.js and pnpm.
@@ -58,8 +64,9 @@ validation evidence in the [development docs](docs/development/README.md).
 #### Progress and validation
 
 - **M0 — Foundations: In Development.** The canvas shell, both runtime launch
-  modes, and versioned health contracts are implemented. Persistence and
-  exclusive workspace-writer ownership remain pending.
+  modes, versioned contracts, runtime persistence (M0-06), and persistence
+  commands (M0-07) are implemented. The writer lock (M0-05) is tested on Linux;
+  Windows execution is pending.
 - The [Linux x86_64 verification record](docs/development/verification.md)
   reports passing frontend checks, Rust unit and HTTP integration tests,
   formatting/static checks, release binary builds, browser smoke checks, and
@@ -69,8 +76,7 @@ validation evidence in the [development docs](docs/development/README.md).
   release acceptance remain unvalidated. Windows CI configuration does not
   constitute a successful Windows validation run.
 - The detached executable serves RPC only; frontend assets are served separately.
-- **Next M0 slice:** shared workspace-writer lock, SQLite persistence, and a
-  text-artifact save-and-reopen loop in both modes.
+- **Next M0 slice:** UI text editing, autosave, and reopen in both modes (M0-08).
 - **M1–M6: Planned.** Artifact editing, Codex integration, PTYs/previews,
   orchestration, recovery/import-export, and public-alpha packaging remain
   future work. See the [roadmap](ROADMAP.md) for milestone gates.

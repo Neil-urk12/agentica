@@ -12,9 +12,9 @@ use hyper_util::{
     service::TowerToHyperService,
 };
 use subtle::ConstantTimeEq;
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::Mutex, time::Instant};
 
-use crate::{handle_request, MAX_FRAME_BYTES};
+use crate::{Runtime, MAX_FRAME_BYTES};
 
 pub const FRONTEND_ORIGIN: &str = "http://127.0.0.1:1420";
 pub const BACKEND_PORT: u16 = 1421;
@@ -23,6 +23,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 struct HttpState {
     host: String,
     credential: Vec<u8>,
+    // Browser tabs share this runtime; it is the workspace writer.
+    runtime: Arc<Mutex<Runtime>>,
 }
 
 // Reject duplicate security headers instead of trusting whichever value is first.
@@ -43,10 +45,7 @@ async fn dispatch(State(state): State<Arc<HttpState>>, request: Request) -> Resp
     let local = single_header(request.headers(), "host") == Some(state.host.as_str())
         && single_header(request.headers(), "origin") == Some(FRONTEND_ORIGIN);
     let mut response = if local {
-        match tokio::time::timeout(REQUEST_TIMEOUT, dispatch_local(&state, request)).await {
-            Ok(response) => response,
-            Err(_) => reject(StatusCode::REQUEST_TIMEOUT, "Request timed out."),
-        }
+        dispatch_local(state, request).await
     } else {
         reject(StatusCode::FORBIDDEN, "Use the local Agentica frontend.")
     };
@@ -62,7 +61,8 @@ async fn dispatch(State(state): State<Arc<HttpState>>, request: Request) -> Resp
     response
 }
 
-async fn dispatch_local(state: &HttpState, request: Request) -> Response {
+async fn dispatch_local(state: Arc<HttpState>, request: Request) -> Response {
+    let deadline = Instant::now() + REQUEST_TIMEOUT;
     if request.uri().path_and_query().map(|path| path.as_str()) != Some("/rpc") {
         return reject(StatusCode::NOT_FOUND, "Unknown endpoint.");
     }
@@ -116,24 +116,47 @@ async fn dispatch_local(state: &HttpState, request: Request) -> Response {
     if single_header(request.headers(), "content-type") != Some("application/json") {
         return reject(StatusCode::UNSUPPORTED_MEDIA_TYPE, "Use application/json.");
     }
-    match to_bytes(request.into_body(), MAX_FRAME_BYTES).await {
-        Ok(bytes) => Json(handle_request(&bytes)).into_response(),
-        Err(error)
-            if error
-                .source()
-                .is_some_and(|source| source.is::<http_body_util::LengthLimitError>()) =>
+    let bytes =
+        match tokio::time::timeout_at(deadline, to_bytes(request.into_body(), MAX_FRAME_BYTES))
+            .await
         {
-            reject(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "Requests must fit in 16 KiB.",
-            )
-        }
-        Err(_) => reject(StatusCode::BAD_REQUEST, "Cannot read request body."),
+            Ok(Ok(bytes)) => bytes,
+            Ok(Err(error))
+                if error
+                    .source()
+                    .is_some_and(|source| source.is::<http_body_util::LengthLimitError>()) =>
+            {
+                return reject(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "Requests must fit in 16 KiB.",
+                );
+            }
+            Ok(Err(_)) => return reject(StatusCode::BAD_REQUEST, "Cannot read request body."),
+            Err(_) => return reject(StatusCode::REQUEST_TIMEOUT, "Request timed out."),
+        };
+    let mut runtime =
+        match tokio::time::timeout_at(deadline, state.runtime.clone().lock_owned()).await {
+            Ok(runtime) => runtime,
+            Err(_) => {
+                return reject(
+                    StatusCode::REQUEST_TIMEOUT,
+                    "Request timed out before execution. Nothing was saved.",
+                );
+            }
+        };
+    // A started blocking mutation cannot be cancelled; await its committed outcome.
+    match tokio::task::spawn_blocking(move || runtime.handle_request(&bytes)).await {
+        Ok(reply) => Json(reply).into_response(),
+        Err(_) => reject(StatusCode::INTERNAL_SERVER_ERROR, "Backend runtime failed."),
     }
 }
 
 /// Serve authenticated loopback RPC with bounded bodies and HTTP header deadlines.
-pub async fn serve(listener: TcpListener, connection_key: &str) -> io::Result<()> {
+pub async fn serve(
+    listener: TcpListener,
+    connection_key: &str,
+    runtime: Runtime,
+) -> io::Result<()> {
     if !listener.local_addr()?.ip().is_loopback() {
         return Err(io::Error::other("The backend must bind to loopback."));
     }
@@ -142,6 +165,7 @@ pub async fn serve(listener: TcpListener, connection_key: &str) -> io::Result<()
         .with_state(Arc::new(HttpState {
             host: format!("127.0.0.1:{}", listener.local_addr()?.port()),
             credential: format!("Bearer {connection_key}").into_bytes(),
+            runtime: Arc::new(Mutex::new(runtime)),
         }));
     loop {
         let (stream, _) = listener.accept().await?;

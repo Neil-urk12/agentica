@@ -37,27 +37,31 @@ leaves the backend running; Ctrl+C in its terminal stops it. After restarting
 the backend, paste its new key and reconnect.
 
 Both modes check health every five seconds and wait for explicit reconnect on
-failure. Browser requests have a three-second response deadline. The desktop
+failure. Browser health checks have a three-second response deadline. Persistence
+calls await their outcome; only request reading and runtime admission time out.
+After a lost connection, reload before retrying a mutation. The desktop
 health command directly calls the Rust handler. The canvas
 remains usable. Both frontends use port 1420; run one frontend mode at a time.
-Neither mode requires Codex or an AI account. Only health checks are implemented.
+Neither mode requires Codex or an AI account. The UI implements health checks;
+workspace persistence is available through the runtime protocol below.
 
 ## Verification
 
-| Command              | Checks                                                                    |
-| -------------------- | ------------------------------------------------------------------------- |
-| `pnpm check`         | Strict TypeScript and Svelte checks                                       |
-| `pnpm lint`          | Oxlint linter on JavaScript, TypeScript, and Svelte scripts               |
-| `pnpm test`          | Rust unit tests and real HTTP authentication, protocol, limits, lifecycle |
-| `pnpm build`         | Frontend, TypeScript protocol, and Rust backend builds                    |
-| `pnpm format:check`  | Source and documentation formatting with Oxfmt                            |
-| `pnpm check:rust`    | Rust formatting and Clippy on all targets/features                        |
-| `pnpm test:rust`     | Rust workspace tests, including desktop connection state                  |
-| `pnpm build:desktop` | Native release binary with embedded frontend; no installer                |
-| `pnpm build:backend` | Detached Rust release executable                                          |
+| Command              | Checks                                                                  |
+| -------------------- | ----------------------------------------------------------------------- |
+| `pnpm check`         | Strict TypeScript and Svelte checks                                     |
+| `pnpm lint`          | Oxlint linter on JavaScript, TypeScript, and Svelte scripts             |
+| `pnpm test`          | Rust unit/contract tests and real HTTP protocol, persistence, lifecycle |
+| `pnpm build`         | Frontend, TypeScript protocol, and Rust backend builds                  |
+| `pnpm format:check`  | Source and documentation formatting with Oxfmt                          |
+| `pnpm check:rust`    | Rust formatting and Clippy on all targets/features                      |
+| `pnpm test:rust`     | Rust workspace tests, including desktop connection state                |
+| `pnpm build:desktop` | Native release binary with embedded frontend; no installer              |
+| `pnpm build:backend` | Detached Rust release executable                                        |
 
 The integration tests build the protocol package and Rust executable first.
-They use port 1421; stop a development backend before running them. No real agent
+They use port 1421; stop a development backend before running them. Tests use
+temporary data directories and never touch your workspaces. No real agent
 execution or paid provider calls happen in tests. CI runs frontend checks and
 Rust integration/static checks on Linux and Windows; that is not installer or
 security acceptance validation.
@@ -84,6 +88,33 @@ The backend returns:
 { "protocolVersion": 1, "id": "health-1", "result": { "status": "ok" } }
 ```
 
+## Workspace storage
+
+Both modes store workspaces under `AGENTICA_DATA_DIR`, or the OS data directory
+joined with `agentica`. Each workspace directory holds `writer.lock` and
+`workspace.sqlite3`; only the Rust runtime writes them. Opening a workspace that
+another desktop window or detached backend holds fails with `WORKSPACE_LOCKED`;
+close it there and retry. Newer or foreign storage fails with
+`UNSUPPORTED_STORAGE` and is left unmodified. The
+[changelog](../../CHANGELOG.md) records the storage rationale.
+
+Commands besides `runtime.ping` take `params`; the
+[protocol package](../../packages/protocol/src/index.ts) defines them, and
+[the shared fixture](../../tests/fixtures/workspace-roundtrip.json) shows a full
+create/edit/reopen sequence. For example:
+
+```json
+{
+  "protocolVersion": 1,
+  "id": "create-1",
+  "method": "workspace.create",
+  "params": { "name": "Research" }
+}
+```
+
+Mutations name an `expectedRevision` and fail with `CONFLICT` on stale state.
+Errors for a valid envelope carry the request id.
+
 To build a backend executable, run `pnpm build:backend`, or directly:
 
 ```sh
@@ -97,8 +128,8 @@ assets. Ctrl+C stops it; SIGTERM is also handled on Unix.
 
 ## Next slice
 
-Complete M0 by adding the shared exclusive workspace-writer lock, SQLite
-persistence, and a text-artifact save-and-reopen loop in both modes. Then implement
-the manual mind-map workflow before connecting mock and real agents. Installer
+Complete M0 by connecting the shared UI to the persistence commands: text
+editing, autosave, visible save failures, and reopen in both modes (M0-08).
+Then implement the manual mind-map workflow before connecting mock and real agents. Installer
 packaging and enforceable Codex scopes need early validation on both target
 platforms.

@@ -1,10 +1,12 @@
-#[cfg(test)]
-mod store;
-
+mod commands;
 pub mod http;
+mod store;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
+
+pub use commands::Runtime;
+pub use store::{default_data_root, STORAGE_VERSION};
 
 pub const MAX_FRAME_BYTES: usize = 16 * 1024;
 
@@ -14,54 +16,72 @@ struct Request {
     protocol_version: f64,
     id: String,
     method: String,
+    params: Option<Value>,
 }
 
-fn protocol_error(code: &str, message: &str) -> Value {
-    json!({ "protocolVersion": 1, "id": null, "error": { "code": code, "message": message } })
+const INVALID_REQUEST: &str =
+    "Expected protocol version 1, an id, a supported method, and its params.";
+
+fn error(id: Option<&str>, code: &str, message: &str) -> Value {
+    json!({ "protocolVersion": 1, "id": id, "error": { "code": code, "message": message } })
 }
 
-/// Validate the versioned JSON request shared by Tauri and the HTTP server.
-pub fn handle_request(bytes: &[u8]) -> Value {
-    if bytes.len() > MAX_FRAME_BYTES {
-        return protocol_error("FRAME_TOO_LARGE", "Requests must fit in 16 KiB.");
-    }
-    let input = match serde_json::from_slice::<Value>(bytes) {
-        Ok(input) => input,
-        Err(_) => return protocol_error("INVALID_JSON", "Expected a JSON request."),
-    };
-    if !input.is_object() {
-        return protocol_error(
-            "INVALID_REQUEST",
-            "Expected protocol version 1, an id, and runtime.ping.",
-        );
-    }
-    let request = match serde_json::from_value::<Request>(input) {
-        Ok(request)
-            if request.protocol_version == 1.0
-                && !request.id.is_empty()
-                // Zod measures JavaScript strings in UTF-16 code units.
-                && request.id.encode_utf16().count() <= 128
-                && request.method == "runtime.ping" =>
-        {
-            request
+impl Runtime {
+    /// Validate and dispatch a versioned JSON request from either transport.
+    /// Envelope errors have a null id; command errors are correlated.
+    pub fn handle_request(&mut self, bytes: &[u8]) -> Value {
+        if bytes.len() > MAX_FRAME_BYTES {
+            return error(None, "FRAME_TOO_LARGE", "Requests must fit in 16 KiB.");
         }
-        _ => {
-            return protocol_error(
-                "INVALID_REQUEST",
-                "Expected protocol version 1, an id, and runtime.ping.",
-            )
+        let input = match serde_json::from_slice::<Value>(bytes) {
+            Ok(input) => input,
+            Err(_) => return error(None, "INVALID_JSON", "Expected a JSON request."),
+        };
+        if !input.is_object() {
+            return error(None, "INVALID_REQUEST", INVALID_REQUEST);
         }
-    };
-    json!({ "protocolVersion": 1, "id": request.id, "result": { "status": "ok" } })
+        // `runtime.ping` takes no params, not even null.
+        let has_params = input.get("params").is_some();
+        let request = match serde_json::from_value::<Request>(input) {
+            Ok(request)
+                if request.protocol_version == 1.0
+                    && !request.id.is_empty()
+                    // Zod measures JavaScript strings in UTF-16 code units.
+                    && request.id.encode_utf16().count() <= 128
+                    && (if request.method == "runtime.ping" {
+                        !has_params
+                    } else {
+                        commands::METHODS.contains(&request.method.as_str())
+                    }) =>
+            {
+                request
+            }
+            _ => return error(None, "INVALID_REQUEST", INVALID_REQUEST),
+        };
+        if request.method == "runtime.ping" {
+            return json!({ "protocolVersion": 1, "id": request.id, "result": { "status": "ok" } });
+        }
+        match self.call(&request.method, request.params.unwrap_or(Value::Null)) {
+            Ok(result) => json!({ "protocolVersion": 1, "id": request.id, "result": result }),
+            Err(failure) => error(Some(&request.id), failure.code, &failure.message),
+        }
+    }
 }
 
 /// Desktop connection state; the runtime is linked into the Tauri process.
-#[derive(Default)]
 pub struct DesktopBackend {
     connected: bool,
+    runtime: Runtime,
 }
 
 impl DesktopBackend {
+    pub fn new(runtime: Runtime) -> Self {
+        Self {
+            connected: false,
+            runtime,
+        }
+    }
+
     pub fn request(&mut self, request: &Value, connect: bool) -> Result<Value, String> {
         let bytes = serde_json::to_vec(request).map_err(|error| error.to_string())?;
         if bytes.len() > MAX_FRAME_BYTES {
@@ -73,13 +93,17 @@ impl DesktopBackend {
         if !self.connected {
             return Err("Backend disconnected. Reconnect to start it.".to_owned());
         }
-        Ok(handle_request(&bytes))
+        Ok(self.runtime.handle_request(&bytes))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn handle_request(bytes: &[u8]) -> Value {
+        Runtime::new(None).handle_request(bytes)
+    }
 
     fn ping(id: &str) -> Value {
         json!({ "protocolVersion": 1, "id": id, "method": "runtime.ping" })
@@ -102,6 +126,7 @@ mod tests {
             json!({ "protocolVersion": 2, "id": "x", "method": "runtime.ping" }),
             json!({ "protocolVersion": 1, "id": "x", "method": "files.write" }),
             json!({ "protocolVersion": 1, "id": "x", "method": "runtime.ping", "extra": true }),
+            json!({ "protocolVersion": 1, "id": "x", "method": "runtime.ping", "params": null }),
             ping(""),
             ping(&"x".repeat(129)),
         ] {
@@ -138,7 +163,7 @@ mod tests {
 
     #[test]
     fn desktop_connects_explicitly_and_uses_the_same_handler() {
-        let mut backend = DesktopBackend::default();
+        let mut backend = DesktopBackend::new(Runtime::new(None));
         let request = ping("desktop-health");
         assert!(backend.request(&request, false).is_err());
         let response = backend.request(&request, true).unwrap();
@@ -156,5 +181,37 @@ mod tests {
             .request(&json!({ "data": "x".repeat(MAX_FRAME_BYTES) }), false)
             .is_err());
         assert_eq!(backend.request(&request, false).unwrap(), response);
+    }
+
+    #[test]
+    fn command_errors_are_correlated_and_actionable() {
+        let mut runtime = Runtime::new(None);
+        let mut call = |method: &str, params: Value| {
+            runtime.handle_request(
+                &serde_json::to_vec(
+                    &json!({ "protocolVersion": 1, "id": "c-1", "method": method, "params": params }),
+                )
+                .unwrap(),
+            )
+        };
+        let missing_root = call("workspace.list", json!({}));
+        assert_eq!(missing_root["id"], "c-1");
+        assert_eq!(missing_root["error"]["code"], "STORAGE_ERROR");
+        for (method, params) in [
+            ("workspace.list", Value::Null),
+            ("workspace.list", json!({ "extra": 1 })),
+            ("workspace.create", json!({ "name": "  " })),
+            ("workspace.create", json!({ "name": "x".repeat(121) })),
+            ("workspace.open", json!({ "workspaceId": "../escape" })),
+        ] {
+            let response = call(method, params);
+            assert_eq!(response["id"], "c-1");
+            assert_eq!(response["error"]["code"], "INVALID_PARAMS", "{method}");
+        }
+        let closed = call(
+            "workspace.close",
+            json!({ "workspaceId": "00000000-0000-4000-8000-000000000000" }),
+        );
+        assert_eq!(closed["error"]["code"], "WORKSPACE_NOT_OPEN");
     }
 }
