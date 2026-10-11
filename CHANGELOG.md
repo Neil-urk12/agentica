@@ -21,6 +21,10 @@ validation evidence in the [development docs](docs/development/README.md).
   Artifact identity/content is separate from canvas placements and view state;
   text and metadata share a durable transaction. Storage versions and revisions
   support safe migrations and stale-edit checks without separate file staging.
+- Exclusive workspace writer-lock primitives with canonical data roots and
+  actionable `WORKSPACE_LOCKED` errors. Linux tests cover same-process and
+  cross-process contention, path aliases, normal exit, and termination.
+  Command integration follows in M0-07; Windows execution remains pending.
 - Detached Rust/Axum backend for the same frontend in a local browser, with
   authenticated loopback HTTP, strict origin/host checks, and graceful shutdown.
 - Desktop and browser connection health, visible failures, and explicit

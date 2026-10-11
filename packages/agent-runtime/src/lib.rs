@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod store;
+
 pub mod http;
 
 use serde::Deserialize;
