@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const MAX_FRAME_BYTES = 16 * 1024;
+
 export const RuntimeRequestSchema = z.strictObject({
   protocolVersion: z.literal(1),
   id: z.string().min(1).max(128),
@@ -16,7 +18,7 @@ export const RuntimeResponseSchema = z.union([
     protocolVersion: z.literal(1),
     id: z.null(),
     error: z.strictObject({
-      code: z.enum(["INVALID_JSON", "INVALID_REQUEST"]),
+      code: z.enum(["INVALID_JSON", "INVALID_REQUEST", "FRAME_TOO_LARGE"]),
       message: z.string(),
     }),
   }),
