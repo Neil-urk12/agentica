@@ -26,7 +26,15 @@ validation evidence in the [development docs](docs/development/README.md).
   file lock makes path aliases contend and releases ownership on process exit.
 - Validated `workspace.*`, `canvas.*`, `node.createText`, `edge.create`, and
   `artifact.saveText` protocol commands with Zod schemas, expected-revision
-  conflict checks, and correlated error codes. The UI does not use them yet.
+  conflict checks, and correlated error codes.
+- Shared UI workspace/canvas creation and reopening, manual text editing,
+  placement/dimension fields, and persisted pan/zoom. Debounced autosave uses
+  the existing runtime commands and one serialized queue; save acknowledgements
+  update revisions and saved snapshots without replacing newer drafts. Failed
+  saves retain the buffer, pause retries, block navigation, and expose an
+  accessible error and recovery copy. Explicit retry checks persisted content
+  before resending, including replies lost after a committed write. Unsaved edits
+  remain in memory; copy them before a forced close or process termination.
 - A shared round-trip fixture run through the desktop transport and
   authenticated HTTP, plus lock-contention, migration, and crash-recovery tests.
 - Detached Rust/Axum backend for the same frontend in a local browser, with
@@ -65,7 +73,8 @@ validation evidence in the [development docs](docs/development/README.md).
 
 - **M0 — Foundations: In Development.** The canvas shell, both runtime launch
   modes, versioned contracts, runtime persistence (M0-06), and persistence
-  commands (M0-07) are implemented. The writer lock (M0-05) is tested on Linux;
+  commands (M0-07), and shared UI editing/autosave/reopen (M0-08) are implemented.
+  The writer lock (M0-05) is tested on Linux;
   Windows execution is pending.
 - The [Linux x86_64 verification record](docs/development/verification.md)
   reports passing frontend checks, Rust unit and HTTP integration tests,
@@ -76,7 +85,16 @@ validation evidence in the [development docs](docs/development/README.md).
   release acceptance remain unvalidated. Windows CI configuration does not
   constitute a successful Windows validation run.
 - The detached executable serves RPC only; frontend assets are served separately.
-- **Next M0 slice:** UI text editing, autosave, and reopen in both modes (M0-08).
+- M0-08 Linux checks cover in-flight edits, partial failures, lost replies,
+  conflicting persisted text, recovery, and autosave without AI. A real SQLite
+  write failure and backend restart round-trip through the UI save buffer over
+  HTTP; the existing desktop persistence fixture also passes. Detached Chromium
+  smoke checks verify create/edit/reopen, drag and arrow-key placement,
+  transport-failure recovery, accessible notices, and visible keyboard focus.
+  `pnpm test` (17 Rust unit, 2 contract, 13 Node tests), `pnpm check`,
+  `pnpm run lint`, changed-file Oxfmt checks, and `pnpm build:desktop` pass.
+  Native desktop interaction and Windows execution remain unverified;
+  M0-09 onward is unchanged.
 - **M1–M6: Planned.** Artifact editing, Codex integration, PTYs/previews,
   orchestration, recovery/import-export, and public-alpha packaging remain
   future work. See the [roadmap](ROADMAP.md) for milestone gates.

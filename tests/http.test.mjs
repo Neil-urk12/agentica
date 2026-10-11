@@ -9,6 +9,7 @@ import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { Editor } from "../apps/desktop/src/lib/editor.ts";
 import {
   MAX_FRAME_BYTES,
   ResultSchemas,
@@ -466,6 +467,84 @@ test("queued persistence calls expire without writes and started calls return th
     );
   } finally {
     clearTimeout(release);
+    database?.close();
+    await stopBackend(backend.child);
+  }
+});
+
+test("the UI save buffer recovers a real SQLite write failure and reopens after restart", async () => {
+  let backend = await startBackend();
+  key = backend.connectionKey;
+  let database;
+  const call = async (_key, _connect, method, params) => {
+    const input = RuntimeRequestSchema.parse({
+      protocolVersion: 1,
+      id: crypto.randomUUID(),
+      method,
+      params,
+    });
+    const reply = await send(port, {
+      body: JSON.stringify(input),
+      timeout: 10000,
+    });
+    assert.equal(reply.status, 200);
+    const response = RuntimeResponseSchema.parse(JSON.parse(reply.text));
+    if (response.error)
+      throw new Error(`${response.error.code}: ${response.error.message}`);
+    return ResultSchemas[method].parse(response.result);
+  };
+  const editor = new Editor(
+    call,
+    () => key,
+    () => {},
+  );
+  try {
+    await editor.createWorkspace("UI round trip");
+    const workspaceId = editor.state.workspace.workspace.id;
+    await editor.createCanvas("Manual notes");
+    const canvasId = editor.state.document.canvas.id;
+    await editor.addText();
+    const { id: nodeId, artifactId } = editor.state.document.nodes[0];
+    database = new DatabaseSync(
+      join(dataDir, "workspaces", workspaceId, "workspace.sqlite3"),
+    );
+    database.exec("BEGIN EXCLUSIVE");
+    editor.editText(artifactId, "Unsaved through a disk failure ✓");
+    editor.placeNode(nodeId, { x: 320, y: -40, width: 300, height: 200 });
+    editor.setViewport({ x: -120, y: 42, zoom: 1.25 });
+    await editor.save();
+    assert.equal(editor.state.dirty, true);
+    assert.match(editor.state.error, /STORAGE_ERROR/);
+    assert.equal(editor.state.document.artifacts[0].revision, 1);
+    assert.match(editor.recovery(), /Unsaved through a disk failure/);
+    database.exec("ROLLBACK");
+    database.close();
+    database = undefined;
+    editor.editText(artifactId, "Recovered and saved ✓\nSecond line");
+    await editor.retrySave();
+    assert.equal(editor.state.error, "");
+    assert.equal(editor.state.dirty, false);
+    await stopBackend(backend.child);
+    editor.editText(artifactId, "Recovered after backend restart ✓");
+    await editor.save();
+    assert.equal(editor.state.dirty, true);
+    assert.ok(editor.state.error);
+    backend = await startBackend();
+    key = backend.connectionKey;
+    await editor.retrySave();
+    assert.equal(editor.state.error, "");
+    assert.equal(editor.state.dirty, false);
+    const expected = structuredClone(editor.state.document);
+    await editor.closeWorkspace();
+    await stopBackend(backend.child);
+    backend = await startBackend();
+    key = backend.connectionKey;
+    await editor.openWorkspace(workspaceId);
+    await editor.openCanvas(canvasId);
+    assert.equal(editor.state.error, "");
+    assert.deepEqual(editor.state.document, expected);
+  } finally {
+    editor.dispose();
     database?.close();
     await stopBackend(backend.child);
   }

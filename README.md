@@ -5,7 +5,10 @@ A visual workspace operating system for your agents with infinite canvas
 The repository currently contains an initial development scaffold: a Svelte canvas
 shell, a Tauri desktop host with a shared Rust runtime, and a detached Axum
 backend for the same UI in a local browser. Both modes support validated health
-checks and visible connection failures. Persistence and agent integration are planned.
+checks and visible connection failures. The shared runtime persists workspaces,
+canvases, and text artifacts in SQLite with one writer per workspace; the UI
+creates and reopens them, edits text and node placement, persists pan/zoom, and
+autosaves changes through the runtime commands. Agent integration is planned.
 
 ## Getting started
 
@@ -36,8 +39,12 @@ pnpm install --frozen-lockfile
 | [Preview the built browser UI](#preview-the-built-browser-ui)       | Run a backend and serve the built frontend with Vite preview | Local preview of the built UI                         |
 | [Frontend only](#frontend-only)                                     | `pnpm dev:web`                                               | Canvas UI without a connected backend                 |
 
-Only canvas display and runtime health checks are implemented. None of these
-options requires Codex or an AI account.
+The UI implements canvas display, runtime health checks, workspace and canvas
+creation and reopening, text and node placement editing, persisted pan/zoom,
+and debounced autosave with recovery when saves fail. None of these options
+requires Codex or an AI account. Workspaces are stored in `AGENTICA_DATA_DIR`
+when set, otherwise in the OS data directory (`~/.local/share/agentica` on Linux,
+`%APPDATA%\agentica` on Windows); both launch modes share it.
 
 ### Desktop development
 

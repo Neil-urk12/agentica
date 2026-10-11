@@ -1,7 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The local main window may exchange validated runtime health requests.",
+  "description": "The local main window may exchange validated runtime requests and protect unsaved edits when closing.",
   "windows": ["main"],
-  "permissions": ["allow-runtime-request"]
+  "permissions": [
+    "allow-runtime-request",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-destroy"
+  ]
 }
