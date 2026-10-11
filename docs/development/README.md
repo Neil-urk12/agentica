@@ -47,9 +47,10 @@ Neither mode requires Codex or an AI account. Only health checks are implemented
 | Command              | Checks                                                                    |
 | -------------------- | ------------------------------------------------------------------------- |
 | `pnpm check`         | Strict TypeScript and Svelte checks                                       |
+| `pnpm lint`          | Oxlint linter on JavaScript, TypeScript, and Svelte scripts               |
 | `pnpm test`          | Rust unit tests and real HTTP authentication, protocol, limits, lifecycle |
 | `pnpm build`         | Frontend, TypeScript protocol, and Rust backend builds                    |
-| `pnpm format:check`  | Source and documentation formatting                                       |
+| `pnpm format:check`  | Source and documentation formatting with Oxfmt                            |
 | `pnpm check:rust`    | Rust formatting and Clippy on all targets/features                        |
 | `pnpm test:rust`     | Rust workspace tests, including desktop connection state                  |
 | `pnpm build:desktop` | Native release binary with embedded frontend; no installer                |

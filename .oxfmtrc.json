@@ -1,0 +1,18 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 80,
+  "sortPackageJson": false,
+  "svelte": {},
+  "ignorePatterns": [
+    "pnpm-lock.yaml",
+    "**/Cargo.lock",
+    "**/target/",
+    "apps/desktop/src-tauri/gen/",
+    "**/dist/",
+    "node_modules/",
+    ".pnpm-store/",
+    "PROJECT.md",
+    "docs/architecture/application-flow.html",
+    "**/*.toml"
+  ]
+}

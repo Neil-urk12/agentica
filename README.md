@@ -177,6 +177,7 @@ remaining limitations.
 
 ```sh
 pnpm check
+pnpm lint
 pnpm test
 pnpm build
 pnpm format:check

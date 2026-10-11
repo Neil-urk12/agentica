@@ -20,14 +20,16 @@
     "test:rust": "cargo test --locked --workspace",
     "test": "pnpm --filter @agentica/protocol build && cargo test --locked -p agentica-runtime && cargo build --locked -p agentica-runtime && node --test",
     "build:backend": "cargo build --locked --release -p agentica-runtime --bin agentica-backend",
-    "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "lint": "oxlint"
   },
   "devDependencies": {
     "@agentica/protocol": "workspace:*",
     "@types/node": "^24.19.2",
-    "prettier": "^3.9.10",
-    "prettier-plugin-svelte": "^4.1.1",
+    "oxfmt": "^0.72.0",
+    "oxlint": "^1.87.0",
+    "svelte": "^5.57.2",
     "typescript": "~6.0.3"
   }
 }

@@ -39,6 +39,8 @@ validation evidence in the [development docs](docs/development/README.md).
 - Moved desktop and backend builds into the shared Cargo workspace. Compiled
   runtime binaries do not require Node.js or Cargo to run; frontend development
   still uses Node.js and pnpm.
+- Replaced Prettier formatting with Oxfmt and added Oxlint linting for
+  TypeScript and frontend assets in development and CI.
 
 #### Progress and validation
 
