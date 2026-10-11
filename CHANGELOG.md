@@ -15,6 +15,12 @@ validation evidence in the [development docs](docs/development/README.md).
 
 #### Added
 
+- Initial storage design: one SQLite database per workspace under
+  `AGENTICA_DATA_DIR` or the OS data directory. The shared Rust runtime owns
+  writes and an exclusive OS file lock provides one canonical writer identity.
+  Artifact identity/content is separate from canvas placements and view state;
+  text and metadata share a durable transaction. Storage versions and revisions
+  support safe migrations and stale-edit checks without separate file staging.
 - Detached Rust/Axum backend for the same frontend in a local browser, with
   authenticated loopback HTTP, strict origin/host checks, and graceful shutdown.
 - Desktop and browser connection health, visible failures, and explicit
@@ -26,8 +32,7 @@ validation evidence in the [development docs](docs/development/README.md).
   authentication, request limits, timeouts, backend lifecycle, and reconnection.
 - Linux and Windows CI configuration, Rust static checks, and Prettier formatting.
 - Approved product specification, milestone roadmap, contribution guide,
-  third-party notices, launch-mode and Rust-runtime ADRs, and an interactive
-  application-flow diagram.
+  third-party notices, and an interactive application-flow diagram.
 - Development and usage guides covering desktop, detached browser, and compiled
   binary launch modes, with a dated verification record.
 

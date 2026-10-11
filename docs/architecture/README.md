@@ -25,21 +25,34 @@ validates the same protocol, with integration tests checking compatibility.
 
 SQLite storage, native PTY/preview operations, installers, and the Codex
 adapter are not implemented. The current protocol is a health-check scaffold;
-cancellation, events, and version negotiation remain future work. See
-[ADR 0001](0001-local-launch-modes.md) for authentication and lifecycle decisions,
-and [ADR 0002](0002-rust-runtime.md) for the Rust migration.
+cancellation, events, and version negotiation remain future work. Concise
+implementation rationale belongs in [the changelog](../../CHANGELOG.md);
+architecture decision files stay local and are not referenced or committed.
 
 Open [the current application flow](application-flow.html) in a browser for an
 interactive diagram of both launch modes, health-check responses, and lifecycle
 behavior. Its editable source is [application-flow.architecture.json](application-flow.architecture.json).
 The bundled viewer's attribution is in [third-party notices](../../THIRD_PARTY_NOTICES.md).
 
+## Initial storage design
+
+The shared runtime will store one SQLite database per workspace under
+`AGENTICA_DATA_DIR` or the OS data directory joined with `agentica`. Both launch
+modes will take the same exclusive OS file lock before writing; canonical roots
+and file identity make path aliases contend.
+
+Artifact identity and content remain separate from canvas placements and view
+state. Text content and metadata will commit together, with storage versions for
+transactional migrations and revisions for stale-edit checks. SQLite recovery
+provides the durable write path; separate file staging is unnecessary for M0.
+Newer or foreign storage must be rejected without modification.
+
 ## Next boundaries
 
 Add `canvas-core`, `artifact-core`, `agent-core`, and `storage` packages when their
 first implementations require those shared boundaries. Keep persistence owned by
 the runtime, and keep authorization and revision checks on the mutation path.
-Record concrete cross-component decisions in ADRs when implementation needs them.
+Record concrete cross-component decisions and their rationale in the changelog.
 
 The approved architecture and release requirements remain in
 [PROJECT.md](../../PROJECT.md).
