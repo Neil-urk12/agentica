@@ -1,23 +1,38 @@
 # Initial architecture
 
-The desktop frontend renders the canvas. Tauri owns the native application
-lifecycle. The TypeScript runtime will own domain validation and all SQLite
-writes; frontend and Rust code must not independently mutate application tables.
-Shared, versioned wire contracts belong in `packages/protocol`.
+The same frontend renders the canvas in Tauri or a local browser. Tauri links the
+shared Rust runtime directly; the detached Axum executable runs independently of
+browser tabs. The shared runtime will own domain validation and all SQLite
+writes; transport and frontend code must not independently mutate application
+tables. TypeScript wire contracts live in `packages/protocol`; the Rust handler
+validates the same protocol, with integration tests checking compatibility.
 
 ## Current implementation
 
-- The desktop host loads the Svelte canvas shell.
-- The runtime runs separately and accepts newline-delimited JSON over stdin.
+- The desktop host calls `DesktopBackend` through the scoped `runtime_request`
+  command; application logic is linked into the same process.
+- Detached mode exposes the same `handle_request` function through Axum over
+  authenticated localhost HTTP.
+- The shared UI shows connection health, failures, and explicit reconnect.
 - Protocol version 1 supports only `runtime.ping`, with a request id and a
-  correlated response. Invalid frames return an error with a null id.
-- Stdout contains only protocol messages. Future diagnostics must use stderr.
-- The desktop exposes no file, shell, network, or database plugin permissions.
+  correlated response. Invalid JSON or unsupported requests return an error
+  with a null id. Oversized desktop requests are rejected; HTTP rejects them
+  with status 413. IDs use the same 128 UTF-16 code-unit limit in both languages.
+- Requests are limited to 16 KiB. Browser requests have a three-second deadline;
+  HTTP header reading and request processing have five-second deadlines.
+- The local main window has only the runtime request capability; no file, shell,
+  network, or database plugin permissions are exposed.
 
-The Tauri-to-runtime bridge, runtime supervision, SQLite storage, and Codex
+SQLite storage, native PTY/preview operations, installers, and the Codex
 adapter are not implemented. The current protocol is a health-check scaffold;
-frame limits, cancellation, events, and version negotiation must be implemented
-before domain operations are exposed.
+cancellation, events, and version negotiation remain future work. See
+[ADR 0001](0001-local-launch-modes.md) for authentication and lifecycle decisions,
+and [ADR 0002](0002-rust-runtime.md) for the Rust migration.
+
+Open [the current application flow](application-flow.html) in a browser for an
+interactive diagram of both launch modes, health-check responses, and lifecycle
+behavior. Its editable source is [application-flow.architecture.json](application-flow.architecture.json).
+The bundled viewer's attribution is in [third-party notices](../../THIRD_PARTY_NOTICES.md).
 
 ## Next boundaries
 
