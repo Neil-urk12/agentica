@@ -22,6 +22,7 @@
     onRefresh: () => void;
     onCreate: (name: string) => void;
     onOpen: (id: string) => void;
+    onDelete: (id: string) => void;
     onOpenSettings: () => void;
   }
 
@@ -37,10 +38,13 @@
     onRefresh,
     onCreate,
     onOpen,
+    onDelete,
     onOpenSettings,
   }: Props = $props();
 
   let name = $state("");
+  // Deleting storage is destructive, so the row asks for confirmation first.
+  let confirming = $state("");
   const connected = $derived(status === "connected");
   const locked = $derived(busy || !connected);
 </script>
@@ -174,26 +178,69 @@
       {:else}
         <ul class="cards">
           {#each workspaces as workspace (workspace.id)}
+            {@const label = workspace.name ?? "Unreadable workspace"}
             <li>
-              <button
-                class="card"
-                type="button"
-                disabled={locked}
-                onclick={() => onOpen(workspace.id)}
-              >
-                <span class="card__icon"
-                  ><Icon name="workspaces" size={20} /></span
-                >
-                <span class="card__body">
-                  <strong>{workspace.name ?? "Unreadable workspace"}</strong>
-                  <small
-                    >{workspace.name
-                      ? workspace.id
-                      : `ID ${workspace.id}`}</small
+              {#if confirming === workspace.id}
+                <div class="card card--confirm">
+                  <span class="card__body">
+                    <strong>Delete “{label}”?</strong>
+                    <small
+                      >Its canvases and text are removed from this device.</small
+                    >
+                  </span>
+                  <button
+                    class="btn btn--danger"
+                    type="button"
+                    disabled={busy}
+                    onclick={() => {
+                      confirming = "";
+                      onDelete(workspace.id);
+                    }}
                   >
-                </span>
-                <Icon name="arrow_forward" size={18} />
-              </button>
+                    <Icon name="delete_forever" size={18} />
+                    Delete
+                  </button>
+                  <button
+                    class="btn btn--ghost"
+                    type="button"
+                    onclick={() => (confirming = "")}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              {:else}
+                <div class="card-row">
+                  <button
+                    class="card"
+                    type="button"
+                    disabled={locked}
+                    onclick={() => onOpen(workspace.id)}
+                  >
+                    <span class="card__icon"
+                      ><Icon name="workspaces" size={20} /></span
+                    >
+                    <span class="card__body">
+                      <strong>{label}</strong>
+                      <small
+                        >{workspace.name
+                          ? workspace.id
+                          : `ID ${workspace.id}`}</small
+                      >
+                    </span>
+                    <Icon name="arrow_forward" size={18} />
+                  </button>
+                  <button
+                    class="icon-btn icon-btn--danger"
+                    type="button"
+                    title="Delete workspace"
+                    aria-label={`Delete ${label}`}
+                    disabled={locked}
+                    onclick={() => (confirming = workspace.id)}
+                  >
+                    <Icon name="delete_outline" size={18} />
+                  </button>
+                </div>
+              {/if}
             </li>
           {/each}
         </ul>

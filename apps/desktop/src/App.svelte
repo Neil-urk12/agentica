@@ -231,6 +231,7 @@
       onRefresh={() => void editor.listWorkspaces()}
       onCreate={(name) => void editor.createWorkspace(name)}
       onOpen={(id) => void editor.openWorkspace(id)}
+      onDelete={(id) => void editor.deleteWorkspace(id)}
       onOpenSettings={() => (settingsOpen = true)}
     />
   {:else if stage === "canvas"}
@@ -242,6 +243,7 @@
       error={editorState.error}
       onCreate={(title) => void editor.createCanvas(title)}
       onOpen={(id) => void editor.openCanvas(id)}
+      onDelete={(id) => void editor.deleteCanvas(id)}
       onBack={() => void backToWorkspaces()}
       onOpenSettings={() => (settingsOpen = true)}
     />

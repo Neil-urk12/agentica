@@ -15,6 +15,7 @@
     error: string;
     onCreate: (title: string) => void;
     onOpen: (id: string) => void;
+    onDelete: (id: string) => void;
     onBack: () => void;
     onOpenSettings: () => void;
   }
@@ -26,11 +27,14 @@
     error,
     onCreate,
     onOpen,
+    onDelete,
     onBack,
     onOpenSettings,
   }: Props = $props();
 
   let title = $state("");
+  // Deleting storage is destructive, so the row asks for confirmation first.
+  let confirming = $state("");
 </script>
 
 {#snippet actions()}
@@ -108,21 +112,61 @@
         <ul class="cards">
           {#each canvases as canvas (canvas.id)}
             <li>
-              <button
-                class="card"
-                type="button"
-                disabled={busy}
-                onclick={() => onOpen(canvas.id)}
-              >
-                <span class="card__icon"
-                  ><Icon name="description" size={20} /></span
-                >
-                <span class="card__body">
-                  <strong>{canvas.title}</strong>
-                  <small>Open canvas</small>
-                </span>
-                <Icon name="arrow_forward" size={18} />
-              </button>
+              {#if confirming === canvas.id}
+                <div class="card card--confirm">
+                  <span class="card__body">
+                    <strong>Delete “{canvas.title}”?</strong>
+                    <small>Its text is removed from this device.</small>
+                  </span>
+                  <button
+                    class="btn btn--danger"
+                    type="button"
+                    disabled={busy}
+                    onclick={() => {
+                      confirming = "";
+                      onDelete(canvas.id);
+                    }}
+                  >
+                    <Icon name="delete_forever" size={18} />
+                    Delete
+                  </button>
+                  <button
+                    class="btn btn--ghost"
+                    type="button"
+                    onclick={() => (confirming = "")}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              {:else}
+                <div class="card-row">
+                  <button
+                    class="card"
+                    type="button"
+                    disabled={busy}
+                    onclick={() => onOpen(canvas.id)}
+                  >
+                    <span class="card__icon"
+                      ><Icon name="description" size={20} /></span
+                    >
+                    <span class="card__body">
+                      <strong>{canvas.title}</strong>
+                      <small>Open canvas</small>
+                    </span>
+                    <Icon name="arrow_forward" size={18} />
+                  </button>
+                  <button
+                    class="icon-btn icon-btn--danger"
+                    type="button"
+                    title="Delete canvas"
+                    aria-label={`Delete ${canvas.title}`}
+                    disabled={busy}
+                    onclick={() => (confirming = canvas.id)}
+                  >
+                    <Icon name="delete_outline" size={18} />
+                  </button>
+                </div>
+              {/if}
             </li>
           {/each}
         </ul>

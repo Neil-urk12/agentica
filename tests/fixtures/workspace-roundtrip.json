@@ -524,6 +524,100 @@
       "method": "workspace.close",
       "params": { "workspaceId": "$otherWorkspace" },
       "expect": {}
+    },
+    {
+      "method": "canvas.delete",
+      "params": { "workspaceId": "$workspaceId", "canvasId": "$canvasId" },
+      "error": "WORKSPACE_NOT_OPEN"
+    },
+    {
+      "method": "workspace.open",
+      "params": { "workspaceId": "$workspaceId" },
+      "expect": {
+        "workspace": { "id": "$workspaceId", "name": "Fixture workspace" },
+        "canvases": [{ "id": "$canvasId", "title": "Plan" }]
+      }
+    },
+    {
+      "method": "canvas.create",
+      "params": { "workspaceId": "$workspaceId", "title": "Scratch" },
+      "save": { "scratchCanvas": "/canvas/id" },
+      "expect": { "canvas": { "id": "$scratchCanvas", "title": "Scratch" } }
+    },
+    {
+      "method": "canvas.delete",
+      "params": { "workspaceId": "$workspaceId", "canvasId": "$scratchCanvas" },
+      "expect": { "canvases": [{ "id": "$canvasId", "title": "Plan" }] }
+    },
+    {
+      "method": "canvas.open",
+      "params": { "workspaceId": "$workspaceId", "canvasId": "$scratchCanvas" },
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "canvas.delete",
+      "params": { "workspaceId": "$workspaceId", "canvasId": "NOT-A-UUID" },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "canvas.delete",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "00000000-0000-4000-8000-0000000000ff"
+      },
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "workspace.delete",
+      "params": { "workspaceId": "NOT-A-UUID" },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "workspace.delete",
+      "params": { "workspaceId": "00000000-0000-4000-8000-0000000000ff" },
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "workspace.delete",
+      "params": { "workspaceId": "$otherWorkspace" },
+      "expect": {
+        "workspaces": [{ "id": "$workspaceId", "name": "Fixture workspace" }]
+      }
+    },
+    { "restart": true },
+    {
+      "method": "workspace.list",
+      "params": {},
+      "expect": {
+        "workspaces": [{ "id": "$workspaceId", "name": "Fixture workspace" }]
+      }
+    },
+    {
+      "method": "workspace.open",
+      "params": { "workspaceId": "$otherWorkspace" },
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "workspace.open",
+      "params": { "workspaceId": "$workspaceId" },
+      "expect": {
+        "workspace": { "id": "$workspaceId", "name": "Fixture workspace" }
+      }
+    },
+    {
+      "method": "workspace.delete",
+      "params": { "workspaceId": "$workspaceId" },
+      "expect": { "workspaces": [] }
+    },
+    {
+      "method": "workspace.close",
+      "params": { "workspaceId": "$workspaceId" },
+      "error": "WORKSPACE_NOT_OPEN"
+    },
+    {
+      "method": "canvas.open",
+      "params": { "workspaceId": "$workspaceId", "canvasId": "$canvasId" },
+      "error": "WORKSPACE_NOT_OPEN"
     }
   ]
 }

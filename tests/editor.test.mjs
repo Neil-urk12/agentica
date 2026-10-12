@@ -28,13 +28,28 @@ async function setup(t, intercept = async () => {}) {
     ],
   };
   const calls = [];
+  // The stub owns the lists the runtime would return after a delete.
+  let workspaceList = [{ id: workspaceId, name: "Work" }];
+  let canvasList = [{ id: canvasId, title: "Plan" }];
   const call = async (_key, _connect, method, params) => {
     calls.push({ method, params });
     await intercept(method, params);
+    if (method === "workspace.list")
+      return { workspaces: structuredClone(workspaceList) };
+    if (method === "workspace.delete") {
+      workspaceList = workspaceList.filter(
+        (workspace) => workspace.id !== params.workspaceId,
+      );
+      return { workspaces: structuredClone(workspaceList) };
+    }
+    if (method === "canvas.delete") {
+      canvasList = canvasList.filter((canvas) => canvas.id !== params.canvasId);
+      return { canvases: structuredClone(canvasList) };
+    }
     if (method === "workspace.open")
       return {
         workspace: { id: workspaceId, name: "Work" },
-        canvases: [{ id: canvasId, title: "Plan" }],
+        canvases: structuredClone(canvasList),
       };
     if (method === "workspace.close") return {};
     if (method === "canvas.open") return structuredClone(disk);
@@ -243,6 +258,46 @@ test("a reverted edit remains unsaved after an in-flight failure until reconcili
   await editor.retrySave();
   assert.equal(editor.state.dirty, false);
   assert.equal(editor.state.error, "");
+});
+
+test("deleting a saved canvas and workspace updates the lists the pickers show", async (t) => {
+  const { editor, calls } = await setup(t);
+  await editor.listWorkspaces();
+  assert.deepEqual(editor.state.workspaces, [
+    { id: workspaceId, name: "Work" },
+  ]);
+
+  await editor.deleteCanvas(canvasId);
+  assert.equal(editor.state.error, "");
+  assert.deepEqual(editor.state.workspace.canvases, []);
+  assert.deepEqual(calls.at(-1).params, {
+    workspaceId,
+    canvasId,
+  });
+
+  await editor.deleteWorkspace(workspaceId);
+  assert.equal(editor.state.error, "");
+  assert.deepEqual(editor.state.workspaces, []);
+  assert.equal(editor.state.busy, false);
+  assert.deepEqual(
+    calls
+      .filter((call) => call.method.endsWith(".delete"))
+      .map((call) => call.method),
+    ["canvas.delete", "workspace.delete"],
+  );
+});
+
+test("a refused delete keeps the list and reports the runtime message", async (t) => {
+  const { editor } = await setup(t, async (method) => {
+    if (method === "canvas.delete")
+      throw new Error("Cannot remove the canvas. Nothing was deleted; retry.");
+  });
+  await editor.deleteCanvas(canvasId);
+  assert.match(editor.state.error, /Cannot remove the canvas/);
+  assert.deepEqual(editor.state.workspace.canvases, [
+    { id: canvasId, title: "Plan" },
+  ]);
+  assert.equal(editor.state.busy, false);
 });
 
 test("typing autosaves after the debounce", async (t) => {

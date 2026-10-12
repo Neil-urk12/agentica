@@ -286,6 +286,25 @@ pub(crate) fn list_workspaces(
     Ok(workspaces)
 }
 
+/// Delete a workspace's storage. The writer lock is held across the removal,
+/// so the workspace must be closed in this and every other runtime. A directory
+/// without a committed database is left alone: it is an interrupted creation,
+/// not a workspace.
+pub(crate) fn delete_workspace(data_root: Option<&Path>, id: &str) -> Result<(), RuntimeError> {
+    let not_found = || RuntimeError::new("NOT_FOUND", "Workspace not found.");
+    if !is_id(id) {
+        return Err(not_found());
+    }
+    let dir = workspaces_dir(data_root)?.join(id);
+    if !dir.join(DATABASE_FILE).is_file() {
+        return Err(not_found());
+    }
+    let lock = lock_workspace(&dir, id)?;
+    fs::remove_dir_all(&dir)?;
+    drop(lock);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -540,6 +559,58 @@ mod tests {
                 .code,
             "NOT_FOUND"
         );
+    }
+
+    #[test]
+    fn deleted_workspaces_are_gone_from_storage_and_the_listing() {
+        let _serial = serial();
+        let temp = tempfile::tempdir().unwrap();
+        let id = created(temp.path(), "Temporary");
+        let dir = temp.path().join("workspaces").join(&id);
+        assert!(dir.is_dir());
+        delete_workspace(Some(temp.path()), &id).unwrap();
+        assert!(!dir.exists());
+        assert!(list_workspaces(Some(temp.path())).unwrap().is_empty());
+        // A second delete has nothing left to remove.
+        assert_eq!(
+            delete_workspace(Some(temp.path()), &id).err().unwrap().code,
+            "NOT_FOUND"
+        );
+        for id in ["../../escape", "", "00000000-0000-4000-8000-00000000000"] {
+            assert_eq!(
+                delete_workspace(Some(temp.path()), id).err().unwrap().code,
+                "NOT_FOUND",
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_locked_or_incomplete_workspace_is_never_deleted() {
+        let _serial = serial();
+        let temp = tempfile::tempdir().unwrap();
+        let id = created(temp.path(), "Busy");
+        let dir = temp.path().join("workspaces").join(&id);
+        let held = lock_workspace(&dir, &id).unwrap();
+        let error = delete_workspace(Some(temp.path()), &id).unwrap_err();
+        assert_eq!(error.code, "WORKSPACE_LOCKED");
+        assert!(dir.is_dir());
+        drop(held);
+        delete_workspace(Some(temp.path()), &id).unwrap();
+
+        // An interrupted creation keeps its files; only listing skips it.
+        let partial = new_id().unwrap();
+        let partial_dir = temp.path().join("workspaces").join(&partial);
+        fs::create_dir_all(&partial_dir).unwrap();
+        fs::write(partial_dir.join("partial"), b"x").unwrap();
+        assert_eq!(
+            delete_workspace(Some(temp.path()), &partial)
+                .err()
+                .unwrap()
+                .code,
+            "NOT_FOUND"
+        );
+        assert!(partial_dir.is_dir());
     }
 
     #[test]

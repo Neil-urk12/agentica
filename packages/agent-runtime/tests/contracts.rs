@@ -194,6 +194,11 @@ fn one_writer_per_workspace_across_launch_modes_and_aliases() {
         code(&detached.call("canvas.create", canvas.clone())),
         "WORKSPACE_NOT_OPEN"
     );
+    // The writer lock also protects deletion: the holder decides when storage goes.
+    assert_eq!(
+        code(&detached.call("workspace.delete", open.clone())),
+        "WORKSPACE_LOCKED"
+    );
 
     // Same-mode second writer, including through a data-root alias.
     let mut second = desktop(&alias);

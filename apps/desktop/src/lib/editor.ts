@@ -157,6 +157,31 @@ export class Editor {
     });
   }
 
+  /** Remove a saved workspace from this device; the picker lists what is left. */
+  async deleteWorkspace(workspaceId: string) {
+    await this.operation(async () => {
+      const { workspaces } = await this.call(
+        this.key(),
+        false,
+        "workspace.delete",
+        { workspaceId },
+      );
+      this.publish({ workspaces });
+    });
+  }
+
+  /** Remove a saved canvas from the open workspace; the picker lists what is left. */
+  async deleteCanvas(canvasId: string) {
+    await this.operation(async () => {
+      const workspace = this.state.workspace!;
+      const { canvases } = await this.call(this.key(), false, "canvas.delete", {
+        workspaceId: workspace.workspace.id,
+        canvasId,
+      });
+      this.publish({ workspace: { ...workspace, canvases } });
+    });
+  }
+
   /** Leave the open canvas but keep its workspace, returning to canvas selection. */
   async closeCanvas() {
     await this.operation(async () => {

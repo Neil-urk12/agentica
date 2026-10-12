@@ -194,6 +194,12 @@ body {
   border-color: var(--line-strong);
 }
 
+.btn--danger {
+  color: var(--bad);
+  background: var(--bad-soft);
+  border-color: var(--bad-line);
+}
+
 .btn--block {
   width: 100%;
 }
@@ -223,6 +229,11 @@ body {
 .icon-btn--active {
   background: var(--accent-soft);
   color: var(--accent-strong);
+}
+
+.icon-btn--danger:hover:not(:disabled) {
+  background: var(--bad-soft);
+  color: var(--bad);
 }
 
 .icon-btn:disabled {
@@ -536,6 +547,17 @@ label {
   max-height: 19rem;
 }
 
+.card-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.card-row .card {
+  flex: 1;
+  min-width: 0;
+}
+
 .card {
   display: flex;
   align-items: center;
@@ -558,6 +580,26 @@ label {
   border-color: var(--accent);
   box-shadow: var(--shadow-sm);
   transform: translateY(-1px);
+}
+
+/* A row asking to confirm a destructive delete, in the card's own shape. */
+.card--confirm {
+  flex-wrap: wrap;
+  cursor: default;
+  gap: 0.6rem;
+  padding: 0.6rem 0.7rem;
+  border-color: var(--bad-line);
+  background: var(--bad-soft);
+}
+
+.card--confirm:hover {
+  border-color: var(--bad-line);
+  box-shadow: none;
+  transform: none;
+}
+
+.card--confirm .card__body strong {
+  color: var(--bad);
 }
 
 .card:disabled {
