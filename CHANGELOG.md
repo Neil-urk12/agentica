@@ -46,6 +46,8 @@ validation evidence in the [development docs](docs/development/README.md).
 - Failed connections expose the same reconnect/key controls in the canvas picker
   and editor, so retained drafts can use Retry save after connectivity returns.
   Add text stays disabled while unsaved edits block the operation.
+- The detached backend embeds the production WOFF/WOFF2 fonts with their MIME
+  types; HTTP regression checks verify every font referenced by the built CSS.
 - Shared modals use native modal dialogs for initial focus and background
   inertness, with Tab/Shift+Tab contained inside. Settings closes with Escape and
   returns focus without triggering the covered canvas picker's navigation.

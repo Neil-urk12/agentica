@@ -252,6 +252,29 @@ test("browser RPC enforces localhost, authentication, CORS, limits, and the shar
         Buffer.byteLength(asset.text),
       );
     }
+    const cssPath = assets.find((path) => path.endsWith(".css"));
+    const css = readFileSync(
+      new URL(`../apps/desktop/dist${cssPath}`, import.meta.url),
+      "utf8",
+    );
+    const fonts = new Set(css.match(/\/assets\/[^)"'\s]+\.woff2?/g));
+    assert.ok(
+      fonts.size > 0,
+      "production CSS must reference its bundled fonts",
+    );
+    for (const path of fonts) {
+      const response = await fetch(`${bundledOrigin}${path}`);
+      assert.equal(response.status, 200, path);
+      assert.equal(
+        response.headers.get("content-type"),
+        path.endsWith(".woff2") ? "font/woff2" : "font/woff",
+      );
+      assert.deepEqual(
+        Buffer.from(await response.arrayBuffer()),
+        readFileSync(new URL(`../apps/desktop/dist${path}`, import.meta.url)),
+      );
+    }
+
     for (const path of [
       "/rpc?extra=true",
       "/../Cargo.toml",
