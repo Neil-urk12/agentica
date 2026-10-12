@@ -20,8 +20,12 @@ pub const FRONTEND_ORIGIN: &str = "http://127.0.0.1:1420";
 pub const BACKEND_PORT: u16 = 1421;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[cfg(feature = "bundled-frontend")]
+include!(concat!(env!("OUT_DIR"), "/frontend.rs"));
+
 struct HttpState {
     host: String,
+    origin: String,
     credential: Vec<u8>,
     // Browser tabs share this runtime; it is the workspace writer.
     runtime: Arc<Mutex<Runtime>>,
@@ -42,23 +46,73 @@ fn reject(status: StatusCode, message: &'static str) -> Response {
 }
 
 async fn dispatch(State(state): State<Arc<HttpState>>, request: Request) -> Response {
-    let local = single_header(request.headers(), "host") == Some(state.host.as_str())
-        && single_header(request.headers(), "origin") == Some(FRONTEND_ORIGIN);
-    let mut response = if local {
+    let origin = single_header(request.headers(), "origin");
+    let local_host = single_header(request.headers(), "host") == Some(state.host.as_str());
+    let local_origin =
+        origin.is_some_and(|origin| origin == FRONTEND_ORIGIN || origin == state.origin);
+    let cors_origin = if local_host && local_origin {
+        request.headers().get(header::ORIGIN).cloned()
+    } else {
+        None
+    };
+    let mut response = if !local_host {
+        reject(StatusCode::FORBIDDEN, "Use the local Agentica frontend.")
+    } else if request.uri().path() != "/rpc"
+        && (local_origin || !request.headers().contains_key("origin"))
+    {
+        serve_frontend(request)
+    } else if local_origin {
         dispatch_local(state, request).await
     } else {
         reject(StatusCode::FORBIDDEN, "Use the local Agentica frontend.")
     };
     let headers = response.headers_mut();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    if local {
-        headers.insert(
-            header::ACCESS_CONTROL_ALLOW_ORIGIN,
-            HeaderValue::from_static(FRONTEND_ORIGIN),
-        );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+    ));
+    if let Some(origin) = cors_origin {
+        headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
         headers.insert(header::VARY, HeaderValue::from_static("Origin"));
     }
     response
+}
+
+fn serve_frontend(request: Request) -> Response {
+    #[cfg(feature = "bundled-frontend")]
+    if let Some((mime, bytes)) = request
+        .uri()
+        .path_and_query()
+        .and_then(|path| frontend_asset(path.as_str()))
+    {
+        if !matches!(*request.method(), Method::GET | Method::HEAD) {
+            let mut response = reject(StatusCode::METHOD_NOT_ALLOWED, "Use GET or HEAD.");
+            response
+                .headers_mut()
+                .insert(header::ALLOW, HeaderValue::from_static("GET, HEAD"));
+            return response;
+        }
+        let body = if request.method() == Method::HEAD {
+            &[][..]
+        } else {
+            bytes
+        };
+        let mut response = ([(header::CONTENT_TYPE, mime)], body).into_response();
+        response
+            .headers_mut()
+            .insert(header::CONTENT_LENGTH, HeaderValue::from(bytes.len()));
+        return response;
+    }
+    let _ = request;
+    reject(StatusCode::NOT_FOUND, "Unknown endpoint.")
 }
 
 async fn dispatch_local(state: Arc<HttpState>, request: Request) -> Response {
@@ -151,7 +205,7 @@ async fn dispatch_local(state: Arc<HttpState>, request: Request) -> Response {
     }
 }
 
-/// Serve authenticated loopback RPC with bounded bodies and HTTP header deadlines.
+/// Serve authenticated loopback RPC and optional embedded UI with HTTP deadlines.
 pub async fn serve(
     listener: TcpListener,
     connection_key: &str,
@@ -164,6 +218,7 @@ pub async fn serve(
         .fallback(dispatch)
         .with_state(Arc::new(HttpState {
             host: format!("127.0.0.1:{}", listener.local_addr()?.port()),
+            origin: format!("http://127.0.0.1:{}", listener.local_addr()?.port()),
             credential: format!("Bearer {connection_key}").into_bytes(),
             runtime: Arc::new(Mutex::new(runtime)),
         }));

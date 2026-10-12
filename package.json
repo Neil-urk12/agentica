@@ -18,8 +18,8 @@
     "check": "pnpm --filter @agentica/protocol build && pnpm -r check",
     "check:rust": "cargo fmt --all --check && cargo clippy --locked --workspace --all-targets --all-features -- -D warnings",
     "test:rust": "cargo test --locked --workspace",
-    "test": "pnpm --filter @agentica/protocol build && cargo test --locked -p agentica-runtime && cargo build --locked -p agentica-runtime && node --test",
-    "build:backend": "cargo build --locked --release -p agentica-runtime --bin agentica-backend",
+    "test": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop build && cargo test --locked -p agentica-runtime --features bundled-frontend && cargo build --locked -p agentica-runtime --features bundled-frontend && node --test",
+    "build:backend": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop build && cargo build --locked --release -p agentica-runtime --bin agentica-backend --features bundled-frontend",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "lint": "oxlint"

@@ -5,6 +5,9 @@ description = "Shared Agentica runtime and detached local backend"
 edition = "2021"
 license = "MIT"
 
+[features]
+bundled-frontend = []
+
 [[bin]]
 name = "agentica-backend"
 path = "src/main.rs"

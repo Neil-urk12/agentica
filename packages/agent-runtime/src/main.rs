@@ -31,8 +31,13 @@ async fn run() -> io::Result<()> {
         || "unavailable; set AGENTICA_DATA_DIR".to_owned(),
         |path| path.display().to_string(),
     );
+    let frontend = if cfg!(feature = "bundled-frontend") {
+        format!("http://127.0.0.1:{BACKEND_PORT}")
+    } else {
+        format!("{FRONTEND_ORIGIN} (start pnpm dev:web)")
+    };
     println!(
-        "Agentica backend: http://127.0.0.1:{BACKEND_PORT}\nFrontend: {FRONTEND_ORIGIN}\nData directory: {data}\nConnection key: {connection_key}\nKeep this terminal running. Each restart creates a new key."
+        "Agentica backend: http://127.0.0.1:{BACKEND_PORT}\nFrontend: {frontend}\nData directory: {data}\nConnection key: {connection_key}\nKeep this terminal running. Each restart creates a new key."
     );
     tokio::select! {
         result = serve(listener, &connection_key, runtime) => result,

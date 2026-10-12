@@ -122,13 +122,15 @@ function send(
         port,
         method,
         path,
-        headers: {
-          Origin: FRONTEND_ORIGIN,
-          Authorization: `Bearer ${key}`,
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(body),
-          ...headers,
-        },
+        headers: Object.fromEntries(
+          Object.entries({
+            Origin: FRONTEND_ORIGIN,
+            Authorization: `Bearer ${key}`,
+            "Content-Type": "application/json",
+            "Content-Length": Buffer.byteLength(body),
+            ...headers,
+          }).filter(([, value]) => value !== null),
+        ),
       },
       (response) => {
         let text = "";
@@ -170,6 +172,130 @@ test("browser RPC enforces localhost, authentication, CORS, limits, and the shar
       id: ping.id,
       result: { status: "ok" },
     });
+
+    const bundledOrigin = `http://127.0.0.1:${port}`;
+    assert.equal(
+      (await send(port, { headers: { Origin: bundledOrigin } })).status,
+      200,
+    );
+    assert.equal((await send(port, { headers: { Origin: null } })).status, 403);
+    assert.equal(
+      (
+        await send(port, {
+          headers: { Origin: [bundledOrigin, bundledOrigin] },
+        })
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await send(port, {
+          headers: { Origin: bundledOrigin, Authorization: "Bearer wrongkey" },
+        })
+      ).status,
+      401,
+    );
+
+    const publicRequest = {
+      method: "GET",
+      body: "",
+      headers: { Origin: null, Authorization: null },
+    };
+    const frontend = await send(port, { ...publicRequest, path: "/" });
+    assert.equal(frontend.status, 200);
+    assert.match(frontend.headers["content-type"], /^text\/html/);
+    assert.match(
+      frontend.headers["content-security-policy"],
+      /connect-src 'self'/,
+    );
+    assert.match(
+      frontend.headers["content-security-policy"],
+      /frame-ancestors 'none'/,
+    );
+    assert.equal(frontend.headers["x-content-type-options"], "nosniff");
+    assert.equal(frontend.headers["referrer-policy"], "no-referrer");
+    assert.equal(frontend.headers["cache-control"], "no-store");
+    assert.equal(frontend.headers["access-control-allow-origin"], undefined);
+    assert.equal(
+      frontend.text,
+      readFileSync(
+        new URL("../apps/desktop/dist/index.html", import.meta.url),
+        "utf8",
+      ),
+    );
+    assert.ok(!frontend.text.includes(key));
+    const assets = [
+      ...frontend.text.matchAll(/(?:src|href)="(\/assets\/[^"?]+)"/g),
+    ].map((match) => match[1]);
+    assert.ok(assets.some((path) => path.endsWith(".js")));
+    assert.ok(assets.some((path) => path.endsWith(".css")));
+    for (const path of assets) {
+      const asset = await send(port, { ...publicRequest, path });
+      assert.equal(asset.status, 200);
+      assert.equal(
+        asset.text,
+        readFileSync(
+          new URL(`../apps/desktop/dist${path}`, import.meta.url),
+          "utf8",
+        ),
+      );
+      assert.match(
+        asset.headers["content-type"],
+        path.endsWith(".js") ? /^text\/javascript/ : /^text\/css/,
+      );
+      assert.ok(!asset.text.includes(key));
+      const head = await send(port, { ...publicRequest, method: "HEAD", path });
+      assert.equal(head.status, 200);
+      assert.equal(head.text, "");
+      assert.equal(
+        Number(head.headers["content-length"]),
+        Buffer.byteLength(asset.text),
+      );
+    }
+    for (const path of [
+      "/rpc?extra=true",
+      "/../Cargo.toml",
+      "/%2e%2e/Cargo.toml",
+      "/assets/missing.js",
+      `${assets[0]}.map`,
+      "/.env",
+      "/src/main.ts",
+      "/?key=wrongkey",
+    ]) {
+      assert.equal(
+        (
+          await send(port, {
+            ...publicRequest,
+            path,
+            headers: { Origin: bundledOrigin },
+          })
+        ).status,
+        404,
+      );
+    }
+    for (const headers of [
+      { Host: "localhost:1421" },
+      { Origin: "https://untrusted.example" },
+      { Origin: "null" },
+      { Origin: "" },
+      { Origin: [bundledOrigin, bundledOrigin] },
+    ]) {
+      assert.equal(
+        (
+          await send(port, {
+            ...publicRequest,
+            path: "/",
+            headers: { ...publicRequest.headers, ...headers },
+          })
+        ).status,
+        403,
+      );
+    }
+    assert.equal(
+      (await send(port, { path: "/", headers: { Origin: bundledOrigin } }))
+        .status,
+      405,
+    );
 
     for (const body of [
       "{",

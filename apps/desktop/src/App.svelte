@@ -111,7 +111,7 @@
         status = "failed";
         message =
           error instanceof TypeError
-            ? "Backend unavailable. Start pnpm dev:backend, then reconnect."
+            ? "Backend unavailable. Start the backend, then reconnect."
             : typeof error === "string"
               ? error
               : error instanceof Error
