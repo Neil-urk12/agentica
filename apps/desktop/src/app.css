@@ -15,9 +15,9 @@
   --muted: #7d81a3;
   --line: #e4e6f4;
   --line-strong: #d2d5ea;
-  --accent: #5b5bd6;
-  --accent-strong: #4a4ac8;
-  --accent-soft: #edecfe;
+--accent: #7b7bf0;
+--accent-strong: #9a9aff;
+--accent-soft: rgba(123, 123, 240, 0.15);
   --ok: #10996f;
   --ok-soft: #e5f7f0;
   --warn: #b26a00;
@@ -45,20 +45,20 @@
 }
 
 :root[data-theme="dark"] {
-  --bg: #0d0f1e;
-  --bg-accent: #161a33;
-  --glow-1: #1c2140;
-  --glow-2: #14182f;
-  --surface: #171a2e;
-  --surface-soft: #1c2038;
-  --ink: #edeffb;
-  --ink-soft: #c1c5df;
-  --muted: #8b90b2;
-  --line: #282d4a;
-  --line-strong: #3b4063;
-  --accent: #7b7bf0;
-  --accent-strong: #9a9aff;
-  --accent-soft: #262a52;
+  --bg: #171717; /* Canvas Background[cite: 1] */
+  --bg-accent: #1e1e1e; /* Sidebar Background[cite: 1] */
+  --glow-1: #222225;
+  --glow-2: #1a1a1a;
+  --surface: #262629; /* Node / Element Background[cite: 1] */
+  --surface-soft: #1e1e1e;
+  --ink: #e5e5e5; /* Primary Text[cite: 1] */
+  --ink-soft: #cccccc;
+  --muted: #8e8e93; /* Muted Text[cite: 1] */
+  --line: #333338;
+  --line-strong: #44444a;
+  --accent: #f59e0b; /* Warm Amber Accent from logo/avatar[cite: 1] */
+  --accent-strong: #d97706;
+  --accent-soft: rgba(245, 158, 11, 0.15);
   --ok: #34d399;
   --ok-soft: #10322a;
   --ok-line: #1f5a49;
@@ -68,7 +68,7 @@
   --bad: #f8758a;
   --bad-soft: #3a1a22;
   --bad-line: #6b2b38;
-  --surface-glass: rgba(23, 26, 46, 0.86);
+  --surface-glass: rgba(23, 23, 23, 0.86);
   --surface-edge: rgba(255, 255, 255, 0.08);
   --scrim: rgba(5, 6, 15, 0.62);
   --shadow-lg: 0 30px 70px -25px rgba(0, 0, 0, 0.7);
@@ -94,7 +94,9 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
@@ -177,13 +179,13 @@ body {
     var(--accent) 0%,
     var(--accent-strong) 100%
   );
-  box-shadow: 0 10px 22px -12px rgba(91, 91, 214, 0.9);
+  box-shadow: 0 10px 22px -12px rgba(245, 158, 11, 0.4);
 }
 
 .btn--soft {
   color: var(--accent-strong);
   background: var(--accent-soft);
-  border-color: #dcdcfa;
+  border-color: var(--line-strong);
 }
 
 .btn--ghost {
@@ -271,7 +273,7 @@ select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(91, 91, 214, 0.16);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
 }
 
 textarea {
@@ -356,8 +358,8 @@ label {
   height: 2.75rem;
   color: #fff;
   border-radius: 14px;
-  background: linear-gradient(150deg, #6f6ff0 0%, var(--accent-strong) 100%);
-  box-shadow: 0 12px 24px -14px rgba(91, 91, 214, 0.95);
+  background: linear-gradient(150deg, var(--accent) 0%, var(--accent-strong) 100%);
+  box-shadow: 0 12px 24px -14px rgba(245, 158, 11, 0.5);
 }
 
 .modal__titles h1 {
@@ -415,7 +417,7 @@ label {
   flex: none;
   border-radius: 50%;
   background: var(--muted);
-  box-shadow: 0 0 0 3px rgba(125, 129, 163, 0.15);
+  box-shadow: 0 0 0 3px rgba(142, 142, 147, 0.15);
 }
 
 .connbar--ok .connbar__dot {
@@ -704,8 +706,8 @@ label {
   height: 2rem;
   color: #fff;
   border-radius: 10px;
-  background: linear-gradient(150deg, #6f6ff0 0%, var(--accent-strong) 100%);
-  box-shadow: 0 10px 20px -12px rgba(91, 91, 214, 0.95);
+  background: linear-gradient(150deg, var(--accent) 0%, var(--accent-strong) 100%);
+  box-shadow: 0 10px 20px -12px rgba(245, 158, 11, 0.5);
 }
 
 .crumbs {
@@ -803,7 +805,7 @@ label {
   position: relative;
   flex: 1;
   min-width: 0;
-  background: var(--surface-soft);
+  background: var(--bg);
 }
 
 .canvas__empty {
@@ -1050,7 +1052,7 @@ label {
 
 .svelte-flow__node.selected .svelte-flow__node-default {
   border-color: var(--accent) !important;
-  box-shadow: 0 0 0 3px rgba(91, 91, 214, 0.18) !important;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2) !important;
 }
 
 .svelte-flow__controls {
