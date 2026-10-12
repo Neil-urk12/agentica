@@ -5,6 +5,7 @@
   import { callRuntime, desktopMode, pingRuntime } from "./lib/runtime";
   import { Editor } from "./lib/editor";
   import { applyTheme, readTheme, type Theme } from "./lib/theme";
+  import Composer from "./lib/components/Composer.svelte";
   import Icon from "./lib/components/Icon.svelte";
   import Settings from "./lib/components/Settings.svelte";
   import WorkspacePicker from "./lib/components/WorkspacePicker.svelte";
@@ -406,6 +407,8 @@
             </button>
           </div>
         {/if}
+
+        <Composer />
       </main>
 
       {#if inspectorOpen && editorState.document}
@@ -507,8 +510,6 @@
             {/each}
           </fieldset>
           -->
-
-          
         </aside>
       {/if}
     </div>
