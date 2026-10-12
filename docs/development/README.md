@@ -39,11 +39,12 @@ the backend, paste its new key and reconnect.
 Both modes check health every five seconds and wait for explicit reconnect on
 failure. Browser health checks have a three-second response deadline. Persistence
 calls await their outcome; only request reading and runtime admission time out.
-After a lost connection, reload before retrying a mutation. The desktop
-health command directly calls the Rust handler. The canvas
-remains usable. Both frontends use port 1420; run one frontend mode at a time.
-Neither mode requires Codex or an AI account. The UI implements health checks;
-workspace persistence is available through the runtime protocol below.
+After a lost connection, reconnect explicitly and use **Retry save** to reconcile
+persisted state while retaining drafts. Copy unsaved edits before a forced reload
+or termination. The desktop health command directly calls the Rust handler. The canvas
+remains usable. Development frontends use port 1420; run one development frontend at a time.
+Neither mode requires Codex or an AI account. The UI implements health checks,
+manual text/placement editing, autosave, and reopen through the runtime protocol below.
 
 ## Verification
 
@@ -57,20 +58,19 @@ workspace persistence is available through the runtime protocol below.
 | `pnpm check:rust`    | Rust formatting and Clippy on all targets/features                      |
 | `pnpm test:rust`     | Rust workspace tests, including desktop connection state                |
 | `pnpm build:desktop` | Native release binary with embedded frontend; no installer              |
-| `pnpm build:backend` | Detached Rust release executable                                        |
+| `pnpm build:backend` | Detached Rust release executable with embedded production frontend      |
 
 The integration tests build the protocol package and Rust executable first.
+They also build/embed the frontend and check asset delivery and same-origin RPC.
+Build frontend assets with `pnpm -r build` before the all-features `pnpm check:rust`
+on a fresh checkout. Plain `cargo test --locked --workspace` does not need Node or assets.
 They use port 1421; stop a development backend before running them. Tests use
 temporary data directories and never touch your workspaces. No real agent
 execution or paid provider calls happen in tests. CI runs frontend checks and
 Rust integration/static checks on Linux and Windows; that is not installer or
 security acceptance validation.
 
-See the [local verification record](verification.md) for the checked behaviors
-and remaining platform limitations.
-
-`pnpm build:desktop` links the Rust runtime into the release app. Installer
-generation and platform acceptance remain pending.
+`pnpm build:desktop` links the Rust runtime into the release app and omits installers.
 
 ## Runtime health check
 
@@ -115,21 +115,35 @@ create/edit/reopen sequence. For example:
 Mutations name an `expectedRevision` and fail with `CONFLICT` on stale state.
 Errors for a valid envelope carry the request id.
 
-To build a backend executable, run `pnpm build:backend`, or directly:
+To build the detached distribution, run `pnpm build:backend`, equivalent to:
 
 ```sh
-cargo build --locked --release -p agentica-runtime --bin agentica-backend
+pnpm --filter @agentica/protocol build
+pnpm --filter @agentica/desktop build
+cargo build --locked --release -p agentica-runtime --bin agentica-backend --features bundled-frontend
 ./target/release/agentica-backend
 ```
 
-Windows uses `target\release\agentica-backend.exe`. Running the compiled backend
-requires neither Node nor Cargo. It serves RPC; it does not yet serve the frontend
-assets. Ctrl+C stops it; SIGTERM is also handled on Unix.
+Windows uses `target\release\agentica-backend.exe`. Copy the executable to any
+directory and open its printed `http://127.0.0.1:1421` frontend URL. Node/pnpm/Vite
+are build tools only; the distributed executable needs no assets directory or
+Rust toolchain. Linux requires compatible glibc/libgcc/libm and a local browser,
+but no GTK/WebKitGTK. Only embedded HTML/JS/CSS are public; no workspace files or
+keys are served. RPC requires an exact accepted Origin, exact Host, and the current
+Bearer key, including same-origin browser calls. Keys are generated after startup,
+never injected into frontend builds, URLs, or browser storage. The public shell
+has a restrictive CSP and no-store/nosniff headers.
+
+Omitting `--features bundled-frontend` makes an RPC-only development build with
+no frontend build requirement. Its terminal points to the Vite development URL.
+Ctrl+C stops either build; SIGTERM is also handled on Unix.
 
 ## Next slice
 
-Complete M0 by connecting the shared UI to the persistence commands: text
-editing, autosave, visible save failures, and reopen in both modes (M0-08).
+Shared UI editing, autosave, visible save failures, and reopen are implemented.
+Interactive Linux lifecycle checks, detached delivery, and an RPM prefix
+install/run prototype pass. Windows lifecycle validation and packaging, normal
+system installation, and wider package compatibility remain unvalidated.
 Then implement the manual mind-map workflow before connecting mock and real agents. Installer
 packaging and enforceable Codex scopes need early validation on both target
 platforms.
