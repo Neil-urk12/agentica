@@ -4,7 +4,9 @@
   import { LIMITS } from "@agentica/protocol";
   import { callRuntime, desktopMode, pingRuntime } from "./lib/runtime";
   import { Editor } from "./lib/editor";
+  import { applyTheme, readTheme, type Theme } from "./lib/theme";
   import Icon from "./lib/components/Icon.svelte";
+  import Settings from "./lib/components/Settings.svelte";
   import WorkspacePicker from "./lib/components/WorkspacePicker.svelte";
   import CanvasPicker from "./lib/components/CanvasPicker.svelte";
   import {
@@ -39,6 +41,8 @@
   );
   let busy = $state(false);
   let inspectorOpen = $state(true);
+  let settingsOpen = $state(false);
+  let theme = $state<Theme>(readTheme());
   let recoveryCopy = $state("");
   let closeNotice = $state("");
   let alive = true;
@@ -50,6 +54,7 @@
         ? "canvas"
         : "editor",
   );
+  const dark = $derived(theme === "dark");
   const connected = $derived(status === "connected");
   const working = $derived(editorState.busy || editorState.saving || busy);
   const canEdit = $derived(connected && !working);
@@ -109,6 +114,10 @@
     untrack(() => {
       for (const { id, position } of placements) editor.placeNode(id, position);
     });
+  });
+
+  $effect(() => {
+    applyTheme(theme);
   });
 
   async function checkConnection(connect = false) {
@@ -221,6 +230,7 @@
       onRefresh={() => void editor.listWorkspaces()}
       onCreate={(name) => void editor.createWorkspace(name)}
       onOpen={(id) => void editor.openWorkspace(id)}
+      onOpenSettings={() => (settingsOpen = true)}
     />
   {:else if stage === "canvas"}
     <CanvasPicker
@@ -232,6 +242,7 @@
       onCreate={(title) => void editor.createCanvas(title)}
       onOpen={(id) => void editor.openCanvas(id)}
       onBack={() => void backToWorkspaces()}
+      onOpenSettings={() => (settingsOpen = true)}
     />
   {:else}
     <header class="topbar">
@@ -289,6 +300,15 @@
           onclick={() => (inspectorOpen = !inspectorOpen)}
         >
           <Icon name="tune" size={20} />
+        </button>
+        <button
+          class="icon-btn"
+          type="button"
+          title="Settings"
+          aria-label="Settings"
+          onclick={() => (settingsOpen = true)}
+        >
+          <Icon name="settings" size={20} />
         </button>
         <button
           class="btn btn--soft"
@@ -367,7 +387,7 @@
             }}
             onmove={(_, next) => editor.setViewport(next)}
           >
-            <Background patternColor="#d7d9ec" gap={24} />
+            <Background patternColor={dark ? "#2a2f52" : "#d7d9ec"} gap={24} />
             <Controls showLock={false} />
           </SvelteFlow>
         {/key}
@@ -516,5 +536,13 @@
         </button>
       </div>
     {/if}
+  {/if}
+
+  {#if settingsOpen}
+    <Settings
+      {theme}
+      onChange={(next) => (theme = next)}
+      onClose={() => (settingsOpen = false)}
+    />
   {/if}
 </div>
