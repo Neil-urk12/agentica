@@ -38,7 +38,7 @@ fn main() {
         "text/html; charset=utf-8",
         &mut output,
     );
-    // shortcut: embed current Vite HTML/JS/CSS only; extend the allowlist when the UI adds assets.
+    // shortcut: embed current Vite HTML/JS/CSS/fonts only; extend the allowlist when the UI adds assets.
     let assets = dist.join("assets");
     assert!(
         fs::symlink_metadata(&assets).unwrap().is_dir(),
@@ -53,6 +53,8 @@ fn main() {
         let mime = match path.extension().and_then(|value| value.to_str()) {
             Some("js") => "text/javascript; charset=utf-8",
             Some("css") => "text/css; charset=utf-8",
+            Some("woff") => "font/woff",
+            Some("woff2") => "font/woff2",
             _ => continue,
         };
         let name = path.file_name().unwrap().to_str().unwrap();
