@@ -1,0 +1,14 @@
+name: Issue template configuration
+description: Configuration for the Agentica issue template workflow.
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Neil-urk12/agentica/security/advisories/new
+    about: Report suspected security issues privately instead of opening a public issue.
+  - name: Contributor Covenant Code of Conduct
+    url: https://github.com/Neil-urk12/agentica/blob/main/.github/CODE_OF_CONDUCT.md
+    about: Community standards for project participation and reporting concerns.
+  - name: Contributing guide
+    url: https://github.com/Neil-urk12/agentica/blob/main/CONTRIBUTING.md
+    about: Where to start if you want to fix bugs or add features.
+# Leave open to contributors and users by default; route sensitive paths elsewhere.
+blank_issues_enabled: true
