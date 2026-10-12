@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@agentica/protocol": "workspace:*",
+    "@fontsource/material-icons": "^5.3.0",
+    "@fontsource/poppins": "^5.3.0",
     "@tauri-apps/api": "^2.12.3",
     "@xyflow/svelte": "^1.7.0",
     "svelte": "^5.57.2"
