@@ -22,6 +22,7 @@
     onRefresh: () => void;
     onCreate: (name: string) => void;
     onOpen: (id: string) => void;
+    onOpenSettings: () => void;
   }
 
   let {
@@ -36,6 +37,7 @@
     onRefresh,
     onCreate,
     onOpen,
+    onOpenSettings,
   }: Props = $props();
 
   let name = $state("");
@@ -43,11 +45,24 @@
   const locked = $derived(busy || !connected);
 </script>
 
+{#snippet actions()}
+  <button
+    class="icon-btn"
+    type="button"
+    title="Settings"
+    aria-label="Settings"
+    onclick={onOpenSettings}
+  >
+    <Icon name="settings" size={20} />
+  </button>
+{/snippet}
+
 <Modal
   wide
   icon="hub"
   title="Choose a workspace"
   subtitle="Start a fresh workspace or continue from a saved one."
+  {actions}
 >
   <div
     class="connbar"

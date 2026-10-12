@@ -16,6 +16,7 @@
     onCreate: (title: string) => void;
     onOpen: (id: string) => void;
     onBack: () => void;
+    onOpenSettings: () => void;
   }
 
   let {
@@ -26,16 +27,30 @@
     onCreate,
     onOpen,
     onBack,
+    onOpenSettings,
   }: Props = $props();
 
   let title = $state("");
 </script>
+
+{#snippet actions()}
+  <button
+    class="icon-btn"
+    type="button"
+    title="Settings"
+    aria-label="Settings"
+    onclick={onOpenSettings}
+  >
+    <Icon name="settings" size={20} />
+  </button>
+{/snippet}
 
 <Modal
   wide
   icon="dashboard_customize"
   title="Choose a canvas"
   subtitle={`Inside “${workspaceName}” — start a new canvas or open a saved one.`}
+  {actions}
 >
   <div class="split">
     <section class="panel">

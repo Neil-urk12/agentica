@@ -8,6 +8,7 @@
     subtitle?: string;
     icon?: string;
     wide?: boolean;
+    actions?: Snippet;
     children: Snippet;
   }
   let {
@@ -15,6 +16,7 @@
     subtitle,
     icon = "blur_on",
     wide = false,
+    actions,
     children,
   }: Props = $props();
 </script>
@@ -34,6 +36,9 @@
         <h1>{title}</h1>
         {#if subtitle}<p>{subtitle}</p>{/if}
       </div>
+      {#if actions}
+        <div class="modal__actions">{@render actions()}</div>
+      {/if}
     </header>
     <div class="modal__body">
       {@render children()}
