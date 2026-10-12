@@ -1,9 +1,8 @@
 <script lang="ts">
   import { LIMITS } from "@agentica/protocol";
+  import type { Snippet } from "svelte";
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
-
-  type Status = "disconnected" | "connecting" | "connected" | "failed";
 
   interface WorkspaceInfo {
     id: string;
@@ -12,13 +11,10 @@
 
   interface Props {
     workspaces: WorkspaceInfo[];
-    status: Status;
-    message: string;
-    desktopMode: boolean;
-    connectionKey: string;
+    connected: boolean;
+    connection: Snippet;
     busy: boolean;
     error: string;
-    onConnect: () => void;
     onRefresh: () => void;
     onCreate: (name: string) => void;
     onOpen: (id: string) => void;
@@ -28,13 +24,10 @@
 
   let {
     workspaces,
-    status,
-    message,
-    desktopMode,
-    connectionKey = $bindable(""),
+    connected,
+    connection,
     busy,
     error,
-    onConnect,
     onRefresh,
     onCreate,
     onOpen,
@@ -45,7 +38,6 @@
   let name = $state("");
   // Deleting storage is destructive, so the row asks for confirmation first.
   let confirming = $state("");
-  const connected = $derived(status === "connected");
   const locked = $derived(busy || !connected);
 </script>
 
@@ -68,50 +60,7 @@
   subtitle="Start a fresh workspace or continue from a saved one."
   {actions}
 >
-  <div
-    class="connbar"
-    class:connbar--ok={connected}
-    class:connbar--bad={status === "failed"}
-    role="status"
-    aria-live="polite"
-  >
-    <span class="connbar__dot"></span>
-    <span class="connbar__text">{message}</span>
-    <form
-      class="connbar__form"
-      onsubmit={(event) => {
-        event.preventDefault();
-        onConnect();
-      }}
-    >
-      {#if !desktopMode}
-        <label class="sr-only" for="connection-key"
-          >Backend connection key</label
-        >
-        <input
-          id="connection-key"
-          type="password"
-          bind:value={connectionKey}
-          maxlength="64"
-          placeholder="Connection key"
-          autocomplete="off"
-          spellcheck="false"
-        />
-      {/if}
-      <button
-        class="btn btn--soft"
-        type="submit"
-        disabled={busy || (!desktopMode && !connectionKey.trim())}
-      >
-        <Icon name={connected ? "sync" : "bolt"} size={18} />
-        {status === "connecting"
-          ? "Connecting…"
-          : connected
-            ? "Reconnect"
-            : "Connect"}
-      </button>
-    </form>
-  </div>
+  {@render connection()}
 
   <div class="split">
     <section class="panel">

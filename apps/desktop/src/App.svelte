@@ -58,7 +58,7 @@
   const dark = $derived(theme === "dark");
   const connected = $derived(status === "connected");
   const working = $derived(editorState.busy || editorState.saving || busy);
-  const canEdit = $derived(connected && !working);
+  const canEdit = $derived(connected && !working && !editorState.dirty);
   const canSave = $derived(
     connected && !working && editorState.dirty && !editorState.error,
   );
@@ -178,7 +178,7 @@
   }
 
   function onKeydown(event: KeyboardEvent) {
-    if (event.key !== "Escape") return;
+    if (event.key !== "Escape" || settingsOpen) return;
     if (stage === "canvas") void backToWorkspaces();
   }
 
@@ -217,17 +217,63 @@
 
 <svelte:window onbeforeunload={beforeUnload} onkeydown={onKeydown} />
 
+{#snippet connectionControls()}
+  {#if stage === "workspace" || !connected}
+    <div
+      class="connbar"
+      class:connbar--ok={connected}
+      class:connbar--bad={status === "failed"}
+      role="status"
+      aria-live="polite"
+    >
+      <span class="connbar__dot"></span>
+      <span class="connbar__text">{message}</span>
+      <form
+        class="connbar__form"
+        onsubmit={(event) => {
+          event.preventDefault();
+          void checkConnection(true);
+        }}
+      >
+        {#if !desktopMode}
+          <label class="sr-only" for="connection-key"
+            >Backend connection key</label
+          >
+          <input
+            id="connection-key"
+            type="password"
+            bind:value={connectionKey}
+            maxlength="64"
+            placeholder="Connection key"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        {/if}
+        <button
+          class="btn btn--soft"
+          type="submit"
+          disabled={busy || (!desktopMode && !connectionKey.trim())}
+        >
+          <Icon name={connected ? "sync" : "bolt"} size={18} />
+          {status === "connecting"
+            ? "Connecting…"
+            : status === "disconnected"
+              ? "Connect"
+              : "Reconnect"}
+        </button>
+      </form>
+    </div>
+  {/if}
+{/snippet}
+
 <div class="shell">
   {#if stage === "workspace"}
     <WorkspacePicker
       workspaces={editorState.workspaces}
-      {status}
-      {message}
-      {desktopMode}
-      bind:connectionKey
+      {connected}
+      connection={connectionControls}
       {busy}
       error={editorState.error}
-      onConnect={() => void checkConnection(true)}
       onRefresh={() => void editor.listWorkspaces()}
       onCreate={(name) => void editor.createWorkspace(name)}
       onOpen={(id) => void editor.openWorkspace(id)}
@@ -239,6 +285,7 @@
       workspaceName={editorState.workspace?.workspace.name ??
         "Unnamed workspace"}
       canvases={editorState.workspace?.canvases ?? []}
+      connection={connectionControls}
       busy={working}
       error={editorState.error}
       onCreate={(title) => void editor.createCanvas(title)}
@@ -248,6 +295,7 @@
       onOpenSettings={() => (settingsOpen = true)}
     />
   {:else}
+    {@render connectionControls()}
     <header class="topbar">
       <div class="topbar__lead">
         <span class="brand">

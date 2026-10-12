@@ -31,6 +31,7 @@
   title="Settings"
   subtitle="Personalize Agentica on this device."
   {actions}
+  {onClose}
 >
   <section class="setting">
     <span class="setting__icon"><Icon name="palette" size={20} /></span>
