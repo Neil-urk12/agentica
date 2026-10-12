@@ -38,6 +38,15 @@ validation evidence in the [development docs](docs/development/README.md).
   C++ Build Tools, WebView2), environment isolation, PowerShell commands, and
   acceptance criteria for native desktop and detached browser launch modes.
 
+#### Storage and editor recovery fixes
+
+- Failed connections expose the same reconnect/key controls in the canvas picker
+  and editor, so retained drafts can use Retry save after connectivity returns.
+  Add text stays disabled while unsaved edits block the operation.
+- Shared modals use native modal dialogs for initial focus and background
+  inertness, with Tab/Shift+Tab contained inside. Settings closes with Escape and
+  returns focus without triggering the covered canvas picker's navigation.
+
 #### Detached distribution and Linux packaging prototype
 
 - `pnpm build:backend` now embeds the built frontend in the Rust executable and

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { LIMITS } from "@agentica/protocol";
+  import type { Snippet } from "svelte";
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
 
@@ -11,6 +12,7 @@
   interface Props {
     workspaceName: string;
     canvases: CanvasInfo[];
+    connection: Snippet;
     busy: boolean;
     error: string;
     onCreate: (title: string) => void;
@@ -23,6 +25,7 @@
   let {
     workspaceName,
     canvases,
+    connection,
     busy,
     error,
     onCreate,
@@ -56,6 +59,7 @@
   subtitle={`Inside “${workspaceName}” — start a new canvas or open a saved one.`}
   {actions}
 >
+  {@render connection()}
   <div class="split">
     <section class="panel">
       <header class="panel__head">
