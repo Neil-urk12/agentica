@@ -13,10 +13,30 @@ validation evidence in the [development docs](docs/development/README.md).
 
 ### 2026-10-12
 
-#### Added
+#### Security policy and community governance
 
-- Security policy (`.github/SECURITY.md`) establishing supported release scopes, private vulnerability reporting via GitHub Security Advisories with fallback maintainer email contact (`neilvallecer12@gmail.com`), initial 72-hour acknowledgement expectations, report content guidelines, and responsible disclosure practices.
-- Contributor Covenant 2.1 Code of Conduct (`.github/CODE_OF_CONDUCT.md`) defining community standards, enforcement responsibilities, and private reporting procedures.
+- Adopted a formalized security policy ([`.github/SECURITY.md`](.github/SECURITY.md))
+  defining supported release scopes (the default branch and explicitly published
+  GitHub releases; older commits and forks are excluded), a 7-point vulnerability
+  report structure, and responsible disclosure rules.
+- Established confidential reporting channels through GitHub Security Advisories
+  with fallback maintainer email contact (`neilvallecer12@gmail.com`), setting an
+  initial 72-hour acknowledgement target with best-effort remediation. Public
+  issues and discussions are explicitly prohibited for vulnerability reports to
+  prevent premature public disclosure.
+- Adopted the Contributor Covenant 2.1 Code of Conduct
+  ([`.github/CODE_OF_CONDUCT.md`](.github/CODE_OF_CONDUCT.md)) defining community
+  standards, enforcement responsibilities, moderation escalation, and private
+  maintainer reporting channels.
+- Relocated both policies to `.github/` to align with GitHub community health file
+  conventions and keep the repository root clean.
+
+#### Windows validation handoff
+
+- Documented the [Windows validation handoff guide](docs/development/windows-validation.md)
+  for M0-10 and Windows M0-11, specifying setup requirements (MSVC toolchain,
+  C++ Build Tools, WebView2), environment isolation, PowerShell commands, and
+  acceptance criteria for native desktop and detached browser launch modes.
 
 #### Detached distribution and Linux packaging prototype
 
