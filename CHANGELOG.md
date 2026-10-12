@@ -40,6 +40,9 @@ validation evidence in the [development docs](docs/development/README.md).
 
 #### Storage and editor recovery fixes
 
+- Workspace deletion validates committed database metadata without migrating it
+  and preserves incomplete or foreign storage. It removes the database before
+  the lock pathname, preventing a second runtime from opening storage mid-delete.
 - Failed connections expose the same reconnect/key controls in the canvas picker
   and editor, so retained drafts can use Retry save after connectivity returns.
   Add text stays disabled while unsaved edits block the operation.
