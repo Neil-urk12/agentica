@@ -1,0 +1,105 @@
+name: Bug report
+description: Report something that behaves differently from expected.
+labels:
+  - type: bug
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: Please check whether the issue has already been reported before opening a new one.
+
+  - type: dropdown
+    id: launch_mode
+    attributes:
+      label: Launch mode
+      description: Which way are you running Agentica when the bug happens?
+      options:
+        - Desktop development (`pnpm dev`)
+        - Compiled desktop app (`pnpm build:desktop`)
+        - Browser development (`pnpm dev:backend` + `pnpm dev:web`)
+        - Browser with a compiled backend (`pnpm build:backend`)
+        - Built-UI preview (`pnpm build` + Vite preview)
+        - Frontend only (`pnpm dev:web`)
+      allow_empty_selection: false
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: OS and version, if relevant.
+    validations:
+      required: true
+
+  - type: input
+    id: environments
+    attributes:
+      label: Environment details
+      description: Node or pnpm versions, Rust toolchain version, frontend branch/commit, or other relevant context.
+    validations:
+      required: false
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: A clear, descriptive title for the issue. You can edit the issue title after filing.
+      placeholder: |
+        e.g. Creating a workspace in browser mode fails after a backend restart with an empty error message
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Give enough detail for someone else to reproduce the behavior reliably.
+      placeholder: |
+        1. Start …
+        2. Create/open …
+        3. Perform …
+        4. Observe …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened, including any error message, console output, backend log output, or screenshot.
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact or frequency
+      description: How often does this happen, and who or what is affected? One-time flakes, connection failures, or storage errors are worth calling out.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: troubleshooting
+    attributes:
+      label: Before submitting
+      options:
+        - I checked whether this issue has already been reported
+        - I reproduced the issue in more than one launch mode where it was possible
+        - I included enough steps to reproduce the behavior
+        - I attached logs, screenshots, or connection/key context only if they are safe to share
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        For suspected security vulnerabilities, do not file a public issue. See [the security policy](https://github.com/Neil-urk12/agentica/blob/main/.github/SECURITY.md) instead.
