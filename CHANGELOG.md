@@ -69,6 +69,21 @@ validation evidence in the [development docs](docs/development/README.md).
   full interaction used XWayland. Windows, packaging, and managed subprocess
   validation remain pending; this does not complete M0 or establish release acceptance.
 
+#### Workspace and canvas deletion
+
+- Saved workspaces and canvases can now be deleted from their pickers. Each
+  saved row carries a delete action beside the open arrow and confirms before
+  anything is removed.
+- `workspace.delete` and `canvas.delete` return the remaining lists in the shape
+  the pickers already render, so one round trip both removes and redraws. The
+  runtime deletes a canvas with its nodes, links, and the text no other canvas
+  still references; workspace storage is removed under the data root only while
+  this runtime holds the writer lock, so an open workspace elsewhere is refused
+  with `WORKSPACE_LOCKED`. Interrupted creations are still never deleted.
+- The shared round-trip fixture covers deletion over both transports: invalid
+  and missing IDs, an open-workspace requirement, canvas removal, workspace
+  removal while open, and that a deleted workspace stays gone across a restart.
+
 ### 2026-10-11
 
 #### Added

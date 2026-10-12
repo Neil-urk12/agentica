@@ -203,6 +203,19 @@ mod tests {
             ("workspace.create", json!({ "name": "  " })),
             ("workspace.create", json!({ "name": "x".repeat(121) })),
             ("workspace.open", json!({ "workspaceId": "../escape" })),
+            ("workspace.delete", json!({})),
+            ("workspace.delete", json!({ "workspaceId": "../escape" })),
+            (
+                "canvas.delete",
+                json!({ "workspaceId": "00000000-0000-4000-8000-000000000000" }),
+            ),
+            (
+                "canvas.delete",
+                json!({
+                    "workspaceId": "00000000-0000-4000-8000-000000000000",
+                    "canvasId": "NOT-A-UUID",
+                }),
+            ),
         ] {
             let response = call(method, params);
             assert_eq!(response["id"], "c-1");

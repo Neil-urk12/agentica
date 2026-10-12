@@ -2,11 +2,11 @@
 
 use std::path::{Path, PathBuf};
 
-use rusqlite::{OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::{json, Value};
 
-use crate::store::{is_id, list_workspaces, new_id, RuntimeError, Workspace};
+use crate::store::{delete_workspace, is_id, list_workspaces, new_id, RuntimeError, Workspace};
 
 // Limits shared with packages/protocol/src/index.ts.
 const MAX_LABEL: usize = 120;
@@ -25,8 +25,10 @@ pub(crate) const METHODS: &[&str] = &[
     "workspace.create",
     "workspace.open",
     "workspace.close",
+    "workspace.delete",
     "canvas.create",
     "canvas.open",
+    "canvas.delete",
     "canvas.save",
     "node.createText",
     "edge.create",
@@ -260,17 +262,24 @@ impl Runtime {
         match method {
             "workspace.list" => {
                 let _: Empty = parse(params)?;
-                let workspaces: Vec<Value> = list_workspaces(self.data_root())?
-                    .into_iter()
-                    .map(|(id, name)| json!({ "id": id, "name": name }))
-                    .collect();
-                Ok(json!({ "workspaces": workspaces }))
+                Ok(json!({ "workspaces": self.workspaces()? }))
             }
             "workspace.create" => {
                 let params: CreateWorkspace = parse(params)?;
                 label("name", &params.name)?;
                 self.open = Some(Workspace::create(self.data_root(), &params.name)?);
                 self.workspace_state()
+            }
+            "workspace.delete" => {
+                let params: WorkspaceParams = parse(params)?;
+                id("workspaceId", &params.workspace_id)?;
+                // Deleting the open workspace closes it first: the storage
+                // cannot be removed while this runtime holds its files open.
+                if self.open.as_ref().map(|open| open.id.as_str()) == Some(&params.workspace_id) {
+                    self.open = None;
+                }
+                delete_workspace(self.data_root(), &params.workspace_id)?;
+                Ok(json!({ "workspaces": self.workspaces()? }))
             }
             "workspace.open" => {
                 let params: WorkspaceParams = parse(params)?;
@@ -306,6 +315,45 @@ impl Runtime {
                 id("canvasId", &params.canvas_id)?;
                 self.transact(&params.workspace_id, |tx| {
                     canvas_state(tx, &params.canvas_id)
+                })
+            }
+            "canvas.delete" => {
+                let params: OpenCanvas = parse(params)?;
+                id("canvasId", &params.canvas_id)?;
+                self.transact(&params.workspace_id, |tx| {
+                    canvas_revision(tx, &params.canvas_id)?;
+                    // Nodes and edges reference the canvas, so they go first.
+                    tx.execute(
+                        "DELETE FROM canvas_edge WHERE canvas_id = ?1",
+                        [&params.canvas_id],
+                    )?;
+                    let mut statement = tx.prepare(
+                        "SELECT DISTINCT artifact_id FROM canvas_node WHERE canvas_id = ?1",
+                    )?;
+                    let artifacts = statement
+                        .query_map([&params.canvas_id], |row| row.get::<_, String>(0))?
+                        .collect::<Result<Vec<_>, _>>()?;
+                    drop(statement);
+                    tx.execute(
+                        "DELETE FROM canvas_node WHERE canvas_id = ?1",
+                        [&params.canvas_id],
+                    )?;
+                    tx.execute("DELETE FROM canvas WHERE id = ?1", [&params.canvas_id])?;
+                    // Artifacts are independent of placement, so only the ones
+                    // this canvas was the last to reference are removed.
+                    for artifact_id in &artifacts {
+                        tx.execute(
+                            "DELETE FROM artifact WHERE id = ?1 AND NOT EXISTS
+                             (SELECT 1 FROM canvas_node WHERE artifact_id = ?1)",
+                            [artifact_id],
+                        )?;
+                    }
+                    tx.execute(
+                        "DELETE FROM text_content WHERE NOT EXISTS
+                         (SELECT 1 FROM artifact WHERE content_id = text_content.id)",
+                        [],
+                    )?;
+                    Ok(json!({ "canvases": canvases(tx)? }))
                 })
             }
             "canvas.save" => {
@@ -506,19 +554,22 @@ impl Runtime {
         Ok(result)
     }
 
+    /// Workspaces this runtime can see, in stable order.
+    fn workspaces(&self) -> Result<Vec<Value>, RuntimeError> {
+        Ok(list_workspaces(self.data_root())?
+            .into_iter()
+            .map(|(id, name)| json!({ "id": id, "name": name }))
+            .collect())
+    }
+
     fn workspace_state(&mut self) -> Result<Value, RuntimeError> {
         let Some(workspace) = &self.open else {
             unreachable!("called after opening a workspace");
         };
         let conn = &workspace.conn;
         let name: String = conn.query_row("SELECT name FROM workspace", [], |row| row.get(0))?;
-        let mut statement = conn.prepare("SELECT id, title FROM canvas ORDER BY rowid")?;
-        let canvases = statement
-            .query_map([], |row| {
-                Ok(json!({ "id": row.get::<_, String>(0)?, "title": row.get::<_, String>(1)? }))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(json!({ "workspace": { "id": workspace.id, "name": name }, "canvases": canvases }))
+        Ok(json!({ "workspace": { "id": workspace.id, "name": name },
+            "canvases": canvases(conn)? }))
     }
 }
 
@@ -526,18 +577,32 @@ impl Runtime {
 #[serde(deny_unknown_fields)]
 struct Empty {}
 
+/// Canvas titles in stable order, as the picker lists them.
+fn canvases(conn: &Connection) -> Result<Vec<Value>, RuntimeError> {
+    let mut statement = conn.prepare("SELECT id, title FROM canvas ORDER BY rowid")?;
+    let rows = statement.query_map([], |row| {
+        Ok(json!({ "id": row.get::<_, String>(0)?, "title": row.get::<_, String>(1)? }))
+    })?;
+    let canvases = rows.collect::<Result<Vec<_>, _>>()?;
+    Ok(canvases)
+}
+
+fn canvas_revision(tx: &Transaction, canvas_id: &str) -> Result<i64, RuntimeError> {
+    tx.query_row(
+        "SELECT revision FROM canvas WHERE id = ?1",
+        [canvas_id],
+        |row| row.get(0),
+    )
+    .optional()?
+    .ok_or_else(|| not_found("Canvas"))
+}
+
 fn check_canvas(tx: &Transaction, canvas_id: &str, expected: i64) -> Result<(), RuntimeError> {
-    let current: Option<i64> = tx
-        .query_row(
-            "SELECT revision FROM canvas WHERE id = ?1",
-            [canvas_id],
-            |row| row.get(0),
-        )
-        .optional()?;
-    match current {
-        None => Err(not_found("Canvas")),
-        Some(current) if current != expected => Err(conflict("canvas", current)),
-        Some(_) => Ok(()),
+    let current = canvas_revision(tx, canvas_id)?;
+    if current == expected {
+        Ok(())
+    } else {
+        Err(conflict("canvas", current))
     }
 }
 

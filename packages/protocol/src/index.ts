@@ -41,8 +41,10 @@ const ParamSchemas = {
   "workspace.create": z.strictObject({ name: Label }),
   "workspace.open": z.strictObject(WorkspaceRef),
   "workspace.close": z.strictObject(WorkspaceRef),
+  "workspace.delete": z.strictObject(WorkspaceRef),
   "canvas.create": z.strictObject({ ...WorkspaceRef, title: Label }),
   "canvas.open": z.strictObject(CanvasRef),
+  "canvas.delete": z.strictObject(CanvasRef),
   "canvas.save": z.strictObject({
     ...CanvasRef,
     expectedRevision: Revision,
@@ -102,6 +104,10 @@ export const RuntimeRequestSchema = z.union([
 ]);
 
 const Workspace = z.strictObject({ id: IdSchema, name: z.string() });
+// `name` is null when this build cannot read the workspace.
+const WorkspaceSummaries = z.array(
+  z.strictObject({ id: IdSchema, name: z.string().nullable() }),
+);
 const CanvasSummary = z.strictObject({ id: IdSchema, title: z.string() });
 export const TextArtifactSchema = z.strictObject({
   id: IdSchema,
@@ -131,15 +137,11 @@ const WorkspaceState = z.strictObject({
 
 export const ResultSchemas = {
   "runtime.ping": z.strictObject({ status: z.literal("ok") }),
-  "workspace.list": z.strictObject({
-    // `name` is null when this build cannot read the workspace.
-    workspaces: z.array(
-      z.strictObject({ id: IdSchema, name: z.string().nullable() }),
-    ),
-  }),
+  "workspace.list": z.strictObject({ workspaces: WorkspaceSummaries }),
   "workspace.create": WorkspaceState,
   "workspace.open": WorkspaceState,
   "workspace.close": z.strictObject({}),
+  "workspace.delete": z.strictObject({ workspaces: WorkspaceSummaries }),
   "canvas.create": z.strictObject({ canvas: CanvasSummary }),
   "canvas.open": z.strictObject({
     canvas: z.strictObject({
@@ -156,6 +158,7 @@ export const ResultSchemas = {
     edges: z.array(EdgeSchema),
     artifacts: z.array(TextArtifactSchema),
   }),
+  "canvas.delete": z.strictObject({ canvases: z.array(CanvasSummary) }),
   "canvas.save": z.strictObject({ revision: Revision }),
   "node.createText": z.strictObject({
     revision: Revision,
