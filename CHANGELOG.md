@@ -11,6 +11,39 @@ validation evidence in the [development docs](docs/development/README.md).
 
 ## Unreleased
 
+### 2026-10-12
+
+#### Detached distribution and Linux packaging prototype
+
+- `pnpm build:backend` now embeds the built frontend in the Rust executable and
+  serves it at `http://127.0.0.1:1421`. A build-time Cargo feature keeps plain
+  Rust development/tests independent of frontend tooling. An exact compile-time
+  HTML/JS/CSS allowlist avoids runtime asset paths and filesystem serving; public
+  assets contain no runtime credentials or workspace data. Existing loopback,
+  validated/authenticated RPC, exact Origin/Host checks, deadlines, key rotation,
+  and explicit reconnect remain enforced. Same-origin RPC still requires the key;
+  CSP, no-store, nosniff, and no-referrer headers protect the delivered shell.
+- The [Linux M0-11 report](docs/development/m0-11-linux.md) records empty-PATH
+  delivery from a copied release executable, real browser save/reopen and
+  failure/reconnect recovery, and an unsigned Tauri RPM prefix install/run with
+  native save/close/relaunch/reopen. RPM is the Fedora prototype format; GTK 3,
+  WebKitGTK 4.1, and compatible system libraries remain host dependencies. System
+  installation is blocked by sudo credentials; older-distribution compatibility,
+  clean dependency provisioning, signing, complete distribution notices, and
+  Windows execution remain pending. This does not close M0-11, M0-GATE, or M6.
+
+#### Progress and validation
+
+- M0-09 interactive Linux validation passes on Fedora 44 x86_64. The
+  [evidence report](docs/development/m0-09-linux.md) records an actual Tauri
+  release window and headed browser: text/canvas interaction, autosave/reopen,
+  visible storage/transport failures, dirty-window close protection, shutdown,
+  abrupt termination, detached tab closure, key rotation, and explicit reconnect.
+  Existing runtime/UI behavior met acceptance without a code change; regression
+  suites and frontend/Rust checks pass. Direct Wayland launch/health/close passed;
+  full interaction used XWayland. Windows, packaging, and managed subprocess
+  validation remain pending; this does not complete M0 or establish release acceptance.
+
 ### 2026-10-11
 
 #### Added
@@ -81,8 +114,9 @@ validation evidence in the [development docs](docs/development/README.md).
   formatting/static checks, release binary builds, browser smoke checks, and
   architecture-diagram checks. These are previously recorded results, not new
   checks performed while creating this changelog.
-- Interactive Tauri behavior, Windows execution, installers, and packaged
-  release acceptance remain unvalidated. Windows CI configuration does not
+- Windows execution, installers, and packaged release acceptance remain
+  unvalidated. Interactive Linux Tauri evidence is recorded above for M0-09.
+  Windows CI configuration does not
   constitute a successful Windows validation run.
 - The detached executable serves RPC only; frontend assets are served separately.
 - M0-08 Linux checks cover in-flight edits, partial failures, lost replies,
@@ -93,8 +127,8 @@ validation evidence in the [development docs](docs/development/README.md).
   transport-failure recovery, accessible notices, and visible keyboard focus.
   `pnpm test` (17 Rust unit, 2 contract, 13 Node tests), `pnpm check`,
   `pnpm run lint`, changed-file Oxfmt checks, and `pnpm build:desktop` pass.
-  Native desktop interaction and Windows execution remain unverified;
-  M0-09 onward is unchanged.
+  Native desktop interaction was subsequently verified on Linux in M0-09;
+  Windows execution remains unverified.
 - **M1–M6: Planned.** Artifact editing, Codex integration, PTYs/previews,
   orchestration, recovery/import-export, and public-alpha packaging remain
   future work. See the [roadmap](ROADMAP.md) for milestone gates.
