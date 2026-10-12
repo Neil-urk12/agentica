@@ -480,6 +480,7 @@
             </fieldset>
           {/if}
 
+          <!--
           <fieldset class="grid" disabled={editorState.busy}>
             <legend>Canvas view</legend>
             {#each ["x", "y", "zoom"] as field}
@@ -505,11 +506,9 @@
               />
             {/each}
           </fieldset>
+          -->
 
-          <p class="hint">
-            <Icon name="auto_awesome" size={15} />
-            Changes autosave. Drag nodes or edit the fields above; save before closing.
-          </p>
+          
         </aside>
       {/if}
     </div>
