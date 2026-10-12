@@ -296,10 +296,36 @@ pub(crate) fn delete_workspace(data_root: Option<&Path>, id: &str) -> Result<(),
         return Err(not_found());
     }
     let dir = workspaces_dir(data_root)?.join(id);
-    if !dir.join(DATABASE_FILE).is_file() {
+    let database = dir.join(DATABASE_FILE);
+    if !database.is_file() {
         return Err(not_found());
     }
     let lock = lock_workspace(&dir, id)?;
+    let conn = Connection::open_with_flags(
+        &database,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    conn.busy_timeout(Duration::from_secs(1))?;
+    match header(&conn)? {
+        (0, 0) => return Err(not_found()),
+        (APPLICATION_ID, 1..) => {}
+        _ => {
+            return Err(unsupported(
+                "This file is not a committed Agentica workspace database.".to_owned(),
+            ));
+        }
+    }
+    let stored: Option<String> = conn
+        .query_row("SELECT id FROM workspace", [], |row| row.get(0))
+        .optional()?;
+    if stored.as_deref() != Some(id) {
+        return Err(unsupported(
+            "The workspace record is missing or does not match its directory.".to_owned(),
+        ));
+    }
+    drop(conn);
+    // Keep the lock pathname intact until another writer can no longer open the database.
+    fs::remove_file(&database)?;
     fs::remove_dir_all(&dir)?;
     drop(lock);
     Ok(())
@@ -553,6 +579,11 @@ mod tests {
         );
         assert_eq!(fs::read(&path).unwrap(), bytes);
         assert_eq!(
+            delete_workspace(Some(temp.path()), &id).unwrap_err().code,
+            "NOT_FOUND"
+        );
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_eq!(
             Workspace::open(Some(temp.path()), &new_id().unwrap())
                 .err()
                 .unwrap()
@@ -582,6 +613,29 @@ mod tests {
                 "NOT_FOUND",
                 "{id}"
             );
+        }
+    }
+
+    #[test]
+    fn deletion_preserves_foreign_or_uncommitted_workspace_records() {
+        let _serial = serial();
+        let temp = tempfile::tempdir().unwrap();
+        for sql in [
+            "PRAGMA application_id = 7",
+            "PRAGMA user_version = 0",
+            "DELETE FROM workspace",
+            "UPDATE workspace SET id = '00000000-0000-4000-8000-000000000000'",
+        ] {
+            let id = created(temp.path(), "Keep");
+            let path = database(temp.path(), &id);
+            Connection::open(&path).unwrap().execute_batch(sql).unwrap();
+            let bytes = fs::read(&path).unwrap();
+            assert_eq!(
+                delete_workspace(Some(temp.path()), &id).unwrap_err().code,
+                "UNSUPPORTED_STORAGE",
+                "{sql}"
+            );
+            assert_eq!(fs::read(&path).unwrap(), bytes, "{sql}");
         }
     }
 
