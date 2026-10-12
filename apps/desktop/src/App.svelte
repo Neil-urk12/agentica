@@ -4,6 +4,9 @@
   import { LIMITS } from "@agentica/protocol";
   import { callRuntime, desktopMode, pingRuntime } from "./lib/runtime";
   import { Editor } from "./lib/editor";
+  import Icon from "./lib/components/Icon.svelte";
+  import WorkspacePicker from "./lib/components/WorkspacePicker.svelte";
+  import CanvasPicker from "./lib/components/CanvasPicker.svelte";
   import {
     Background,
     Controls,
@@ -35,18 +38,34 @@
       : "Start the backend and paste its connection key.",
   );
   let busy = $state(false);
-  let workspaceName = $state("");
-  let canvasTitle = $state("");
-  let workspaceId = $state("");
-  let canvasId = $state("");
+  let inspectorOpen = $state(true);
   let recoveryCopy = $state("");
   let closeNotice = $state("");
   let alive = true;
-  const locked = $derived(
-    editorState.busy ||
-      editorState.saving ||
-      editorState.dirty ||
-      status !== "connected",
+
+  const stage = $derived(
+    !editorState.workspace
+      ? "workspace"
+      : !editorState.document
+        ? "canvas"
+        : "editor",
+  );
+  const connected = $derived(status === "connected");
+  const working = $derived(editorState.busy || editorState.saving || busy);
+  const canEdit = $derived(connected && !working);
+  const canSave = $derived(
+    connected && !working && editorState.dirty && !editorState.error,
+  );
+  const saveLabel = $derived(
+    editorState.saving
+      ? "Saving…"
+      : editorState.error && editorState.dirty
+        ? "Save failed"
+        : editorState.dirty
+          ? "Unsaved changes"
+          : editorState.error
+            ? "Operation failed"
+            : "All changes saved",
   );
   const selected = $derived(
     editorState.document?.nodes.find((node) => node.id === selectedId),
@@ -123,10 +142,34 @@
     }
   }
 
+  /** Persist pending edits before navigation; false means they are still unsaved. */
+  async function settle() {
+    if (editorState.dirty && !editorState.error) await editor.save();
+    return !editorState.dirty;
+  }
+
+  async function backToCanvases() {
+    if (!(await settle())) return;
+    await editor.closeCanvas();
+  }
+
+  async function backToWorkspaces() {
+    if (editorState.document) {
+      if (!(await settle())) return;
+      await editor.closeCanvas();
+    }
+    if (editorState.workspace) await editor.closeWorkspace();
+  }
+
   function beforeUnload(event: BeforeUnloadEvent) {
     if (!editorState.dirty && !editorState.saving) return;
     event.preventDefault();
     event.returnValue = "";
+  }
+
+  function onKeydown(event: KeyboardEvent) {
+    if (event.key !== "Escape") return;
+    if (stage === "canvas") void backToWorkspaces();
   }
 
   onMount(() => {
@@ -162,208 +205,152 @@
   });
 </script>
 
-<svelte:window onbeforeunload={beforeUnload} />
+<svelte:window onbeforeunload={beforeUnload} onkeydown={onKeydown} />
 
-<div class="app-shell">
-  <header>
-    <strong class="brand">agentica</strong>
-    <h1>{editorState.document?.canvas.title ?? "Canvas workspace"}</h1>
-    <form
-      class="connection"
-      onsubmit={(event) => {
-        event.preventDefault();
-        void checkConnection(true);
-      }}
-    >
-      <span>{desktopMode ? "Desktop" : "Browser"} mode</span>
-      {#if !desktopMode}
-        <label class="sr-only" for="connection-key"
-          >Backend connection key</label
-        >
-        <input
-          id="connection-key"
-          type="password"
-          bind:value={connectionKey}
-          maxlength="64"
-          placeholder="Backend connection key"
-          autocomplete="off"
-          spellcheck="false"
-        />
-      {/if}
-      <button
-        type="submit"
-        disabled={busy ||
-          editorState.busy ||
-          editorState.saving ||
-          (!desktopMode && !connectionKey.trim())}
-      >
-        {status === "connecting"
-          ? "Connecting…"
-          : status === "disconnected"
-            ? "Connect"
-            : "Reconnect"}
-      </button>
-    </form>
-  </header>
-  <div
-    role="status"
-    aria-live="polite"
-    class="notice"
-    class:error={status === "failed"}
-  >
-    {message}
-  </div>
-  <div class="workspace-controls">
-    <form
-      onsubmit={(event) => {
-        event.preventDefault();
-        void editor.createWorkspace(workspaceName);
-      }}
-    >
-      <label for="workspace-name">New workspace</label>
-      <input
-        id="workspace-name"
-        bind:value={workspaceName}
-        required
-        maxlength={LIMITS.label}
-      />
-      <button disabled={locked || !workspaceName.trim()}
-        >Create workspace</button
-      >
-    </form>
-    <form
-      onsubmit={(event) => {
-        event.preventDefault();
-        void editor.openWorkspace(workspaceId);
-      }}
-    >
-      <label for="workspace-list">Saved workspace</label>
-      <select id="workspace-list" bind:value={workspaceId} disabled={locked}>
-        <option value="">Choose a workspace</option>
-        {#each editorState.workspaces as workspace}
-          <option value={workspace.id}
-            >{workspace.name ??
-              `Unreadable workspace (${workspace.id})`}</option
+<div class="shell">
+  {#if stage === "workspace"}
+    <WorkspacePicker
+      workspaces={editorState.workspaces}
+      {status}
+      {message}
+      {desktopMode}
+      bind:connectionKey
+      {busy}
+      error={editorState.error}
+      onConnect={() => void checkConnection(true)}
+      onRefresh={() => void editor.listWorkspaces()}
+      onCreate={(name) => void editor.createWorkspace(name)}
+      onOpen={(id) => void editor.openWorkspace(id)}
+    />
+  {:else if stage === "canvas"}
+    <CanvasPicker
+      workspaceName={editorState.workspace?.workspace.name ??
+        "Unnamed workspace"}
+      canvases={editorState.workspace?.canvases ?? []}
+      busy={working}
+      error={editorState.error}
+      onCreate={(title) => void editor.createCanvas(title)}
+      onOpen={(id) => void editor.openCanvas(id)}
+      onBack={() => void backToWorkspaces()}
+    />
+  {:else}
+    <header class="topbar">
+      <div class="topbar__lead">
+        <span class="brand">
+          <span class="brand__mark"><Icon name="blur_on" size={20} /></span>
+          Agentica
+        </span>
+        <nav class="crumbs" aria-label="Breadcrumb">
+          <button
+            class="crumb"
+            type="button"
+            title="Switch workspace"
+            disabled={working}
+            onclick={() => void backToWorkspaces()}
           >
-        {/each}
-      </select>
-      <button disabled={locked || !workspaceId}>Open workspace</button>
-      <button
-        type="button"
-        disabled={locked}
-        onclick={() => void editor.listWorkspaces()}>Refresh list</button
-      >
-    </form>
-    {#if editorState.workspace}
-      <span
-        >Workspace: <strong>{editorState.workspace.workspace.name}</strong
-        ></span
-      >
-      <button disabled={locked} onclick={() => void editor.closeWorkspace()}
-        >Close workspace</button
-      >
-      <form
-        onsubmit={(event) => {
-          event.preventDefault();
-          void editor.createCanvas(canvasTitle);
-        }}
-      >
-        <label for="canvas-title">New canvas</label>
-        <input
-          id="canvas-title"
-          bind:value={canvasTitle}
-          required
-          maxlength={LIMITS.label}
-        />
-        <button disabled={locked || !canvasTitle.trim()}>Create canvas</button>
-      </form>
-      <form
-        onsubmit={(event) => {
-          event.preventDefault();
-          void editor.openCanvas(canvasId);
-        }}
-      >
-        <label for="canvas-list">Saved canvas</label>
-        <select id="canvas-list" bind:value={canvasId} disabled={locked}>
-          <option value="">Choose a canvas</option>
-          {#each editorState.workspace.canvases as canvas}
-            <option value={canvas.id}>{canvas.title}</option>
-          {/each}
-        </select>
-        <button disabled={locked || !canvasId}>Open canvas</button>
-      </form>
-    {/if}
-  </div>
-  <div class="save-controls">
-    <span role="status" aria-live="polite">
-      {editorState.saving
-        ? "Saving…"
-        : editorState.error && editorState.dirty
-          ? "Unsaved changes — save failed"
-          : editorState.dirty
-            ? "Unsaved changes"
-            : editorState.error
-              ? "Operation failed — check the error below"
-              : editorState.document
-                ? "Saved"
-                : "Open or create a workspace and canvas to begin."}
-    </span>
-    {#if editorState.document}
-      <button disabled={locked} onclick={() => void editor.addText()}
-        >Add text</button
-      >
-      <button
-        disabled={editorState.busy ||
-          editorState.saving ||
-          !editorState.dirty ||
-          !!editorState.error ||
-          status !== "connected"}
-        onclick={() => void editor.save()}>Save now</button
-      >
-      {#if editorState.error}
-        <button
-          disabled={editorState.busy ||
-            editorState.saving ||
-            status !== "connected"}
-          onclick={() => void editor.retrySave()}>Retry save</button
+            <Icon name="workspaces" size={16} />
+            {editorState.workspace?.workspace.name ?? "Workspace"}
+          </button>
+          <span class="crumbs__sep"
+            ><Icon name="chevron_right" size={16} /></span
+          >
+          <span class="crumb crumb--current">
+            {editorState.document?.canvas.title ?? "Canvas"}
+          </span>
+        </nav>
+      </div>
+
+      <div class="topbar__actions">
+        <span
+          class="pill"
+          class:pill--ok={!editorState.dirty && !editorState.error}
+          class:pill--warn={editorState.dirty && !editorState.error}
+          class:pill--bad={!!editorState.error}
         >
-      {/if}
-      <button
-        onclick={() => {
-          recoveryCopy = editor.recovery();
-        }}>Copy unsaved edits</button
-      >
+          <span class="pill__dot"></span>{saveLabel}
+        </span>
+        <span class="topbar__divider"></span>
+        <button
+          class="icon-btn"
+          type="button"
+          title="Canvas gallery"
+          aria-label="Canvas gallery"
+          disabled={working}
+          onclick={() => void backToCanvases()}
+        >
+          <Icon name="grid_view" size={20} />
+        </button>
+        <button
+          class="icon-btn"
+          class:icon-btn--active={inspectorOpen}
+          type="button"
+          title="Toggle inspector"
+          aria-label="Toggle inspector"
+          onclick={() => (inspectorOpen = !inspectorOpen)}
+        >
+          <Icon name="tune" size={20} />
+        </button>
+        <button
+          class="btn btn--soft"
+          type="button"
+          disabled={!canEdit}
+          onclick={() => void editor.addText()}
+        >
+          <Icon name="add_box" size={18} />
+          Add text
+        </button>
+        <button
+          class="btn btn--primary"
+          type="button"
+          disabled={!canSave}
+          onclick={() => void editor.save()}
+        >
+          <Icon name="save" size={18} />
+          Save
+        </button>
+      </div>
+    </header>
+
+    {#if editorState.error}
+      <div class="banner banner--error" role="alert">
+        <Icon name="error" size={18} />
+        <span>
+          {editorState.error}
+          {editorState.dirty
+            ? "Your edits are safe here — retry saving or copy them for recovery."
+            : ""}
+        </span>
+        {#if editorState.document}
+          <button
+            class="btn btn--soft"
+            type="button"
+            disabled={!connected || working}
+            onclick={() => void editor.retrySave()}
+          >
+            Retry save
+          </button>
+          <button
+            class="btn btn--ghost"
+            type="button"
+            onclick={() => {
+              recoveryCopy = editor.recovery();
+            }}
+          >
+            Copy edits
+          </button>
+        {/if}
+      </div>
     {/if}
-  </div>
-  {#if editorState.error}<p role="alert" class="notice error">
-      {editorState.error}
-      {editorState.dirty
-        ? "Your edits remain here; retry saving or copy them for recovery."
-        : ""}
-    </p>{/if}
-  {#if closeNotice}<p role="alert" class="notice error">{closeNotice}</p>{/if}
-  {#if recoveryCopy}
-    <div class="recovery">
-      <label for="recovery-copy"
-        >Recovery copy (select all and copy to a local file)</label
-      >
-      <textarea
-        id="recovery-copy"
-        readonly
-        value={recoveryCopy}
-        rows="4"
-        onfocus={(event) => event.currentTarget.select()}></textarea>
-      <button
-        onclick={() => {
-          recoveryCopy = "";
-        }}>Hide recovery copy</button
-      >
-    </div>
-  {/if}
-  <main aria-label="Canvas workspace">
-    <div class="canvas">
-      {#if editorState.document}
-        {#key editorState.document.canvas.id}
+    {#if closeNotice}
+      <div class="banner banner--error" role="alert">
+        <Icon name="warning" size={18} />
+        <span>{closeNotice}</span>
+      </div>
+    {/if}
+
+    <div class="stage">
+      <main class="canvas" aria-label="Canvas workspace">
+        {#key editorState.document?.canvas.id}
           <SvelteFlow
             bind:nodes
             bind:edges
@@ -380,96 +367,154 @@
             }}
             onmove={(_, next) => editor.setViewport(next)}
           >
-            <Background patternColor="#cbd5e1" gap={24} />
+            <Background patternColor="#d7d9ec" gap={24} />
             <Controls showLock={false} />
           </SvelteFlow>
         {/key}
-      {:else}
-        <div class="empty">
-          <p>Room to think.</p>
-          <span>Create or open a canvas to start editing.</span>
-        </div>
-      {/if}
-    </div>
-    {#if editorState.document}
-      <aside aria-label="Text and canvas editor">
-        <label for="text-node">Text node</label>
-        <select id="text-node" bind:value={selectedId}>
-          {#each editorState.document.nodes as node, index}<option
-              value={node.id}>Text {index + 1}</option
-            >{/each}
-        </select>
-        {#if selected && artifact}
-          <label for="text-content">Text content</label>
-          <textarea
-            id="text-content"
-            value={artifact.text}
-            maxlength={LIMITS.text}
-            disabled={editorState.busy}
-            rows="8"
-            oninput={(event) =>
-              editor.editText(artifact.id, event.currentTarget.value)}
-          ></textarea>
-          <fieldset disabled={editorState.busy}>
-            <legend>Placement and size</legend>
-            {#each ["x", "y", "width", "height"] as field}
-              {@const property = field as "x" | "y" | "width" | "height"}
-              <label for={`node-${field}`}>{field}</label>
+        {#if editorState.document && editorState.document.nodes.length === 0}
+          <div class="canvas__empty">
+            <Icon name="note_add" size={34} />
+            <p>This canvas is empty</p>
+            <button
+              class="btn btn--primary"
+              type="button"
+              disabled={!canEdit}
+              onclick={() => void editor.addText()}
+            >
+              <Icon name="add_box" size={18} />
+              Add your first text node
+            </button>
+          </div>
+        {/if}
+      </main>
+
+      {#if inspectorOpen && editorState.document}
+        <aside class="inspector" aria-label="Inspector">
+          <div class="inspector__head">
+            <h2><Icon name="tune" size={18} />Inspector</h2>
+            <button
+              class="icon-btn"
+              type="button"
+              title="Hide inspector"
+              aria-label="Hide inspector"
+              onclick={() => (inspectorOpen = false)}
+            >
+              <Icon name="close" size={18} />
+            </button>
+          </div>
+
+          <div class="field">
+            <label for="text-node">Selected node</label>
+            {#if editorState.document.nodes.length > 0}
+              <select id="text-node" bind:value={selectedId}>
+                {#each editorState.document.nodes as node, index (node.id)}
+                  <option value={node.id}>Text {index + 1}</option>
+                {/each}
+              </select>
+            {:else}
+              <p class="muted">No nodes yet — use “Add text”.</p>
+            {/if}
+          </div>
+
+          {#if selected && artifact}
+            <div class="field">
+              <label for="text-content">Text content</label>
+              <textarea
+                id="text-content"
+                value={artifact.text}
+                maxlength={LIMITS.text}
+                disabled={editorState.busy}
+                rows="7"
+                placeholder="Write something…"
+                oninput={(event) =>
+                  editor.editText(artifact.id, event.currentTarget.value)}
+              ></textarea>
+            </div>
+            <fieldset class="grid" disabled={editorState.busy}>
+              <legend>Placement &amp; size</legend>
+              {#each ["x", "y", "width", "height"] as field}
+                {@const property = field as "x" | "y" | "width" | "height"}
+                <label for={`node-${field}`}>{field}</label>
+                <input
+                  id={`node-${field}`}
+                  type="number"
+                  step="any"
+                  min={field === "width" || field === "height"
+                    ? LIMITS.minSize
+                    : -LIMITS.coordinate}
+                  max={field === "width" || field === "height"
+                    ? LIMITS.maxSize
+                    : LIMITS.coordinate}
+                  value={selected[property]}
+                  oninput={(event) => {
+                    if (
+                      event.currentTarget.validity.valid &&
+                      event.currentTarget.value !== ""
+                    )
+                      editor.placeNode(selected.id, {
+                        [property]: event.currentTarget.valueAsNumber,
+                      });
+                  }}
+                />
+              {/each}
+            </fieldset>
+          {/if}
+
+          <fieldset class="grid" disabled={editorState.busy}>
+            <legend>Canvas view</legend>
+            {#each ["x", "y", "zoom"] as field}
+              {@const property = field as "x" | "y" | "zoom"}
+              <label for={`view-${field}`}>View {field}</label>
               <input
-                id={`node-${field}`}
+                id={`view-${field}`}
                 type="number"
                 step="any"
-                min={field === "width" || field === "height"
-                  ? LIMITS.minSize
-                  : -LIMITS.coordinate}
-                max={field === "width" || field === "height"
-                  ? LIMITS.maxSize
-                  : LIMITS.coordinate}
-                value={selected[property]}
+                min={field === "zoom" ? LIMITS.minZoom : -LIMITS.coordinate}
+                max={field === "zoom" ? LIMITS.maxZoom : LIMITS.coordinate}
+                value={editorState.document.canvas.viewport[property]}
                 oninput={(event) => {
                   if (
                     event.currentTarget.validity.valid &&
                     event.currentTarget.value !== ""
                   )
-                    editor.placeNode(selected.id, {
+                    editor.setViewport({
+                      ...editorState.document!.canvas.viewport,
                       [property]: event.currentTarget.valueAsNumber,
                     });
                 }}
               />
             {/each}
           </fieldset>
-        {/if}
-        <fieldset disabled={editorState.busy}>
-          <legend>Canvas view</legend>
-          {#each ["x", "y", "zoom"] as field}
-            {@const property = field as "x" | "y" | "zoom"}
-            <label for={`view-${field}`}>View {field}</label>
-            <input
-              id={`view-${field}`}
-              type="number"
-              step="any"
-              min={field === "zoom" ? LIMITS.minZoom : -LIMITS.coordinate}
-              max={field === "zoom" ? LIMITS.maxZoom : LIMITS.coordinate}
-              value={editorState.document.canvas.viewport[property]}
-              oninput={(event) => {
-                if (
-                  event.currentTarget.validity.valid &&
-                  event.currentTarget.value !== ""
-                )
-                  editor.setViewport({
-                    ...editorState.document!.canvas.viewport,
-                    [property]: event.currentTarget.valueAsNumber,
-                  });
-              }}
-            />
-          {/each}
-        </fieldset>
-        <p class="hint">
-          Changes autosave. Drag nodes or use the placement fields; use the view
-          fields to pan and zoom with the keyboard. Save before switching
-          canvases or closing.
-        </p>
-      </aside>
+
+          <p class="hint">
+            <Icon name="auto_awesome" size={15} />
+            Changes autosave. Drag nodes or edit the fields above; save before closing.
+          </p>
+        </aside>
+      {/if}
+    </div>
+
+    {#if recoveryCopy}
+      <div class="recovery">
+        <label for="recovery-copy"
+          >Recovery copy — select all and copy to a local file</label
+        >
+        <textarea
+          id="recovery-copy"
+          readonly
+          value={recoveryCopy}
+          rows="4"
+          onfocus={(event) => event.currentTarget.select()}></textarea>
+        <button
+          class="btn btn--ghost"
+          type="button"
+          onclick={() => {
+            recoveryCopy = "";
+          }}
+        >
+          <Icon name="close" size={18} />Hide
+        </button>
+      </div>
     {/if}
-  </main>
+  {/if}
 </div>

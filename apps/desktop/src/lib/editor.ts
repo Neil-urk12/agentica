@@ -157,6 +157,13 @@ export class Editor {
     });
   }
 
+  /** Leave the open canvas but keep its workspace, returning to canvas selection. */
+  async closeCanvas() {
+    await this.operation(async () => {
+      if (this.state.document) this.publish({ document: null });
+    });
+  }
+
   async openCanvas(canvasId: string) {
     await this.operation(async () => {
       const workspaceId = this.state.workspace!.workspace.id;
