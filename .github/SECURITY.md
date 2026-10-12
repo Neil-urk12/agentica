@@ -13,7 +13,12 @@ Older releases, older commit points, forks, and unmaintained branches are not co
 
 ## How to report a vulnerability
 
-Please report suspected vulnerabilities privately through the repository's GitHub Security Advisories reporting flow if it is enabled for this project. If that private reporting path is not active, the maintainers should enable it or configure another private maintainer contact before public disclosure is considered.
+Please report suspected vulnerabilities privately through the repository's GitHub Security Advisories reporting flow:
+https://github.com/Neil-urk12/agentica/security/advisories/new
+
+If that private reporting path is not available or accessible, contact the project maintainers directly via email:
+
+- **neilvallecer12@gmail.com**
 
 Do not open a public GitHub issue, discussion, or social post for a suspected security vulnerability before the maintainers have had an opportunity to review it.
 
@@ -33,9 +38,9 @@ The more evidence you can provide, the faster the maintainers can assess and val
 
 ## Response expectations
 
-This project is maintained on a best-effort basis and does not currently publish a fixed service-level agreement for security triage or remediation. The maintainers will do their best to acknowledge reports promptly and assess them as time permits. Fix timing depends on project capacity, the severity of the issue, and the release cadence for the affected area.
+This project is maintained on a best-effort basis and does not currently publish a formal service-level agreement for security remediation. However, the maintainers will make every effort to acknowledge received reports within 72 hours and provide an initial assessment. Fix timing depends on project capacity, the severity of the issue, and the release cadence for the affected area.
 
-If a vulnerability is confirmed, the maintainers may coordinate a fix, a temporary mitigation, or a public advisory once the report has been handled responsibly.
+If a vulnerability is confirmed, the maintainers will coordinate a fix, a temporary mitigation, or a public advisory once the report has been handled responsibly.
 
 ## Responsible disclosure
 

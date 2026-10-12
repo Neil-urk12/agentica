@@ -30,7 +30,7 @@ Examples of unacceptable behavior include:
 
 ## Reporting violations
 
-If you experience or witness behavior that violates this code of conduct, please report it privately to the project maintainers through the repository's supported contact channel for project moderation or security concerns. In GitHub-hosted projects, this usually means the private maintainer contact or moderation route configured for the repository; if such a route is not configured yet, the maintainers should add one before relying on this document as the primary reporting path.
+If you experience or witness behavior that violates this code of conduct, please report it privately to the project maintainers via email at neilvallecer12@gmail.com.
 
 When reporting, include:
 
@@ -68,4 +68,4 @@ This Code of Conduct is adapted from the Contributor Covenant, version 2.1, and 
 
 For more information about the Contributor Covenant, visit https://www.contributor-covenant.org.
 
-This project should confirm and document the exact private reporting contact in repository settings or project documentation once the maintainers choose the final channel they can actively monitor.
+The private reporting contact for this project is neilvallecer12@gmail.com.

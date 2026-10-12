@@ -13,6 +13,11 @@ validation evidence in the [development docs](docs/development/README.md).
 
 ### 2026-10-12
 
+#### Added
+
+- Security policy (`.github/SECURITY.md`) establishing supported release scopes, private vulnerability reporting via GitHub Security Advisories with fallback maintainer email contact (`neilvallecer12@gmail.com`), initial 72-hour acknowledgement expectations, report content guidelines, and responsible disclosure practices.
+- Contributor Covenant 2.1 Code of Conduct (`.github/CODE_OF_CONDUCT.md`) defining community standards, enforcement responsibilities, and private reporting procedures.
+
 #### Detached distribution and Linux packaging prototype
 
 - `pnpm build:backend` now embeds the built frontend in the Rust executable and
