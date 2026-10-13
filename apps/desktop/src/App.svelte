@@ -12,6 +12,7 @@
   import Settings from "./lib/components/Settings.svelte";
   import WorkspacePicker from "./lib/components/WorkspacePicker.svelte";
   import CanvasPicker from "./lib/components/CanvasPicker.svelte";
+  import NodeDrawer from "./lib/components/NodeDrawer.svelte";
   import {
     DEFAULT_STROKE_COLOR,
     DEFAULT_STROKE_WIDTH,
@@ -52,6 +53,7 @@
   );
   let busy = $state(false);
   let inspectorOpen = $state(true);
+  let drawerOpen = $state(true);
   let settingsOpen = $state(false);
   let theme = $state<Theme>(readTheme());
   let recoveryCopy = $state("");
@@ -104,6 +106,28 @@
   const isDrawingTool = $derived(
     tool === "draw" || tool === "rectangle" || tool === "ellipse",
   );
+  const nodeItems = $derived.by(() => {
+    const document = editorState.document;
+    if (!document) return [];
+    return document.nodes.map((node, index) => {
+      const artifact = document.artifacts.find(
+        (item) => item.id === node.artifactId,
+      );
+      const kind =
+        artifact?.type === "drawing"
+          ? (artifact.drawing.shapes[0]?.kind ?? "path")
+          : "text";
+      const name =
+        kind === "text"
+          ? "Text"
+          : kind === "rectangle"
+            ? "Rectangle"
+            : kind === "ellipse"
+              ? "Ellipse"
+              : "Drawing";
+      return { id: node.id, kind, label: `${name} ${index + 1}` };
+    });
+  });
   // Drawings may start while autosave is pending: the commit waits for it.
   const canDraw = $derived(connected && !editorState.busy);
 
@@ -541,6 +565,16 @@
         </button>
         <button
           class="icon-btn"
+          class:icon-btn--active={drawerOpen}
+          type="button"
+          title="Toggle nodes"
+          aria-label="Toggle nodes"
+          onclick={() => (drawerOpen = !drawerOpen)}
+        >
+          <Icon name="toc" size={20} />
+        </button>
+        <button
+          class="icon-btn"
           class:icon-btn--active={inspectorOpen}
           type="button"
           title="Toggle inspector"
@@ -617,6 +651,16 @@
     {/if}
 
     <div class="stage">
+      {#if drawerOpen && editorState.document}
+        <NodeDrawer
+          items={nodeItems}
+          {selectedId}
+          busy={working}
+          onSelect={(id) => (selectedId = id)}
+          onClose={() => (drawerOpen = false)}
+        />
+      {/if}
+
       <main
         class="canvas"
         class:canvas--pan={tool === "pan"}
