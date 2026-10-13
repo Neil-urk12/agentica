@@ -663,11 +663,12 @@
         <button
           class="btn btn--primary"
           type="button"
+          aria-label="Save"
           disabled={!canSave}
           onclick={() => void editor.save()}
         >
           <Icon name="save" size={18} />
-          <!-- Save -->
+          Save
         </button>
       </div>
     </header>
