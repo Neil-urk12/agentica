@@ -207,6 +207,37 @@
     return rect ? { x: point.x - rect.left, y: point.y - rect.top } : point;
   }
 
+  /**
+   * The drawing overlay is a sibling of the xyflow root, so wheel and pinch
+   * events land on it and never reach xyflow's zoom listener. Forward them.
+   */
+  function forwardWheel(event: WheelEvent) {
+    const flow = canvasEl?.querySelector(".svelte-flow");
+    if (!flow) return;
+    event.preventDefault();
+    flow.dispatchEvent(
+      new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        screenX: event.screenX,
+        screenY: event.screenY,
+        deltaX: event.deltaX,
+        deltaY: event.deltaY,
+        deltaZ: event.deltaZ,
+        deltaMode: event.deltaMode,
+        ctrlKey: event.ctrlKey,
+        shiftKey: event.shiftKey,
+        altKey: event.altKey,
+        metaKey: event.metaKey,
+        button: event.button,
+        buttons: event.buttons,
+        detail: event.detail,
+      }),
+    );
+  }
+
   function startDraw(event: PointerEvent) {
     if (!canDraw || !drawSurface) return;
     const kind = tool === "draw" ? "path" : tool;
@@ -770,6 +801,7 @@
             role="application"
             aria-label="Drawing surface"
             bind:this={drawSurface}
+            onwheel={forwardWheel}
             onpointerdown={startDraw}
             onpointermove={moveDraw}
             onpointerup={endDraw}
