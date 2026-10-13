@@ -430,6 +430,60 @@ test("drawings queued behind an in-flight save are not dropped", async (t) => {
   assert.equal(disk.nodes.length, 2);
 });
 
+test("a failed drawing creation stays recoverable and retries exactly once", async (t) => {
+  let fail = true;
+  const { editor, disk, calls } = await setup(t, async (method) => {
+    if (method === "node.createDrawing" && fail)
+      throw new TypeError("Simulated backend failure");
+  });
+  await editor.addDrawing(
+    { x: 120, y: 80, width: 60, height: 60 },
+    {
+      shapes: [
+        {
+          kind: "path",
+          points: [
+            [0, 0],
+            [40, 40],
+          ],
+          color: "#7b7bf0",
+          width: 3,
+        },
+      ],
+    },
+  );
+  // The failed stroke stays drawn and remains part of the recoverable edits.
+  assert.equal(editor.state.dirty, true);
+  assert.match(editor.state.error, /Simulated backend failure/);
+  assert.equal(editor.state.document.nodes.length, 2);
+  assert.equal(editor.state.document.artifacts.length, 2);
+  assert.match(editor.recovery(), /#7b7bf0/);
+  assert.equal(disk.nodes.length, 1, "the failed create reached no storage");
+  assert.equal(disk.artifacts.length, 1);
+
+  fail = false;
+  await editor.retrySave();
+  assert.equal(editor.state.error, "");
+  assert.equal(editor.state.dirty, false);
+  assert.equal(
+    calls.filter((call) => call.method === "node.createDrawing").length,
+    2,
+    "one failed attempt plus one retry",
+  );
+  assert.equal(disk.nodes.length, 2);
+  assert.equal(disk.artifacts.length, 2);
+
+  // A further retry with nothing pending creates nothing more.
+  await editor.retrySave();
+  assert.equal(disk.nodes.length, 2);
+
+  const expected = structuredClone(editor.state.document);
+  await editor.closeWorkspace();
+  await editor.openWorkspace(workspaceId);
+  await editor.openCanvas(canvasId);
+  assert.deepEqual(editor.state.document, expected);
+});
+
 test("deleting a saved canvas and workspace updates the lists the pickers show", async (t) => {
   const { editor, calls } = await setup(t);
   await editor.listWorkspaces();
