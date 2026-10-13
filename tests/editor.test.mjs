@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { MAX_FRAME_BYTES } from "@agentica/protocol";
 import { Editor } from "../apps/desktop/src/lib/editor.ts";
 
 const workspaceId = "00000000-0000-4000-8000-000000000001";
@@ -145,6 +146,45 @@ function deferred() {
     resolve = done;
   });
   return { promise, resolve };
+}
+
+/** A dense loop that stays in a small area yet serializes past one frame. */
+function denseLoop() {
+  return Array.from({ length: 2000 }, (_, index) => {
+    const angle = index * 0.05;
+    return [
+      Number((20 * Math.cos(angle)).toFixed(2)),
+      Number((20 * Math.sin(angle)).toFixed(2)),
+    ];
+  });
+}
+
+function frameBytes(method, params) {
+  return new TextEncoder().encode(
+    JSON.stringify({
+      protocolVersion: 1,
+      id: crypto.randomUUID(),
+      method,
+      params,
+    }),
+  ).length;
+}
+
+function reassemble(drawings) {
+  const combined = [];
+  for (const [index, artifact] of drawings.entries()) {
+    const segment = artifact.drawing.shapes[0].points;
+    if (index === 0) combined.push(...segment);
+    else {
+      assert.deepEqual(
+        segment[0],
+        combined.at(-1),
+        "segments meet continuously",
+      );
+      combined.push(...segment.slice(1));
+    }
+  }
+  return combined;
 }
 
 test("text, placement, dimensions and view save and reopen without AI", async (t) => {
@@ -482,6 +522,105 @@ test("a failed drawing creation stays recoverable and retries exactly once", asy
   await editor.openWorkspace(workspaceId);
   await editor.openCanvas(canvasId);
   assert.deepEqual(editor.state.document, expected);
+});
+
+test("a long stroke is split into frame-sized requests that stay continuous", async (t) => {
+  const { editor, disk, calls } = await setup(t);
+  const points = denseLoop();
+  assert.ok(
+    frameBytes("node.createDrawing", {
+      workspaceId,
+      canvasId,
+      expectedRevision: 1,
+      x: 0,
+      y: 0,
+      width: 40,
+      height: 40,
+      drawing: {
+        shapes: [{ kind: "path", points, color: "#7b7bf0", width: 3 }],
+      },
+    }) > MAX_FRAME_BYTES,
+    "the stroke alone would exceed one frame",
+  );
+  await editor.addDrawing(
+    { x: 0, y: 0, width: 40, height: 40 },
+    { shapes: [{ kind: "path", points, color: "#7b7bf0", width: 3 }] },
+  );
+  assert.equal(editor.state.error, "");
+  assert.equal(editor.state.dirty, false);
+
+  const creates = calls.filter((call) => call.method === "node.createDrawing");
+  assert.ok(creates.length > 1, "the stroke was split across requests");
+  // Every request the flow sent — not just the creates — fits one frame.
+  for (const call of calls)
+    assert.ok(
+      frameBytes(call.method, call.params) <= MAX_FRAME_BYTES,
+      `${call.method} fits the frame limit (${frameBytes(call.method, call.params)} bytes)`,
+    );
+
+  const drawings = disk.artifacts.filter((item) => item.type === "drawing");
+  assert.equal(drawings.length, creates.length);
+  assert.deepEqual(reassemble(drawings), points, "the whole stroke persists");
+
+  const expected = structuredClone(editor.state.document);
+  await editor.closeWorkspace();
+  await editor.openWorkspace(workspaceId);
+  await editor.openCanvas(canvasId);
+  assert.deepEqual(editor.state.document, expected);
+});
+
+test("a split stroke that fails midway retries only the unfinished segments", async (t) => {
+  let fail = true;
+  let attempts = 0;
+  const { editor, disk, calls } = await setup(t, async (method) => {
+    if (method !== "node.createDrawing") return;
+    attempts += 1;
+    if (attempts >= 2 && fail) throw new TypeError("Simulated backend failure");
+  });
+  const points = denseLoop();
+  await editor.addDrawing(
+    { x: 0, y: 0, width: 40, height: 40 },
+    { shapes: [{ kind: "path", points, color: "#7b7bf0", width: 3 }] },
+  );
+  // The failed stroke stays drawn and entirely recoverable.
+  assert.equal(editor.state.dirty, true);
+  assert.match(editor.state.error, /Simulated backend failure/);
+  const total = editor.state.document.nodes.length - 1;
+  assert.ok(total > 1, "the stroke was split");
+  assert.match(editor.recovery(), /#7b7bf0/);
+  assert.equal(disk.nodes.length - 1, 1, "only the first segment persisted");
+  assert.equal(attempts, 2, "the second segment failed and stopped the flush");
+
+  fail = false;
+  const before = calls.filter(
+    (call) => call.method === "node.createDrawing",
+  ).length;
+  await editor.retrySave();
+  assert.equal(editor.state.error, "");
+  assert.equal(editor.state.dirty, false);
+  assert.equal(disk.nodes.length - 1, total, "every segment persisted");
+  assert.equal(
+    calls.filter((call) => call.method === "node.createDrawing").length,
+    before + (total - 1),
+    "retry created only the unfinished segments",
+  );
+
+  const drawings = disk.artifacts.filter((item) => item.type === "drawing");
+  assert.equal(drawings.length, total);
+  assert.deepEqual(reassemble(drawings), points, "no segment is duplicated");
+
+  const expected = structuredClone(editor.state.document);
+  await editor.closeWorkspace();
+  await editor.openWorkspace(workspaceId);
+  await editor.openCanvas(canvasId);
+  assert.deepEqual(editor.state.document, expected);
+  assert.deepEqual(
+    reassemble(
+      editor.state.document.artifacts.filter((item) => item.type === "drawing"),
+    ),
+    points,
+    "reopening shows the whole stroke",
+  );
 });
 
 test("deleting a saved canvas and workspace updates the lists the pickers show", async (t) => {

@@ -3,7 +3,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { LIMITS } from "@agentica/protocol";
   import { callRuntime, desktopMode, pingRuntime } from "./lib/runtime";
-  import { Editor } from "./lib/editor";
+  import { Editor, type DrawingSegment } from "./lib/editor";
   import { applyTheme, readTheme, type Theme } from "./lib/theme";
   import Composer from "./lib/components/Composer.svelte";
   import CanvasToolbar from "./lib/components/CanvasToolbar.svelte";
@@ -289,14 +289,17 @@
 
   async function commit(finished: Gesture, rect: DOMRect) {
     const points = finished.points.map((point) => toFlow(point, rect));
+    const segments: DrawingSegment[] = [];
     if (finished.kind === "path") {
+      // Each group already fits the node size limit; the editor splits any group
+      // that would still exceed a single request frame.
       for (const group of splitPath(points)) {
         const box = bounds(group);
         const x = fit(box.minX - PAD, box.maxX - box.minX + PAD * 2);
         const y = fit(box.minY - PAD, box.maxY - box.minY + PAD * 2);
-        await editor.addDrawing(
-          { x: x.origin, y: y.origin, width: x.size, height: y.size },
-          {
+        segments.push({
+          geometry: { x: x.origin, y: y.origin, width: x.size, height: y.size },
+          drawing: {
             shapes: [
               {
                 kind: "path",
@@ -309,30 +312,31 @@
               },
             ],
           },
-        );
+        });
       }
-      return;
+    } else {
+      const box = bounds(points);
+      const width = Math.max(1, box.maxX - box.minX);
+      const height = Math.max(1, box.maxY - box.minY);
+      const x = fit(box.minX, width);
+      const y = fit(box.minY, height);
+      segments.push({
+        geometry: { x: x.origin, y: y.origin, width: x.size, height: y.size },
+        drawing: {
+          shapes: [
+            {
+              kind: finished.kind,
+              x: round(box.minX - x.origin),
+              y: round(box.minY - y.origin),
+              width: round(width),
+              height: round(height),
+              color: strokeColor,
+            },
+          ],
+        },
+      });
     }
-    const box = bounds(points);
-    const width = Math.max(1, box.maxX - box.minX);
-    const height = Math.max(1, box.maxY - box.minY);
-    const x = fit(box.minX, width);
-    const y = fit(box.minY, height);
-    await editor.addDrawing(
-      { x: x.origin, y: y.origin, width: x.size, height: y.size },
-      {
-        shapes: [
-          {
-            kind: finished.kind,
-            x: round(box.minX - x.origin),
-            y: round(box.minY - y.origin),
-            width: round(width),
-            height: round(height),
-            color: strokeColor,
-          },
-        ],
-      },
-    );
+    await editor.addDrawings(segments);
   }
 
   function selectTool(next: Tool) {
