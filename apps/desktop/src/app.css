@@ -873,15 +873,23 @@ label {
   background: var(--bg);
 }
 
-.canvas__nodes {
+.canvas__nodes,
+.canvas__inspector {
   position: absolute;
   z-index: 7;
   top: 0.7rem;
-  left: 0.7rem;
   background: var(--surface-glass);
   border-color: var(--line-strong);
   backdrop-filter: blur(10px);
   box-shadow: var(--shadow-sm);
+}
+
+.canvas__nodes {
+  left: 0.7rem;
+}
+
+.canvas__inspector {
+  right: 0.7rem;
 }
 
 .canvas__empty {

@@ -613,16 +613,6 @@
         </button>
         <button
           class="icon-btn"
-          class:icon-btn--active={inspectorOpen}
-          type="button"
-          title="Toggle inspector"
-          aria-label="Toggle inspector"
-          onclick={() => (inspectorOpen = !inspectorOpen)}
-        >
-          <Icon name="tune" size={20} />
-        </button>
-        <button
-          class="icon-btn"
           type="button"
           title="Settings"
           aria-label="Settings"
@@ -760,6 +750,16 @@
             onclick={() => (drawerOpen = !drawerOpen)}
           >
             <Icon name="toc" size={20} />
+          </button>
+          <button
+            class="icon-btn canvas__inspector"
+            class:icon-btn--active={inspectorOpen}
+            type="button"
+            title="Toggle inspector"
+            aria-label="Toggle inspector"
+            onclick={() => (inspectorOpen = !inspectorOpen)}
+          >
+            <Icon name="tune" size={20} />
           </button>
         {/if}
 
