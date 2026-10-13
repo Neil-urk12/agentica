@@ -1564,9 +1564,22 @@ label {
   box-shadow: var(--shadow-sm) !important;
 }
 
-.svelte-flow__node.selected .svelte-flow__node-default {
+/* `selected` shares the element with the node-type class, so these are
+   compound selectors; `!important` also beats this file's base rules. */
+.svelte-flow__node-default.selected,
+.svelte-flow__node-default.node--selected {
   border-color: var(--accent) !important;
-  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2) !important;
+  box-shadow:
+    0 0 0 3px rgba(245, 158, 11, 0.22),
+    var(--shadow-sm) !important;
+}
+
+.svelte-flow__node-drawing.selected,
+.svelte-flow__node-drawing.node--selected {
+  border-radius: 8px;
+  box-shadow:
+    0 0 0 2px var(--accent),
+    0 0 0 6px rgba(245, 158, 11, 0.18) !important;
 }
 
 .svelte-flow__controls {

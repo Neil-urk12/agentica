@@ -141,6 +141,9 @@
 
   const round = (value: number) => Math.round(value * 100) / 100;
 
+  /** Class applied to the canvas node that matches `selectedId`. */
+  const SELECTED_CLASS = "node--selected";
+
   /** Stored drawer width first, then the default. */
   function readDrawerWidth(): number {
     try {
@@ -349,6 +352,20 @@
     untrack(() => {
       for (const { id, position } of placements) editor.placeNode(id, position);
     });
+  });
+
+  // The canvas highlight follows the app's selection, wherever it changed:
+  // drawer list, inspector dropdown, or a click on the canvas itself.
+  $effect(() => {
+    const id = selectedId;
+    const next = nodes.map((node) => {
+      if (node.id === id)
+        return node.class === SELECTED_CLASS
+          ? node
+          : { ...node, class: SELECTED_CLASS };
+      return node.class ? { ...node, class: "" } : node;
+    });
+    if (next.some((node, index) => node !== nodes[index])) nodes = next;
   });
 
   $effect(() => {
