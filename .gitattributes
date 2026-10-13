@@ -1,0 +1,9 @@
+# Normalize line endings to LF in the repository and in the working tree on
+# every platform. Without this, a Windows checkout with core.autocrlf=true turns
+# checked-out text files into CRLF and `pnpm format:check` (Oxfmt, which follows
+# .editorconfig's end_of_line = lf) fails for every file.
+* text=auto eol=lf
+
+# Binary assets are never normalized or treated as text.
+*.png binary
+*.ico binary

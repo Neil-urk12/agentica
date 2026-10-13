@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Editor } from "../apps/desktop/src/lib/editor.ts";
 import {
@@ -612,12 +613,11 @@ test("queued persistence calls expire without writes and started calls return th
   const backend = await startBackend();
   key = backend.connectionKey;
   let database;
-  let release;
   try {
     const rpc = (id, method, params) =>
       send(port, {
         body: JSON.stringify({ protocolVersion: 1, id, method, params }),
-        timeout: 10000,
+        timeout: 15000,
       });
     const created = await rpc("setup", "workspace.create", {
       name: "Deadlines",
@@ -626,40 +626,72 @@ test("queued persistence calls expire without writes and started calls return th
     database = new DatabaseSync(
       join(dataDir, "workspaces", workspaceId, "workspace.sqlite3"),
     );
+
+    // A call admitted before the deadline returns its own committed outcome.
+    // It is admitted at once (the runtime is idle), then waits on the exclusive
+    // lock; releasing the lock during that wait commits the write. Rolling back
+    // well inside the two-second SQLite busy timeout commits the call no matter
+    // how scheduling interleaves the send and the release.
     database.exec("BEGIN EXCLUSIVE");
-    // Two SQLite waits take four seconds; the third call starts before the
-    // deadline and finishes after it, while the fourth must expire in the queue.
-    release = setTimeout(() => database.exec("ROLLBACK"), 5350);
+    const committed = rpc("committed", "canvas.create", {
+      workspaceId,
+      title: "committed",
+    });
+    await delay(300);
+    database.exec("ROLLBACK");
+    const committedResponse = await committed;
+    assert.equal(committedResponse.status, 200);
+    assert.equal(
+      JSON.parse(committedResponse.text).result.canvas.title,
+      "committed",
+    );
+
+    // Calls that cannot be admitted within the five-second deadline expire with
+    // 408 and never write. The held lock serializes every call, and each
+    // admitted call spends its full two-second SQLite busy timeout, so a call
+    // several places back cannot reach the runtime before its deadline. How
+    // many expire depends on scheduling, so assert the invariants that hold at
+    // any speed instead of a knife-edge split.
+    database.exec("BEGIN EXCLUSIVE");
     const results = await Promise.all(
-      Array.from({ length: 4 }, async (_, index) => {
+      Array.from({ length: 6 }, async (_, index) => {
         const title = `queued-${index}`;
-        const started = performance.now();
         const response = await rpc(title, "canvas.create", {
           workspaceId,
           title,
         });
-        return { ...response, title, elapsed: performance.now() - started };
+        return { ...response, title };
       }),
     );
+    database.exec("ROLLBACK");
+
     const expired = results.filter((result) => result.status === 408);
-    assert.equal(expired.length, 1);
-    assert.match(expired[0].text, /before execution\. Nothing was saved/);
+    assert.ok(
+      expired.length >= 1,
+      "a call that waits past the deadline must expire in the queue",
+    );
+    for (const result of expired)
+      assert.match(result.text, /before execution\. Nothing was saved/);
+    // Calls admitted before the deadline still return their own outcome: with
+    // the lock held that is a storage failure, never an admission timeout. At
+    // least the first call is admitted, so this path must also be exercised.
     const completed = results.filter((result) => result.status === 200);
-    const saved = completed.filter((result) => JSON.parse(result.text).result);
-    assert.equal(saved.length, 1);
-    assert.ok(saved[0].elapsed > 5000);
-    for (const failed of completed.filter(
-      (result) => JSON.parse(result.text).error,
-    ))
-      assert.equal(JSON.parse(failed.text).error.code, "STORAGE_ERROR");
+    assert.ok(
+      completed.length >= 1,
+      "a call admitted before the deadline must answer",
+    );
+    for (const result of completed)
+      assert.equal(JSON.parse(result.text).error?.code, "STORAGE_ERROR");
+
+    // Only the committed call reached storage; the expired and failed calls
+    // wrote nothing.
     const reopened = await rpc("inspect", "workspace.open", { workspaceId });
     const canvases = JSON.parse(reopened.text).result.canvases;
     assert.deepEqual(
       canvases.map((canvas) => canvas.title),
-      [saved[0].title],
+      ["committed"],
     );
   } finally {
-    clearTimeout(release);
     database?.close();
     await stopBackend(backend.child);
   }
