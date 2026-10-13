@@ -1250,11 +1250,18 @@ label {
   list-style: none;
 }
 
+.drawer__row {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
 .drawer__item {
   display: flex;
   align-items: center;
   gap: 0.55rem;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 0.45rem 0.5rem;
   text-align: left;
   background: transparent;
@@ -1274,6 +1281,18 @@ label {
 .drawer__item--active {
   background: var(--accent-soft);
   border-color: var(--accent);
+}
+
+.drawer__delete {
+  flex: none;
+  width: 1.9rem;
+  height: 1.9rem;
+  color: var(--muted);
+}
+
+.drawer__delete:hover:not(:disabled) {
+  color: var(--bad);
+  background: var(--bad-soft);
 }
 
 .drawer__icon {
