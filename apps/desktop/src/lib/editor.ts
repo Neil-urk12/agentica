@@ -257,7 +257,32 @@ export class Editor {
         });
       });
     });
-  } /** Flush debounced edits, including an in-flight save, before mutating. */
+  } /** Link two nodes already on the canvas; used by the arrow tool. */
+  async createEdge(sourceNodeId: string, targetNodeId: string) {
+    if (sourceNodeId === targetNodeId) return;
+    await this.enqueue(async () => {
+      await this.settleSave();
+      if (this.state.error || this.disposed) return;
+      await this.mutation(async () => {
+        const document = this.state.document!;
+        const result = await this.call(this.key(), false, "edge.create", {
+          workspaceId: this.state.workspace!.workspace.id,
+          canvasId: document.canvas.id,
+          expectedRevision: document.canvas.revision,
+          kind: "relationship",
+          sourceNodeId,
+          targetNodeId,
+        });
+        this.load({
+          ...document,
+          canvas: { ...document.canvas, revision: result.revision },
+          edges: [...document.edges, result.edge],
+        });
+      });
+    });
+  }
+
+  /** Flush debounced edits, including an in-flight save, before mutating. */
   private async settleSave() {
     if (this.savingTask) await this.savingTask;
     if (this.state.dirty && !this.state.error && !this.disposed)

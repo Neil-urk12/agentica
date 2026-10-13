@@ -12,7 +12,12 @@
   import Settings from "./lib/components/Settings.svelte";
   import WorkspacePicker from "./lib/components/WorkspacePicker.svelte";
   import CanvasPicker from "./lib/components/CanvasPicker.svelte";
-  import type { Tool } from "./lib/tools";
+  import {
+    DEFAULT_STROKE_COLOR,
+    DEFAULT_STROKE_WIDTH,
+    TOOL_KEYS,
+    type Tool,
+  } from "./lib/tools";
   import {
     Background,
     Controls,
@@ -56,6 +61,8 @@
   let canvasEl = $state<HTMLElement>();
   let drawSurface = $state<HTMLDivElement>();
   let gesture = $state.raw<Gesture | null>(null);
+  let strokeColor = $state(DEFAULT_STROKE_COLOR);
+  let strokeWidth = $state(DEFAULT_STROKE_WIDTH);
   let alive = true;
 
   const stage = $derived(
@@ -103,8 +110,6 @@
   type Point = { x: number; y: number };
   type Gesture = { kind: "path" | "rectangle" | "ellipse"; points: Point[] };
 
-  const STROKE = "#7b7bf0";
-  const STROKE_WIDTH = 3;
   const PAD = 6;
 
   const round = (value: number) => Math.round(value * 100) / 100;
@@ -210,8 +215,8 @@
                   round(point.x - x.origin),
                   round(point.y - y.origin),
                 ]),
-                color: STROKE,
-                width: STROKE_WIDTH,
+                color: strokeColor,
+                width: strokeWidth,
               },
             ],
           },
@@ -234,7 +239,7 @@
             y: round(box.minY - y.origin),
             width: round(width),
             height: round(height),
-            color: STROKE,
+            color: strokeColor,
           },
         ],
       },
@@ -351,9 +356,27 @@
     event.returnValue = "";
   }
 
+  const TYPING_TAGS = ["INPUT", "TEXTAREA", "SELECT"];
+
   function onKeydown(event: KeyboardEvent) {
-    if (event.key !== "Escape" || settingsOpen) return;
-    if (stage === "canvas") void backToWorkspaces();
+    if (settingsOpen) return;
+    if (event.key === "Escape") {
+      if (stage === "canvas") void backToWorkspaces();
+      return;
+    }
+    if (stage !== "editor" || event.metaKey || event.ctrlKey || event.altKey)
+      return;
+    const target = event.target as HTMLElement | null;
+    if (
+      target &&
+      (target.isContentEditable || TYPING_TAGS.includes(target.tagName))
+    )
+      return;
+    const next = TOOL_KEYS[event.key.toLowerCase()];
+    if (!next) return;
+    event.preventDefault();
+    selectTool(next);
+    toolbarOpen = true;
   }
 
   onMount(() => {
@@ -609,11 +632,12 @@
             minZoom={LIMITS.minZoom}
             maxZoom={LIMITS.maxZoom}
             deleteKey={null}
-            nodesConnectable={false}
+            nodesConnectable={tool === "arrow" && canEdit}
             elementsSelectable={tool === "select" || tool === "eraser"}
             nodesDraggable={canEdit && tool === "select"}
             panOnDrag={!isDrawingTool && !editorState.busy}
             zoomOnScroll={!editorState.busy}
+            connectionLineStyle="stroke: var(--accent); stroke-width: 2"
             onnodeclick={({ node }) => {
               if (tool === "eraser") {
                 void editor.deleteNode(node.id);
@@ -630,6 +654,9 @@
                   120,
                 y: (event.clientY - rect.top - viewport.y) / viewport.zoom - 80,
               });
+            }}
+            onconnect={({ source, target }) => {
+              if (tool === "arrow") void editor.createEdge(source, target);
             }}
             onmove={(_, next) => editor.setViewport(next)}
           >
@@ -661,8 +688,8 @@
                       })
                       .join(" ")}
                     fill="none"
-                    stroke={STROKE}
-                    stroke-width={STROKE_WIDTH}
+                    stroke={strokeColor}
+                    stroke-width={strokeWidth}
                     stroke-linecap="round"
                     stroke-linejoin="round"
                   />
@@ -677,7 +704,7 @@
                       height={Math.abs(end.y - start.y)}
                       rx="4"
                       fill="none"
-                      stroke={STROKE}
+                      stroke={strokeColor}
                       stroke-width="2"
                     />
                   {:else}
@@ -687,7 +714,7 @@
                       rx={Math.abs(end.x - start.x) / 2}
                       ry={Math.abs(end.y - start.y) / 2}
                       fill="none"
-                      stroke={STROKE}
+                      stroke={strokeColor}
                       stroke-width="2"
                     />
                   {/if}
@@ -713,7 +740,14 @@
         {/if}
 
         {#if toolbarOpen}
-          <CanvasToolbar {tool} onSelect={selectTool} />
+          <CanvasToolbar
+            {tool}
+            color={strokeColor}
+            width={strokeWidth}
+            onSelect={selectTool}
+            onColor={(value) => (strokeColor = value)}
+            onWidth={(value) => (strokeWidth = value)}
+          />
         {/if}
 
         <Composer
