@@ -21,7 +21,6 @@
 </script>
 
 <div class="toolbar" role="toolbar" aria-label="Canvas tools">
-
   <div class="toolbar__card" role="group" aria-label="Action tools">
     {#each PRIMARY_TOOLS as item (item.tool)}
       <button
