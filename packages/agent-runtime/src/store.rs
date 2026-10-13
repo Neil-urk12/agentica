@@ -14,7 +14,7 @@ const DATABASE_FILE: &str = "workspace.sqlite3";
 /// `AGNT`: identifies Agentica workspace databases.
 pub(crate) const APPLICATION_ID: i64 = 0x4147_4e54;
 /// Ordered migrations; index + 1 is the resulting `user_version`.
-const MIGRATIONS: &[&str] = &[include_str!("schema_v1.sql")];
+const MIGRATIONS: &[&str] = &[include_str!("schema_v1.sql"), include_str!("schema_v2.sql")];
 pub const STORAGE_VERSION: i64 = MIGRATIONS.len() as i64;
 
 /// A runtime error reported to clients with a stable code.
@@ -137,7 +137,10 @@ fn connect(path: &Path, create: bool) -> rusqlite::Result<Connection> {
     let conn = Connection::open_with_flags(path, flags)?;
     // Listing readers may briefly hold shared locks.
     conn.busy_timeout(Duration::from_secs(2))?;
-    conn.pragma_update(None, "foreign_keys", true)?;
+    // Foreign keys stay off until migrations finish: storage rebuilds drop
+    // parent tables, which SQLite rejects while they are enforced. `create`
+    // and `open` re-enable them once the schema is current.
+    conn.pragma_update(None, "foreign_keys", false)?;
     conn.pragma_update(None, "synchronous", "FULL")?;
     Ok(conn)
 }
@@ -183,6 +186,7 @@ impl Workspace {
             (&id, name),
         )?;
         tx.commit()?;
+        conn.pragma_update(None, "foreign_keys", true)?;
         Ok(Self {
             id,
             conn,
@@ -230,6 +234,7 @@ impl Workspace {
             ));
         }
         tx.commit()?;
+        conn.pragma_update(None, "foreign_keys", true)?;
         Ok(Self {
             id: id.to_owned(),
             conn,
@@ -487,7 +492,10 @@ mod tests {
         let bytes = fs::read(&path).unwrap();
         for _ in 0..2 {
             let workspace = Workspace::open(Some(temp.path()), &id).unwrap();
-            assert_eq!(header(&workspace.conn).unwrap(), (APPLICATION_ID, 1));
+            assert_eq!(
+                header(&workspace.conn).unwrap(),
+                (APPLICATION_ID, STORAGE_VERSION)
+            );
             assert_eq!(name(&workspace), "Research");
             let foreign_keys: bool = workspace
                 .conn
@@ -513,7 +521,7 @@ mod tests {
     fn newer_or_foreign_storage_is_rejected_without_modification() {
         let _serial = serial();
         let temp = tempfile::tempdir().unwrap();
-        for (pragma, value) in [("user_version", 2), ("application_id", 7)] {
+        for (pragma, value) in [("user_version", STORAGE_VERSION + 1), ("application_id", 7)] {
             let id = created(temp.path(), "Later");
             let path = database(temp.path(), &id);
             Connection::open(&path)
@@ -558,6 +566,90 @@ mod tests {
             .query_row("SELECT count(*) FROM sqlite_schema", [], |row| row.get(0))
             .unwrap();
         assert_eq!(tables, 0);
+    }
+
+    #[test]
+    fn version_one_workspaces_upgrade_to_two_without_data_loss() {
+        let _serial = serial();
+        let temp = tempfile::tempdir().unwrap();
+        let id = new_id().unwrap();
+        let dir = workspaces_dir(Some(temp.path())).unwrap().join(&id);
+        fs::create_dir(&dir).unwrap();
+        // Build a storage version 1 database with real rows, as earlier builds left it.
+        let mut conn = connect(&dir.join(DATABASE_FILE), true).unwrap();
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        migrate(&tx, 0, &MIGRATIONS[..1]).unwrap();
+        tx.execute(
+            "INSERT INTO workspace (id, name) VALUES (?1, 'Legacy')",
+            [&id],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO canvas (id, title, revision, viewport_x, viewport_y, viewport_zoom)
+             VALUES ('c', 'Plan', 1, 0, 0, 1)",
+            [],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO text_content (id, body) VALUES ('t', 'hello')",
+            [],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO artifact (id, type, schema_version, revision, content_store, content_id)
+             VALUES ('a', 'text', 1, 1, 'sqlite', 't')",
+            [],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO canvas_node (id, canvas_id, kind, artifact_id, x, y, width, height)
+             VALUES ('n', 'c', 'artifact', 'a', 0, 0, 100, 100)",
+            [],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        drop(conn);
+
+        let workspace = Workspace::open(Some(temp.path()), &id).unwrap();
+        assert_eq!(
+            header(&workspace.conn).unwrap(),
+            (APPLICATION_ID, STORAGE_VERSION)
+        );
+        // Existing text and its placement survive the table rebuild.
+        let body: String = workspace
+            .conn
+            .query_row("SELECT body FROM text_content WHERE id = 't'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(body, "hello");
+        let node_artifact: String = workspace
+            .conn
+            .query_row(
+                "SELECT artifact_id FROM canvas_node WHERE id = 'n'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(node_artifact, "a");
+        // Drawing artifacts are accepted after the upgrade.
+        workspace
+            .conn
+            .execute(
+                "INSERT INTO drawing_content (id, body) VALUES ('d', '{}')",
+                [],
+            )
+            .unwrap();
+        workspace
+            .conn
+            .execute(
+                "INSERT INTO artifact (id, type, schema_version, revision, content_store, content_id)
+                 VALUES ('a2', 'drawing', 1, 1, 'sqlite', 'd')",
+                [],
+            )
+            .unwrap();
     }
 
     #[test]

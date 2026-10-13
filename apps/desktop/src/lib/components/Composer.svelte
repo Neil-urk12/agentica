@@ -4,21 +4,33 @@
 
   interface Props {
     placeholder?: string;
+    toolbarOpen: boolean;
+    onToggleToolbar: () => void;
   }
 
   let {
     placeholder = "Ask anything, or describe what you want to add…",
+    toolbarOpen,
+    onToggleToolbar,
   }: Props = $props();
 </script>
 
 <!--
-  Visual placeholder only: the field accepts text, but nothing reads or submits
-  it yet, and the icon buttons are decorative (no handlers, kept out of the tab
-  order) until the prompt flow is wired up.
+  The prompt field is still a visual placeholder, but the leading button opens
+  the canvas toolbar. The mic and send buttons stay decorative until the prompt
+  flow is wired up.
 -->
 <div class="composer" role="group" aria-label="Canvas prompt">
-  <button class="composer__lead" type="button" tabindex="-1" aria-hidden="true">
-    <Icon name="auto_awesome" size={20} />
+  <button
+    class="composer__lead"
+    class:composer__lead--active={toolbarOpen}
+    type="button"
+    title="Canvas tools"
+    aria-label="Canvas tools"
+    aria-expanded={toolbarOpen}
+    onclick={onToggleToolbar}
+  >
+    <Icon name="build" size={20} />
   </button>
 
   <label class="sr-only" for="canvas-prompt">Prompt</label>

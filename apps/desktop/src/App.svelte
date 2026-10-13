@@ -6,10 +6,13 @@
   import { Editor } from "./lib/editor";
   import { applyTheme, readTheme, type Theme } from "./lib/theme";
   import Composer from "./lib/components/Composer.svelte";
+  import CanvasToolbar from "./lib/components/CanvasToolbar.svelte";
+  import DrawingNode from "./lib/components/DrawingNode.svelte";
   import Icon from "./lib/components/Icon.svelte";
   import Settings from "./lib/components/Settings.svelte";
   import WorkspacePicker from "./lib/components/WorkspacePicker.svelte";
   import CanvasPicker from "./lib/components/CanvasPicker.svelte";
+  import type { Tool } from "./lib/tools";
   import {
     Background,
     Controls,
@@ -18,6 +21,8 @@
     type Node,
   } from "@xyflow/svelte";
   import "@xyflow/svelte/dist/style.css";
+
+  const nodeTypes = { drawing: DrawingNode };
 
   const editor = new Editor(
     callRuntime,
@@ -46,6 +51,11 @@
   let theme = $state<Theme>(readTheme());
   let recoveryCopy = $state("");
   let closeNotice = $state("");
+  let tool = $state<Tool>("select");
+  let toolbarOpen = $state(false);
+  let canvasEl = $state<HTMLElement>();
+  let drawSurface = $state<HTMLDivElement>();
+  let gesture = $state.raw<Gesture | null>(null);
   let alive = true;
 
   const stage = $derived(
@@ -81,23 +91,187 @@
       (item) => item.id === selected?.artifactId,
     ),
   );
+  const textArtifact = $derived(
+    artifact?.type === "text" ? artifact : undefined,
+  );
+  const isDrawingTool = $derived(
+    tool === "draw" || tool === "rectangle" || tool === "ellipse",
+  );
+  // Drawings may start while autosave is pending: the commit waits for it.
+  const canDraw = $derived(connected && !editorState.busy);
+
+  type Point = { x: number; y: number };
+  type Gesture = { kind: "path" | "rectangle" | "ellipse"; points: Point[] };
+
+  const STROKE = "#7b7bf0";
+  const STROKE_WIDTH = 3;
+  const PAD = 6;
+
+  const round = (value: number) => Math.round(value * 100) / 100;
+
+  function bounds(points: Point[]) {
+    return points.reduce(
+      (box, point) => ({
+        minX: Math.min(box.minX, point.x),
+        minY: Math.min(box.minY, point.y),
+        maxX: Math.max(box.maxX, point.x),
+        maxY: Math.max(box.maxY, point.y),
+      }),
+      { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity },
+    );
+  }
+
+  /** Grow an axis to the minimum node size, or clamp it to the maximum. */
+  function fit(origin: number, size: number) {
+    if (size < LIMITS.minSize)
+      return {
+        origin: origin - (LIMITS.minSize - size) / 2,
+        size: LIMITS.minSize,
+      };
+    return { origin, size: Math.min(size, LIMITS.maxSize) };
+  }
+
+  function toFlow(point: Point, rect: DOMRect): Point {
+    return {
+      x: (point.x - rect.left - viewport.x) / viewport.zoom,
+      y: (point.y - rect.top - viewport.y) / viewport.zoom,
+    };
+  }
+
+  /** Gesture points are screen coordinates; the preview draws relative to it. */
+  function surfacePoint(point: Point): Point {
+    const rect = drawSurface?.getBoundingClientRect();
+    return rect ? { x: point.x - rect.left, y: point.y - rect.top } : point;
+  }
+
+  function startDraw(event: PointerEvent) {
+    if (!canDraw || !drawSurface) return;
+    const kind = tool === "draw" ? "path" : tool;
+    if (kind !== "path" && kind !== "rectangle" && kind !== "ellipse") return;
+    drawSurface.setPointerCapture(event.pointerId);
+    const point = { x: event.clientX, y: event.clientY };
+    gesture = { kind, points: [point, point] };
+  }
+
+  function moveDraw(event: PointerEvent) {
+    if (!gesture) return;
+    const point = { x: event.clientX, y: event.clientY };
+    gesture =
+      gesture.kind === "path"
+        ? { ...gesture, points: [...gesture.points, point] }
+        : { ...gesture, points: [gesture.points[0]!, point] };
+  }
+
+  function endDraw(event: PointerEvent) {
+    if (!gesture || !drawSurface) return;
+    const finished = gesture;
+    gesture = null;
+    if (drawSurface.hasPointerCapture(event.pointerId))
+      drawSurface.releasePointerCapture(event.pointerId);
+    void commit(finished, drawSurface.getBoundingClientRect());
+  }
+
+  /** Split a long stroke so each committed node stays within the size limit. */
+  function splitPath(points: Point[]): Point[][] {
+    const groups: Point[][] = [];
+    let current = [points[0]!];
+    for (let index = 1; index < points.length; index += 1) {
+      const next = [...current, points[index]!];
+      const box = bounds(next);
+      if (
+        Math.max(box.maxX - box.minX, box.maxY - box.minY) + PAD * 2 >
+          LIMITS.maxSize &&
+        current.length > 1
+      ) {
+        groups.push(current);
+        current = [points[index - 1]!, points[index]!];
+      } else {
+        current = next;
+      }
+    }
+    groups.push(current);
+    return groups;
+  }
+
+  async function commit(finished: Gesture, rect: DOMRect) {
+    const points = finished.points.map((point) => toFlow(point, rect));
+    if (finished.kind === "path") {
+      for (const group of splitPath(points)) {
+        const box = bounds(group);
+        const x = fit(box.minX - PAD, box.maxX - box.minX + PAD * 2);
+        const y = fit(box.minY - PAD, box.maxY - box.minY + PAD * 2);
+        await editor.addDrawing(
+          { x: x.origin, y: y.origin, width: x.size, height: y.size },
+          {
+            shapes: [
+              {
+                kind: "path",
+                points: group.map((point) => [
+                  round(point.x - x.origin),
+                  round(point.y - y.origin),
+                ]),
+                color: STROKE,
+                width: STROKE_WIDTH,
+              },
+            ],
+          },
+        );
+      }
+      return;
+    }
+    const box = bounds(points);
+    const width = Math.max(1, box.maxX - box.minX);
+    const height = Math.max(1, box.maxY - box.minY);
+    const x = fit(box.minX, width);
+    const y = fit(box.minY, height);
+    await editor.addDrawing(
+      { x: x.origin, y: y.origin, width: x.size, height: y.size },
+      {
+        shapes: [
+          {
+            kind: finished.kind,
+            x: round(box.minX - x.origin),
+            y: round(box.minY - y.origin),
+            width: round(width),
+            height: round(height),
+            color: STROKE,
+          },
+        ],
+      },
+    );
+  }
+
+  function selectTool(next: Tool) {
+    tool = next;
+    gesture = null;
+  }
 
   $effect(() => {
     const document = editorState.document;
     untrack(() => {
       nodes =
-        document?.nodes.map((node, index) => ({
-          ...nodes.find((item) => item.id === node.id),
-          id: node.id,
-          position: { x: node.x, y: node.y },
-          width: node.width,
-          height: node.height,
-          data: {
-            label:
-              document.artifacts.find((item) => item.id === node.artifactId)
-                ?.text || `Text ${index + 1}`,
-          },
-        })) ?? [];
+        document?.nodes.map((node, index) => {
+          const artifact = document.artifacts.find(
+            (item) => item.id === node.artifactId,
+          );
+          const drawing = artifact?.type === "drawing";
+          return {
+            ...nodes.find((item) => item.id === node.id),
+            id: node.id,
+            type: drawing ? "drawing" : undefined,
+            position: { x: node.x, y: node.y },
+            width: node.width,
+            height: node.height,
+            data: drawing
+              ? { drawing: artifact.drawing }
+              : {
+                  label:
+                    artifact?.type === "text" && artifact.text
+                      ? artifact.text
+                      : `Text ${index + 1}`,
+                },
+          };
+        }) ?? [];
       edges =
         document?.edges.map((edge) => ({
           id: edge.id,
@@ -361,7 +535,7 @@
         >
           <Icon name="settings" size={20} />
         </button>
-        <button
+        <!-- <button
           class="btn btn--soft"
           type="button"
           disabled={!canEdit}
@@ -369,7 +543,7 @@
         >
           <Icon name="add_box" size={18} />
           Add text
-        </button>
+        </button> -->
         <button
           class="btn btn--primary"
           type="button"
@@ -377,7 +551,7 @@
           onclick={() => void editor.save()}
         >
           <Icon name="save" size={18} />
-          Save
+          <!-- Save -->
         </button>
       </div>
     </header>
@@ -420,21 +594,42 @@
     {/if}
 
     <div class="stage">
-      <main class="canvas" aria-label="Canvas workspace">
+      <main
+        class="canvas"
+        class:canvas--pan={tool === "pan"}
+        aria-label="Canvas workspace"
+        bind:this={canvasEl}
+      >
         {#key editorState.document?.canvas.id}
           <SvelteFlow
             bind:nodes
             bind:edges
             bind:viewport
+            {nodeTypes}
             minZoom={LIMITS.minZoom}
             maxZoom={LIMITS.maxZoom}
             deleteKey={null}
             nodesConnectable={false}
-            nodesDraggable={!editorState.busy}
-            panOnDrag={!editorState.busy}
+            elementsSelectable={tool === "select" || tool === "eraser"}
+            nodesDraggable={canEdit && tool === "select"}
+            panOnDrag={!isDrawingTool && !editorState.busy}
             zoomOnScroll={!editorState.busy}
             onnodeclick={({ node }) => {
+              if (tool === "eraser") {
+                void editor.deleteNode(node.id);
+                return;
+              }
               selectedId = node.id;
+            }}
+            onpaneclick={({ event }) => {
+              if (tool !== "text" || !canEdit || !canvasEl) return;
+              const rect = canvasEl.getBoundingClientRect();
+              void editor.addText({
+                x:
+                  (event.clientX - rect.left - viewport.x) / viewport.zoom -
+                  120,
+                y: (event.clientY - rect.top - viewport.y) / viewport.zoom - 80,
+              });
             }}
             onmove={(_, next) => editor.setViewport(next)}
           >
@@ -442,6 +637,65 @@
             <Controls showLock={false} />
           </SvelteFlow>
         {/key}
+
+        {#if isDrawingTool}
+          <div
+            class="drawlayer"
+            class:drawlayer--blocked={!canDraw}
+            role="application"
+            aria-label="Drawing surface"
+            bind:this={drawSurface}
+            onpointerdown={startDraw}
+            onpointermove={moveDraw}
+            onpointerup={endDraw}
+            onpointercancel={endDraw}
+          >
+            {#if gesture}
+              <svg class="drawlayer__preview" aria-hidden="true">
+                {#if gesture.kind === "path"}
+                  <polyline
+                    points={gesture.points
+                      .map((point) => {
+                        const shown = surfacePoint(point);
+                        return `${shown.x},${shown.y}`;
+                      })
+                      .join(" ")}
+                    fill="none"
+                    stroke={STROKE}
+                    stroke-width={STROKE_WIDTH}
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                {:else}
+                  {@const start = surfacePoint(gesture.points[0]!)}
+                  {@const end = surfacePoint(gesture.points[1]!)}
+                  {#if gesture.kind === "rectangle"}
+                    <rect
+                      x={Math.min(start.x, end.x)}
+                      y={Math.min(start.y, end.y)}
+                      width={Math.abs(end.x - start.x)}
+                      height={Math.abs(end.y - start.y)}
+                      rx="4"
+                      fill="none"
+                      stroke={STROKE}
+                      stroke-width="2"
+                    />
+                  {:else}
+                    <ellipse
+                      cx={(start.x + end.x) / 2}
+                      cy={(start.y + end.y) / 2}
+                      rx={Math.abs(end.x - start.x) / 2}
+                      ry={Math.abs(end.y - start.y) / 2}
+                      fill="none"
+                      stroke={STROKE}
+                      stroke-width="2"
+                    />
+                  {/if}
+                {/if}
+              </svg>
+            {/if}
+          </div>
+        {/if}
         {#if editorState.document && editorState.document.nodes.length === 0}
           <div class="canvas__empty">
             <Icon name="note_add" size={34} />
@@ -458,7 +712,14 @@
           </div>
         {/if}
 
-        <Composer />
+        {#if toolbarOpen}
+          <CanvasToolbar {tool} onSelect={selectTool} />
+        {/if}
+
+        <Composer
+          {toolbarOpen}
+          onToggleToolbar={() => (toolbarOpen = !toolbarOpen)}
+        />
       </main>
 
       {#if inspectorOpen && editorState.document}
@@ -490,19 +751,21 @@
           </div>
 
           {#if selected && artifact}
-            <div class="field">
-              <label for="text-content">Text content</label>
-              <textarea
-                id="text-content"
-                value={artifact.text}
-                maxlength={LIMITS.text}
-                disabled={editorState.busy}
-                rows="7"
-                placeholder="Write something…"
-                oninput={(event) =>
-                  editor.editText(artifact.id, event.currentTarget.value)}
-              ></textarea>
-            </div>
+            {#if textArtifact}
+              <div class="field">
+                <label for="text-content">Text content</label>
+                <textarea
+                  id="text-content"
+                  value={textArtifact.text}
+                  maxlength={LIMITS.text}
+                  disabled={editorState.busy}
+                  rows="7"
+                  placeholder="Write something…"
+                  oninput={(event) =>
+                    editor.editText(textArtifact.id, event.currentTarget.value)}
+                ></textarea>
+              </div>
+            {/if}
             <fieldset class="grid" disabled={editorState.busy}>
               <legend>Placement &amp; size</legend>
               {#each ["x", "y", "width", "height"] as field}

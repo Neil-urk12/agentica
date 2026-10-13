@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::store::{delete_workspace, is_id, list_workspaces, new_id, RuntimeError, Workspace};
@@ -19,6 +19,10 @@ const MAX_ZOOM: f64 = 4.0;
 /// `Number.MAX_SAFE_INTEGER`, so revisions round-trip through JavaScript.
 const MAX_REVISION: u64 = (1 << 53) - 1;
 const TEXT_SCHEMA_VERSION: i64 = 1;
+const DRAWING_SCHEMA_VERSION: i64 = 1;
+const MAX_SHAPES: usize = 1_000;
+const MAX_POINTS: usize = 10_000;
+const MAX_STROKE_WIDTH: f64 = 64.0;
 
 pub(crate) const METHODS: &[&str] = &[
     "workspace.list",
@@ -33,6 +37,8 @@ pub(crate) const METHODS: &[&str] = &[
     "node.createText",
     "edge.create",
     "artifact.saveText",
+    "node.createDrawing",
+    "node.delete",
 ];
 
 fn invalid(message: impl Into<String>) -> RuntimeError {
@@ -99,6 +105,16 @@ fn text(value: &str) -> Result<(), RuntimeError> {
         )));
     }
     Ok(())
+}
+
+fn color(value: &str) -> Result<(), RuntimeError> {
+    let bytes = value.as_bytes();
+    let hex = bytes.len() == 7 && bytes[0] == b'#' && bytes[1..].iter().all(u8::is_ascii_hexdigit);
+    if hex {
+        Ok(())
+    } else {
+        Err(invalid("color must be a #rrggbb hex value."))
+    }
 }
 
 fn revision(value: f64) -> Result<i64, RuntimeError> {
@@ -238,6 +254,103 @@ struct SaveText {
     text: String,
 }
 
+/// A freehand stroke; points are local to the node origin.
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PathShape {
+    points: Vec<[f64; 2]>,
+    color: String,
+    width: f64,
+}
+
+/// A rectangle or ellipse box, local to the node origin.
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BoxShape {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    color: String,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum Shape {
+    Path(PathShape),
+    Rectangle(BoxShape),
+    Ellipse(BoxShape),
+}
+
+impl Shape {
+    fn check(&self) -> Result<(), RuntimeError> {
+        match self {
+            Shape::Path(path) => {
+                if path.points.is_empty() || path.points.len() > MAX_POINTS {
+                    return Err(invalid(format!("A path needs 1 to {MAX_POINTS} points.")));
+                }
+                for [x, y] in &path.points {
+                    in_range("points", *x, -MAX_COORDINATE, MAX_COORDINATE)?;
+                    in_range("points", *y, -MAX_COORDINATE, MAX_COORDINATE)?;
+                }
+                in_range("width", path.width, 1.0, MAX_STROKE_WIDTH)?;
+                color(&path.color)
+            }
+            Shape::Rectangle(box_shape) | Shape::Ellipse(box_shape) => {
+                in_range("x", box_shape.x, -MAX_COORDINATE, MAX_COORDINATE)?;
+                in_range("y", box_shape.y, -MAX_COORDINATE, MAX_COORDINATE)?;
+                in_range("width", box_shape.width, f64::MIN_POSITIVE, MAX_COORDINATE)?;
+                in_range(
+                    "height",
+                    box_shape.height,
+                    f64::MIN_POSITIVE,
+                    MAX_COORDINATE,
+                )?;
+                color(&box_shape.color)
+            }
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Drawing {
+    shapes: Vec<Shape>,
+}
+
+impl Drawing {
+    fn check(&self) -> Result<(), RuntimeError> {
+        if self.shapes.is_empty() || self.shapes.len() > MAX_SHAPES {
+            return Err(invalid(format!(
+                "A drawing needs 1 to {MAX_SHAPES} shapes."
+            )));
+        }
+        self.shapes.iter().try_for_each(Shape::check)
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateDrawing {
+    workspace_id: String,
+    canvas_id: String,
+    expected_revision: f64,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    drawing: Drawing,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeleteNode {
+    workspace_id: String,
+    canvas_id: String,
+    expected_revision: f64,
+    node_id: String,
+}
+
 /// Domain state shared by both transports. Holds at most one open workspace
 /// and its writer lock.
 pub struct Runtime {
@@ -353,6 +466,11 @@ impl Runtime {
                          (SELECT 1 FROM artifact WHERE content_id = text_content.id)",
                         [],
                     )?;
+                    tx.execute(
+                        "DELETE FROM drawing_content WHERE NOT EXISTS
+                         (SELECT 1 FROM artifact WHERE content_id = drawing_content.id)",
+                        [],
+                    )?;
                     Ok(json!({ "canvases": canvases(tx)? }))
                 })
             }
@@ -452,6 +570,86 @@ impl Runtime {
                     }))
                 })
             }
+            "node.createDrawing" => {
+                let params: CreateDrawing = parse(params)?;
+                id("canvasId", &params.canvas_id)?;
+                let expected = revision(params.expected_revision)?;
+                let g = Geometry {
+                    x: params.x,
+                    y: params.y,
+                    width: params.width,
+                    height: params.height,
+                };
+                g.check()?;
+                params.drawing.check()?;
+                let body = serde_json::to_string(&params.drawing)
+                    .map_err(|error| invalid(format!("Invalid drawing: {error}.")))?;
+                let (node_id, artifact_id, content_id) = (new_id()?, new_id()?, new_id()?);
+                self.transact(&params.workspace_id, |tx| {
+                    check_canvas(tx, &params.canvas_id, expected)?;
+                    tx.execute(
+                        "INSERT INTO drawing_content (id, body) VALUES (?1, ?2)",
+                        (&content_id, &body),
+                    )?;
+                    tx.execute(
+                        "INSERT INTO artifact (id, type, schema_version, revision, content_store, content_id)
+                         VALUES (?1, 'drawing', ?2, 1, 'sqlite', ?3)",
+                        (&artifact_id, DRAWING_SCHEMA_VERSION, &content_id),
+                    )?;
+                    tx.execute(
+                        "INSERT INTO canvas_node (id, canvas_id, kind, artifact_id, x, y, width, height)
+                         VALUES (?1, ?2, 'artifact', ?3, ?4, ?5, ?6, ?7)",
+                        (&node_id, &params.canvas_id, &artifact_id, g.x, g.y, g.width, g.height),
+                    )?;
+                    Ok(json!({
+                        "revision": bump(tx, &params.canvas_id, expected)?,
+                        "node": {
+                            "id": node_id, "artifactId": artifact_id,
+                            "x": g.x, "y": g.y, "width": g.width, "height": g.height,
+                        },
+                        "artifact": artifact(tx, &artifact_id)?,
+                    }))
+                })
+            }
+            "node.delete" => {
+                let params: DeleteNode = parse(params)?;
+                id("canvasId", &params.canvas_id)?;
+                id("nodeId", &params.node_id)?;
+                let expected = revision(params.expected_revision)?;
+                self.transact(&params.workspace_id, |tx| {
+                    check_canvas(tx, &params.canvas_id, expected)?;
+                    let artifact_id: Option<String> = tx
+                        .query_row(
+                            "SELECT artifact_id FROM canvas_node\n                             WHERE canvas_id = ?1 AND id = ?2",
+                            (&params.canvas_id, &params.node_id),
+                            |row| row.get(0),
+                        )
+                        .optional()?;
+                    let artifact_id = artifact_id.ok_or_else(|| not_found("Node on this canvas"))?;
+                    tx.execute(
+                        "DELETE FROM canvas_edge WHERE canvas_id = ?1\n                         AND (source_node_id = ?2 OR target_node_id = ?2)",
+                        (&params.canvas_id, &params.node_id),
+                    )?;
+                    tx.execute(
+                        "DELETE FROM canvas_node WHERE canvas_id = ?1 AND id = ?2",
+                        (&params.canvas_id, &params.node_id),
+                    )?;
+                    // Drop the artifact once nothing on any canvas references it.
+                    tx.execute(
+                        "DELETE FROM artifact WHERE id = ?1 AND NOT EXISTS\n                         (SELECT 1 FROM canvas_node WHERE artifact_id = ?1)",
+                        [&artifact_id],
+                    )?;
+                    tx.execute(
+                        "DELETE FROM text_content WHERE NOT EXISTS\n                         (SELECT 1 FROM artifact WHERE content_id = text_content.id)",
+                        [],
+                    )?;
+                    tx.execute(
+                        "DELETE FROM drawing_content WHERE NOT EXISTS\n                         (SELECT 1 FROM artifact WHERE content_id = drawing_content.id)",
+                        [],
+                    )?;
+                    Ok(json!({ "revision": bump(tx, &params.canvas_id, expected)? }))
+                })
+            }
             "edge.create" => {
                 let params: CreateEdge = parse(params)?;
                 id("canvasId", &params.canvas_id)?;
@@ -498,16 +696,19 @@ impl Runtime {
                 let expected = revision(params.expected_revision)?;
                 text(&params.text)?;
                 self.transact(&params.workspace_id, |tx| {
-                    let current: Option<i64> = tx
+                    let current: Option<(String, i64)> = tx
                         .query_row(
-                            "SELECT revision FROM artifact WHERE id = ?1",
+                            "SELECT type, revision FROM artifact WHERE id = ?1",
                             [&params.artifact_id],
-                            |row| row.get(0),
+                            |row| Ok((row.get(0)?, row.get(1)?)),
                         )
                         .optional()?;
                     match current {
                         None => return Err(not_found("Artifact")),
-                        Some(current) if current != expected => {
+                        Some((kind, _)) if kind != "text" => {
+                            return Err(not_found("Text artifact"))
+                        }
+                        Some((_, current)) if current != expected => {
                             return Err(conflict("artifact", current))
                         }
                         Some(_) => {}
@@ -615,19 +816,52 @@ fn bump(tx: &Transaction, canvas_id: &str, expected: i64) -> Result<i64, Runtime
 }
 
 fn artifact(tx: &Transaction, artifact_id: &str) -> Result<Value, RuntimeError> {
-    Ok(tx.query_row(
-        "SELECT a.schema_version, a.revision, t.body FROM artifact a
-         JOIN text_content t ON t.id = a.content_id WHERE a.id = ?1",
-        [artifact_id],
-        |row| {
+    let (kind, schema_version, revision, content_id): (String, i64, i64, String) = tx
+        .query_row(
+            "SELECT type, schema_version, revision, content_id FROM artifact WHERE id = ?1",
+            [artifact_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()?
+        .ok_or_else(|| not_found("Artifact"))?;
+    match kind.as_str() {
+        "text" => {
+            let body: String = tx.query_row(
+                "SELECT body FROM text_content WHERE id = ?1",
+                [&content_id],
+                |row| row.get(0),
+            )?;
             Ok(json!({
                 "id": artifact_id, "type": "text",
-                "schemaVersion": row.get::<_, i64>(0)?,
-                "revision": row.get::<_, i64>(1)?,
-                "text": row.get::<_, String>(2)?,
+                "schemaVersion": schema_version,
+                "revision": revision,
+                "text": body,
             }))
-        },
-    )?)
+        }
+        "drawing" => {
+            let body: String = tx.query_row(
+                "SELECT body FROM drawing_content WHERE id = ?1",
+                [&content_id],
+                |row| row.get(0),
+            )?;
+            let drawing: Value = serde_json::from_str(&body).map_err(|error| {
+                RuntimeError::new(
+                    "STORAGE_ERROR",
+                    format!("A stored drawing is unreadable: {error}."),
+                )
+            })?;
+            Ok(json!({
+                "id": artifact_id, "type": "drawing",
+                "schemaVersion": schema_version,
+                "revision": revision,
+                "drawing": drawing,
+            }))
+        }
+        _ => Err(RuntimeError::new(
+            "STORAGE_ERROR",
+            "A stored artifact has an unknown type.",
+        )),
+    }
 }
 
 fn canvas_state(tx: &Transaction, canvas_id: &str) -> Result<Value, RuntimeError> {
