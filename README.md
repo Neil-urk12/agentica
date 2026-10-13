@@ -169,8 +169,9 @@ enter its connection key, and connect.
 4. Select **Connect**; a successful health check shows **Backend connected**.
 
 The backend listens on `http://127.0.0.1:1421/rpc` for authenticated API requests.
-Only the exact production and development origins above are accepted;
-`localhost`, another port, or opening the HTML directly does not satisfy that check.
+It accepts the production origin `http://127.0.0.1:1421` and the development
+frontend at either `http://127.0.0.1:1420` or its `http://localhost:1420`
+equivalent; another port or opening the HTML directly does not satisfy that check.
 
 Closing a browser tab leaves the backend running. Stop each server with Ctrl+C
 in its terminal. A backend restart generates a new key: paste it and select

@@ -17,6 +17,9 @@ use tokio::{net::TcpListener, sync::Mutex, time::Instant};
 use crate::{Runtime, MAX_FRAME_BYTES};
 
 pub const FRONTEND_ORIGIN: &str = "http://127.0.0.1:1420";
+// Vite serves the same development frontend whether it is opened as 127.0.0.1
+// or localhost, so a browser there sends either spelling as its Origin.
+pub const FRONTEND_ORIGIN_LOCALHOST: &str = "http://localhost:1420";
 pub const BACKEND_PORT: u16 = 1421;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -48,8 +51,9 @@ fn reject(status: StatusCode, message: &'static str) -> Response {
 async fn dispatch(State(state): State<Arc<HttpState>>, request: Request) -> Response {
     let origin = single_header(request.headers(), "origin");
     let local_host = single_header(request.headers(), "host") == Some(state.host.as_str());
-    let local_origin =
-        origin.is_some_and(|origin| origin == FRONTEND_ORIGIN || origin == state.origin);
+    let local_origin = origin.is_some_and(|origin| {
+        origin == FRONTEND_ORIGIN || origin == FRONTEND_ORIGIN_LOCALHOST || origin == state.origin
+    });
     let cors_origin = if local_host && local_origin {
         request.headers().get(header::ORIGIN).cloned()
     } else {
