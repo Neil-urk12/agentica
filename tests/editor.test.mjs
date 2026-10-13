@@ -90,6 +90,19 @@ async function setup(t, intercept = async () => {}) {
       disk.canvas = { ...disk.canvas, revision: params.expectedRevision + 1 };
       return { revision: disk.canvas.revision };
     }
+    if (method === "edge.create") {
+      assert.equal(params.expectedRevision, disk.canvas.revision);
+      sequence += 1;
+      const edge = {
+        id: `00000000-0000-4000-8000-${String(300 + sequence).padStart(12, "0")}`,
+        kind: params.kind,
+        sourceNodeId: params.sourceNodeId,
+        targetNodeId: params.targetNodeId,
+      };
+      disk.edges = [...disk.edges, edge];
+      disk.canvas = { ...disk.canvas, revision: params.expectedRevision + 1 };
+      return { revision: disk.canvas.revision, edge: structuredClone(edge) };
+    }
     if (method === "canvas.open") return structuredClone(disk);
     if (method === "artifact.saveText") {
       assert.equal(params.expectedRevision, disk.artifacts[0].revision);
@@ -345,6 +358,37 @@ test("drawings are created, moved and erased, and survive a reopen", async (t) =
   assert.equal(editor.state.document.artifacts.length, 1);
   assert.equal(disk.nodes.length, 1);
   assert.equal(disk.artifacts.length, 1);
+});
+
+test("the arrow tool links two nodes and ignores self-links", async (t) => {
+  const { editor, disk } = await setup(t);
+  await editor.addDrawing(
+    { x: 400, y: 400, width: 60, height: 60 },
+    {
+      shapes: [
+        {
+          kind: "path",
+          points: [
+            [0, 0],
+            [10, 10],
+          ],
+          color: "#7b7bf0",
+          width: 3,
+        },
+      ],
+    },
+  );
+  const second = editor.state.document.nodes.find((node) => node.id !== nodeId);
+  await editor.createEdge(nodeId, second.id);
+  assert.equal(editor.state.error, "");
+  assert.equal(editor.state.document.edges.length, 1);
+  assert.equal(disk.edges.length, 1);
+  assert.equal(disk.edges[0].sourceNodeId, nodeId);
+  assert.equal(disk.edges[0].targetNodeId, second.id);
+
+  await editor.createEdge(nodeId, nodeId);
+  assert.equal(editor.state.document.edges.length, 1);
+  assert.equal(disk.edges.length, 1);
 });
 
 test("drawings queued behind an in-flight save are not dropped", async (t) => {
