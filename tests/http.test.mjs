@@ -18,6 +18,9 @@ import {
 } from "@agentica/protocol";
 
 const FRONTEND_ORIGIN = "http://127.0.0.1:1420";
+// The same Vite server answers on either loopback spelling, so a browser there
+// sends whichever one it was opened with as the Origin header.
+const LOCALHOST_FRONTEND_ORIGIN = "http://localhost:1420";
 const port = 1421;
 const binary = resolve(
   process.env.CARGO_TARGET_DIR ??
@@ -351,6 +354,7 @@ test("browser RPC enforces localhost, authentication, CORS, limits, and the shar
     for (const headers of [
       { Origin: "https://untrusted.example" },
       { Origin: "" },
+      { Origin: `http://localhost:${port}` },
       { Host: `untrusted.example:${port}` },
       { Host: `127.0.0.1:${port + 1}` },
     ]) {
@@ -369,6 +373,46 @@ test("browser RPC enforces localhost, authentication, CORS, limits, and the shar
     });
     assert.equal(preflight.status, 204);
     assert.equal(preflight.headers["access-control-allow-methods"], "POST");
+    assert.equal(
+      preflight.headers["access-control-allow-headers"],
+      "Authorization, Content-Type",
+    );
+
+    // A frontend opened at the localhost spelling must clear preflight with the
+    // method and headers it requests, or the browser blocks the RPC call.
+    const localhostPreflight = await send(port, {
+      method: "OPTIONS",
+      body: "",
+      headers: {
+        Origin: LOCALHOST_FRONTEND_ORIGIN,
+        Authorization: "",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization, content-type",
+      },
+    });
+    assert.equal(localhostPreflight.status, 204);
+    assert.equal(
+      localhostPreflight.headers["access-control-allow-origin"],
+      LOCALHOST_FRONTEND_ORIGIN,
+    );
+    assert.equal(
+      localhostPreflight.headers["access-control-allow-methods"],
+      "POST",
+    );
+    assert.equal(
+      localhostPreflight.headers["access-control-allow-headers"],
+      "Authorization, Content-Type",
+    );
+    assert.match(localhostPreflight.headers.vary, /Origin/);
+    const localhostPing = await send(port, {
+      headers: { Origin: LOCALHOST_FRONTEND_ORIGIN },
+    });
+    assert.equal(localhostPing.status, 200);
+    assert.equal(
+      localhostPing.headers["access-control-allow-origin"],
+      LOCALHOST_FRONTEND_ORIGIN,
+    );
+
     assert.equal(
       (
         await send(port, {

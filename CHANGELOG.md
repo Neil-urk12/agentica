@@ -11,6 +11,15 @@ validation evidence in the [development docs](docs/development/README.md).
 
 ## Unreleased
 
+### 2026-10-14
+
+#### Browser RPC preflight
+
+- The detached backend accepts the development frontend at `http://localhost:1420`
+  as well as `http://127.0.0.1:1420`. Preflight `OPTIONS` from `localhost` was
+  rejected as an unknown origin, so browsers blocked the authenticated RPC calls
+  and the UI reported the backend as unavailable.
+
 ### 2026-10-13
 
 #### Contribution guidelines and verification workflow

@@ -83,7 +83,7 @@ In terminal B, from the repository root:
 pnpm dev:web
 ```
 
-Open `http://127.0.0.1:1420`. Use that exact origin, not `localhost`. The backend
+Open `http://127.0.0.1:1420` or its `http://localhost:1420` equivalent. The backend
 listens at `127.0.0.1:1421` and prints a new connection key on every restart.
 Do not include keys in screenshots, reports, or committed logs.
 
@@ -180,8 +180,9 @@ try {
 Open **`http://127.0.0.1:1421`**, not the development origin on port 1420.
 The same-origin RPC still requires the terminal's current key. Keys stay in memory;
 public embedded assets contain no runtime credentials or workspace data. Exact
-Host and Origin checks reject `localhost`, foreign origins, and missing RPC Origin;
-development origin `http://127.0.0.1:1420` remains accepted explicitly.
+Host and Origin checks reject foreign origins and missing RPC Origin; `localhost`
+is rejected as a Host, while the development origin `http://127.0.0.1:1420` and its
+`http://localhost:1420` equivalent remain accepted explicitly.
 
 Repeat wrong-key rejection, actual browser connect/edit/save/reopen, saved tab close
 with the server still running, backend termination and visible failure, restart/key

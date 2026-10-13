@@ -29,9 +29,10 @@ pnpm dev:backend
 pnpm dev:web
 ```
 
-Open `http://127.0.0.1:1420`, paste the backend terminal's connection key, and
-select **Connect**. The backend listens only on `127.0.0.1:1421`; use the exact
-frontend URL, not `localhost`, because origin/host checks are strict. The key
+Open `http://127.0.0.1:1420` or `http://localhost:1420`, paste the backend
+terminal's connection key, and select **Connect**. The backend listens only on
+`127.0.0.1:1421`; it accepts those two exact development origins because
+origin/host checks are strict. The key
 stays in memory and is never placed in URLs or browser storage. Closing the tab
 leaves the backend running; Ctrl+C in its terminal stops it. After restarting
 the backend, paste its new key and reconnect.
