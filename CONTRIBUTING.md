@@ -1,6 +1,6 @@
 # Contributing to Agentica
 
-Thanks for taking the time to contribute. This guide reflects how this repo is set up today: a pnpm monorepo with Svelte/TypeScript frontend packages and a shared Rust workspace, so the day-to-day workflow leans on `pnpm`, `cargo`, and this repo's own check commands. The generic fork-and-PR outline below still applies, but the specifics here are what this project actually uses.
+Thanks for taking the time to contribute. This guide reflects how this repo is set up today: a pnpm monorepo with Svelte/TypeScript frontend packages and a shared Rust workspace, so the day-to-day workflow leans on `pnpm`, `cargo`, and this repo's own check commands. Start with the [development guide](docs/development/README.md) for deep technical context. The generic fork-and-PR outline below still applies, but the specifics here are what this project actually uses.
 
 ---
 
@@ -38,7 +38,7 @@ Cargo.toml / Cargo.lock   Rust workspace and reproducible dependency versions
 .github/workflows/        Frontend and runtime checks plus native compilation
 ```
 
-Frontend development uses Node.js 24 and pnpm 11.6.0. Rust work uses stable Rust with rustfmt and Clippy. Desktop builds also need the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/).
+Frontend development uses Node.js 24 and pnpm 11.6.0. Rust work uses stable Rust with rustfmt and Clippy. Desktop builds also need the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/). For architectural background on launch modes and runtime lifecycles, consult the [development guide](docs/development/README.md).
 
 ---
 
@@ -61,7 +61,7 @@ Frontend development uses Node.js 24 and pnpm 11.6.0. Rust work uses stable Rust
    | Build the detached backend with embedded UI | `pnpm build:backend`                                        |
    | Build the native desktop app                | `pnpm build:desktop`                                        |
 
-   The README has full details for each launch mode, connection steps, and shutdown behavior.
+   The [README](README.md) and [development guide](docs/development/README.md) have full details for each launch mode, connection steps, and shutdown behavior.
 
 3. **Run a quick smoke check**
 
@@ -70,6 +70,8 @@ Frontend development uses Node.js 24 and pnpm 11.6.0. Rust work uses stable Rust
    pnpm lint
    pnpm format:check
    ```
+
+   Run `pnpm format` to auto-format supported frontend files and Markdown.
 
    For Rust:
 
@@ -82,10 +84,11 @@ Frontend development uses Node.js 24 and pnpm 11.6.0. Rust work uses stable Rust
 
 ## Making changes
 
-- Keep each change focused. One PR should generally address one concern.
-- Work on a branch off the primary branch. Use a branch name that reflects the change, for example `feat/short-description` or `fix/short-description`.
-- Match the existing conventions in the files you touch. This repo uses Oxfmt for TypeScript/frontend formatting and Oxlint for linting, and the Rust side uses `cargo fmt` and Clippy.
-- Test the parts your change touches. If you add or change behavior, include a test when the existing fixtures or test suites do not already cover it.
+- Keep each change focused on a complete, verifiable development slice. One PR should generally address one concern.
+- Work on a branch off the primary branch (`develop`). Use a branch name that reflects the change, for example `feat/short-description` or `fix/short-description`.
+- Match the existing conventions in the files you touch. This repo uses Oxfmt for TypeScript/frontend formatting and Oxlint for linting, and the Rust side uses `cargo fmt` and Clippy. Use `pnpm format` to automatically format supported files.
+- Test the parts your change touches. Add focused checks for new behavior, handle errors, and preserve permission and revision constraints.
+- Update documentation to distinguish planned, implemented, and validated capabilities. Do not describe an experimental build as meeting the public-alpha release contract.
 - Because workspace storage and the shared runtime are central to this project, changes that touch persistence, transport, locking, or error contracts should be validated with the existing integration paths rather than only in the frontend.
 
 A typical frontend and shared-protocol change looks like this:
@@ -94,6 +97,7 @@ A typical frontend and shared-protocol change looks like this:
 pnpm install --frozen-lockfile
 pnpm check
 pnpm lint
+pnpm format
 pnpm format:check
 pnpm build
 ```
@@ -152,13 +156,15 @@ pnpm check:rust
 pnpm test:rust
 ```
 
-`pnpm test` builds the frontend and embedded debug backend, runs the Rust unit/contract tests, and runs the Node protocol checks. `pnpm check:rust` includes formatting and Clippy across all targets and features. If you are changing frontend assets that the embedded backend serves, build frontend assets before the all-features Rust check. Integration tests use a temporary port and temporary data directories and do not touch your normal workspace storage.
+Use `pnpm format` to format supported files before validating. `pnpm test` builds the frontend and embedded debug backend, runs the Rust unit/contract tests, and runs the Node protocol checks. `pnpm check:rust` includes formatting and Clippy across all targets and features. If you are changing frontend assets that the embedded backend serves, build frontend assets before the all-features Rust check. Integration tests use a temporary port and temporary data directories and do not touch your normal workspace storage.
 
 ---
 
 ## Attribution
 
 By contributing, you agree that your contributions will be licensed under this project's [MIT License](LICENSE). The copyright holder listed in the license is Neil Vallecer.
+
+Keep the primary references visible when discussing inspiration or comparisons. Before reusing third-party code, assets, prompts, or fixtures, review their exact licenses and notices. Record incorporated material and bundled runtime dependencies in an attribution ledger with source URL/revision, license text, copyright/NOTICE obligations, modifications, and distribution location. Support competitive claims with dated, version-specific evidence.
 
 ---
 

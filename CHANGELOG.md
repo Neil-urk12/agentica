@@ -11,6 +11,18 @@ validation evidence in the [development docs](docs/development/README.md).
 
 ## Unreleased
 
+### 2026-10-13
+
+#### Contribution guidelines and verification workflow
+
+- Updated [`CONTRIBUTING.md`](CONTRIBUTING.md) to clarify branching from `develop`,
+  keeping changes focused on complete, verifiable slices, and distinguishing
+  experimental builds from public-alpha release contracts.
+- Documented automated formatting commands (`pnpm format`) for supported frontend
+  and Markdown files before validation.
+- Added licensing and attribution ledger requirements for incorporated third-party
+  code, assets, runtime dependencies, and competitive claims.
+
 ### 2026-10-12
 
 #### Security policy and community governance
