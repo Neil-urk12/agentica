@@ -681,6 +681,7 @@
           onSelect={(id) => (selectedId = id)}
           onClose={() => (drawerOpen = false)}
           onResize={resizeDrawer}
+          onDelete={(id) => void editor.deleteNode(id)}
         />
       {/if}
 

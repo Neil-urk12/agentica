@@ -15,10 +15,19 @@
     onSelect: (id: string) => void;
     onClose: () => void;
     onResize: (width: number) => void;
+    onDelete: (id: string) => void;
   }
 
-  let { items, selectedId, busy, width, onSelect, onClose, onResize }: Props =
-    $props();
+  let {
+    items,
+    selectedId,
+    busy,
+    width,
+    onSelect,
+    onClose,
+    onResize,
+    onDelete,
+  }: Props = $props();
 
   const ICONS: Record<string, string> = {
     text: "text_fields",
@@ -89,7 +98,7 @@
     {:else}
       <ul class="drawer__list">
         {#each items as item (item.id)}
-          <li>
+          <li class="drawer__row">
             <button
               class="drawer__item"
               class:drawer__item--active={item.id === selectedId}
@@ -106,6 +115,16 @@
                 <strong>{item.label}</strong>
                 <small>{KINDS[item.kind] ?? "Node"}</small>
               </span>
+            </button>
+            <button
+              class="icon-btn drawer__delete"
+              type="button"
+              title={`Delete ${item.label}`}
+              aria-label={`Delete ${item.label}`}
+              disabled={busy}
+              onclick={() => onDelete(item.id)}
+            >
+              <Icon name="delete" size={16} />
             </button>
           </li>
         {/each}
