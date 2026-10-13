@@ -54,6 +54,9 @@
   let busy = $state(false);
   let inspectorOpen = $state(true);
   let drawerOpen = $state(true);
+  const DRAWER_MIN_WIDTH = 180;
+  const DRAWER_MAX_WIDTH = 480;
+  let drawerWidth = $state(readDrawerWidth());
   let settingsOpen = $state(false);
   let theme = $state<Theme>(readTheme());
   let recoveryCopy = $state("");
@@ -137,6 +140,34 @@
   const PAD = 6;
 
   const round = (value: number) => Math.round(value * 100) / 100;
+
+  /** Stored drawer width first, then the default. */
+  function readDrawerWidth(): number {
+    try {
+      const stored = Number(localStorage.getItem("agentica.drawerWidth"));
+      if (Number.isFinite(stored) && stored > 0)
+        return Math.min(
+          DRAWER_MAX_WIDTH,
+          Math.max(DRAWER_MIN_WIDTH, Math.round(stored)),
+        );
+    } catch {
+      // Storage can be unavailable; fall back to the default width.
+    }
+    return 240;
+  }
+
+  /** Clamp the drawer width and remember it for the next launch. */
+  function resizeDrawer(next: number) {
+    drawerWidth = Math.min(
+      DRAWER_MAX_WIDTH,
+      Math.max(DRAWER_MIN_WIDTH, Math.round(next)),
+    );
+    try {
+      localStorage.setItem("agentica.drawerWidth", String(drawerWidth));
+    } catch {
+      // Storage can be unavailable; the width still applies for this session.
+    }
+  }
 
   function bounds(points: Point[]) {
     return points.reduce(
@@ -565,16 +596,6 @@
         </button>
         <button
           class="icon-btn"
-          class:icon-btn--active={drawerOpen}
-          type="button"
-          title="Toggle nodes"
-          aria-label="Toggle nodes"
-          onclick={() => (drawerOpen = !drawerOpen)}
-        >
-          <Icon name="toc" size={20} />
-        </button>
-        <button
-          class="icon-btn"
           class:icon-btn--active={inspectorOpen}
           type="button"
           title="Toggle inspector"
@@ -656,8 +677,10 @@
           items={nodeItems}
           {selectedId}
           busy={working}
+          width={drawerWidth}
           onSelect={(id) => (selectedId = id)}
           onClose={() => (drawerOpen = false)}
+          onResize={resizeDrawer}
         />
       {/if}
 
@@ -708,6 +731,19 @@
             <Controls showLock={false} />
           </SvelteFlow>
         {/key}
+
+        {#if editorState.document}
+          <button
+            class="icon-btn canvas__nodes"
+            class:icon-btn--active={drawerOpen}
+            type="button"
+            title="Toggle nodes"
+            aria-label="Toggle nodes"
+            onclick={() => (drawerOpen = !drawerOpen)}
+          >
+            <Icon name="toc" size={20} />
+          </button>
+        {/if}
 
         {#if isDrawingTool}
           <div
