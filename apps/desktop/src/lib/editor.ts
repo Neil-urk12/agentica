@@ -1,10 +1,20 @@
-import type { Drawing, RuntimeResult } from "@agentica/protocol";
+import {
+  MAX_FRAME_BYTES,
+  type Drawing,
+  type RuntimeResult,
+} from "@agentica/protocol";
 import type { callRuntime } from "./runtime";
 
 export type CanvasDocument = RuntimeResult<"canvas.open">;
 type Placement = CanvasDocument["nodes"][number];
 type Viewport = CanvasDocument["canvas"]["viewport"];
 type Artifact = CanvasDocument["artifacts"][number];
+
+/** One drawing to persist: where its node sits and what it contains. */
+export interface DrawingSegment {
+  geometry: { x: number; y: number; width: number; height: number };
+  drawing: Drawing;
+}
 
 /** Comparable content, so unsaved work is detected for text and drawings alike. */
 function content(artifact: Artifact): string {
@@ -204,64 +214,119 @@ export class Editor {
     });
   }
 
-  /**
-   * Persist a freehand or geometric drawing as a node. Creations are queued and
-   * settle pending saves first, so fast strokes are never dropped.
-   */
+  /** Persist one drawing; a stroke larger than one frame is split for you. */
   async addDrawing(
     geometry: Pick<Placement, "x" | "y" | "width" | "height">,
     drawing: Drawing,
   ) {
+    await this.addDrawings([{ geometry, drawing }]);
+  }
+
+  /**
+   * Persist several drawings in order. Creations queue behind pending saves and
+   * every segment becomes a draft before any request, so a failure midway keeps
+   * the rest recoverable and a retry creates only the missing segments.
+   */
+  async addDrawings(segments: DrawingSegment[]) {
     await this.enqueue(async () => {
       await this.settleSave();
       if (this.state.error || this.disposed) return;
-      await this.mutation(async () => {
-        const document = this.state.document!;
-        // Show the stroke at once. If creating it fails, the draft stays in the
-        // document as a recoverable edit and `save` retries it later.
-        const nodeId = crypto.randomUUID();
-        const artifactId = crypto.randomUUID();
-        this.publish({
-          document: {
-            ...document,
-            nodes: [...document.nodes, { id: nodeId, artifactId, ...geometry }],
-            artifacts: [
-              ...document.artifacts,
-              {
-                id: artifactId,
-                type: "drawing",
-                schemaVersion: 1,
-                revision: 1,
-                drawing,
-              },
-            ],
-          },
+      const document = this.state.document!;
+      const workspaceId = this.state.workspace!.workspace.id;
+      const additions = segments
+        .flatMap((segment) =>
+          this.splitSegment(workspaceId, document.canvas.id, segment),
+        )
+        .map((segment): { node: Placement; artifact: Artifact } => {
+          const nodeId = crypto.randomUUID();
+          const artifactId = crypto.randomUUID();
+          return {
+            node: { id: nodeId, artifactId, ...segment.geometry },
+            artifact: {
+              id: artifactId,
+              type: "drawing",
+              schemaVersion: 1,
+              revision: 1,
+              drawing: segment.drawing,
+            },
+          };
         });
-        const result = await this.call(
-          this.key(),
-          false,
-          "node.createDrawing",
-          {
-            workspaceId: this.state.workspace!.workspace.id,
-            canvasId: document.canvas.id,
-            expectedRevision: document.canvas.revision,
-            ...geometry,
-            drawing,
-          },
-        );
-        const current = this.state.document!;
-        this.load({
-          ...current,
-          canvas: { ...current.canvas, revision: result.revision },
-          nodes: current.nodes.map((node) =>
-            node.id === nodeId ? result.node : node,
-          ),
-          artifacts: current.artifacts.map((artifact) =>
-            artifact.id === artifactId ? result.artifact : artifact,
-          ),
-        });
+      // Show every stroke at once. If creating one fails, the draft stays in the
+      // document as a recoverable edit and `save` retries only the missing ones.
+      this.publish({
+        document: {
+          ...document,
+          nodes: [...document.nodes, ...additions.map((item) => item.node)],
+          artifacts: [
+            ...document.artifacts,
+            ...additions.map((item) => item.artifact),
+          ],
+        },
       });
+      await this.save();
     });
+  }
+
+  /**
+   * Keep one request inside the frame limit. A single freehand path that is too
+   * large becomes several nodes; consecutive segments share their boundary point
+   * so the drawn line stays continuous.
+   */
+  private splitSegment(
+    workspaceId: string,
+    canvasId: string,
+    segment: DrawingSegment,
+  ): DrawingSegment[] {
+    if (this.frameBytes(workspaceId, canvasId, segment) <= MAX_FRAME_BYTES)
+      return [segment];
+    const shape = segment.drawing.shapes[0];
+    if (segment.drawing.shapes.length !== 1 || !shape || shape.kind !== "path")
+      return [segment];
+    const segments: DrawingSegment[] = [];
+    let chunk: [number, number][] = [];
+    for (const point of shape.points) {
+      const candidate = [...chunk, point];
+      const size = this.frameBytes(workspaceId, canvasId, {
+        geometry: segment.geometry,
+        drawing: { shapes: [{ ...shape, points: candidate }] },
+      });
+      if (chunk.length > 0 && size > MAX_FRAME_BYTES) {
+        segments.push({
+          geometry: segment.geometry,
+          drawing: { shapes: [{ ...shape, points: chunk }] },
+        });
+        chunk = [chunk[chunk.length - 1]!, point];
+      } else {
+        chunk = candidate;
+      }
+    }
+    segments.push({
+      geometry: segment.geometry,
+      drawing: { shapes: [{ ...shape, points: chunk }] },
+    });
+    return segments;
+  }
+
+  /** Upper bound on the serialized size of a `node.createDrawing` request. */
+  private frameBytes(
+    workspaceId: string,
+    canvasId: string,
+    segment: DrawingSegment,
+  ): number {
+    return new TextEncoder().encode(
+      JSON.stringify({
+        protocolVersion: 1,
+        id: "00000000-0000-4000-8000-000000000000",
+        method: "node.createDrawing",
+        params: {
+          workspaceId,
+          canvasId,
+          expectedRevision: Number.MAX_SAFE_INTEGER,
+          ...segment.geometry,
+          drawing: segment.drawing,
+        },
+      }),
+    ).length;
   }
 
   /** Remove one node (and its artifact when unreferenced); used by the eraser. */
