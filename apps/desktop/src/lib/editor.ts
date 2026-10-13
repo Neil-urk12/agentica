@@ -1,9 +1,17 @@
-import type { RuntimeResult } from "@agentica/protocol";
+import type { Drawing, RuntimeResult } from "@agentica/protocol";
 import type { callRuntime } from "./runtime";
 
 export type CanvasDocument = RuntimeResult<"canvas.open">;
 type Placement = CanvasDocument["nodes"][number];
 type Viewport = CanvasDocument["canvas"]["viewport"];
+type Artifact = CanvasDocument["artifacts"][number];
+
+/** Comparable content, so unsaved work is detected for text and drawings alike. */
+function content(artifact: Artifact): string {
+  return artifact.type === "text"
+    ? artifact.text
+    : JSON.stringify(artifact.drawing);
+}
 
 export interface EditorState {
   workspaces: RuntimeResult<"workspace.list">["workspaces"];
@@ -44,11 +52,13 @@ export class Editor {
   private call: typeof callRuntime;
   private key: () => string;
   private changed: (state: EditorState) => void;
-  private savedText = new Map<string, string>();
-  private attemptedText = new Map<string, string>();
+  private savedArtifacts = new Map<string, string>();
+  private attemptedArtifacts = new Map<string, string>();
   private savedLayout = "";
   private attemptedLayout = "";
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private mutations: Promise<void> = Promise.resolve();
+  private savingTask: Promise<void> | null = null;
   private disposed = false;
 
   constructor(
@@ -66,11 +76,12 @@ export class Editor {
     const document = this.state.document;
     this.state.dirty =
       !!document &&
-      (this.attemptedText.size > 0 ||
+      (this.attemptedArtifacts.size > 0 ||
         !!this.attemptedLayout ||
         JSON.stringify(layout(document)) !== this.savedLayout ||
         document.artifacts.some(
-          (artifact) => artifact.text !== this.savedText.get(artifact.id),
+          (artifact) =>
+            content(artifact) !== this.savedArtifacts.get(artifact.id),
         ));
     if (!this.disposed) this.changed(this.state);
   }
@@ -87,10 +98,10 @@ export class Editor {
   }
 
   private load(document: CanvasDocument) {
-    this.savedText = new Map(
-      document.artifacts.map(({ id, text }) => [id, text]),
+    this.savedArtifacts = new Map(
+      document.artifacts.map((artifact) => [artifact.id, content(artifact)]),
     );
-    this.attemptedText.clear();
+    this.attemptedArtifacts.clear();
     this.savedLayout = JSON.stringify(layout(document));
     this.attemptedLayout = "";
     this.publish({ document });
@@ -182,6 +193,99 @@ export class Editor {
     });
   }
 
+  /**
+   * Persist a freehand or geometric drawing as a node. Creations are queued and
+   * settle pending saves first, so fast strokes are never dropped.
+   */
+  async addDrawing(
+    geometry: Pick<Placement, "x" | "y" | "width" | "height">,
+    drawing: Drawing,
+  ) {
+    await this.enqueue(async () => {
+      await this.settleSave();
+      if (this.state.error || this.disposed) return;
+      await this.mutation(async () => {
+        const document = this.state.document!;
+        const result = await this.call(
+          this.key(),
+          false,
+          "node.createDrawing",
+          {
+            workspaceId: this.state.workspace!.workspace.id,
+            canvasId: document.canvas.id,
+            expectedRevision: document.canvas.revision,
+            ...geometry,
+            drawing,
+          },
+        );
+        this.load({
+          ...document,
+          canvas: { ...document.canvas, revision: result.revision },
+          nodes: [...document.nodes, result.node],
+          artifacts: [...document.artifacts, result.artifact],
+        });
+      });
+    });
+  }
+
+  /** Remove one node (and its artifact when unreferenced); used by the eraser. */
+  async deleteNode(nodeId: string) {
+    await this.enqueue(async () => {
+      await this.settleSave();
+      if (this.state.error || this.disposed) return;
+      await this.mutation(async () => {
+        const document = this.state.document!;
+        const result = await this.call(this.key(), false, "node.delete", {
+          workspaceId: this.state.workspace!.workspace.id,
+          canvasId: document.canvas.id,
+          expectedRevision: document.canvas.revision,
+          nodeId,
+        });
+        const nodes = document.nodes.filter((node) => node.id !== nodeId);
+        const retained = new Set(nodes.map((node) => node.artifactId));
+        this.load({
+          ...document,
+          canvas: { ...document.canvas, revision: result.revision },
+          nodes,
+          edges: document.edges.filter(
+            (edge) =>
+              edge.sourceNodeId !== nodeId && edge.targetNodeId !== nodeId,
+          ),
+          artifacts: document.artifacts.filter((artifact) =>
+            retained.has(artifact.id),
+          ),
+        });
+      });
+    });
+  } /** Flush debounced edits, including an in-flight save, before mutating. */
+  private async settleSave() {
+    if (this.savingTask) await this.savingTask;
+    if (this.state.dirty && !this.state.error && !this.disposed)
+      await this.save();
+  }
+
+  /** Run mutations one at a time, in the order they were requested. */
+  private enqueue(run: () => Promise<void>): Promise<void> {
+    const next = this.mutations.then(run, run);
+    this.mutations = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
+
+  private async mutation(run: () => Promise<void>) {
+    if (this.state.busy || this.state.saving || this.disposed) return;
+    this.publish({ busy: true, error: "" });
+    try {
+      await run();
+    } catch (error) {
+      this.fail(error);
+    } finally {
+      this.publish({ busy: false });
+    }
+  }
+
   /** Leave the open canvas but keep its workspace, returning to canvas selection. */
   async closeCanvas() {
     await this.operation(async () => {
@@ -221,7 +325,7 @@ export class Editor {
     });
   }
 
-  async addText() {
+  async addText(position?: { x: number; y: number }) {
     await this.operation(async () => {
       const document = this.state.document!;
       const { x, y, zoom } = document.canvas.viewport;
@@ -229,8 +333,8 @@ export class Editor {
         workspaceId: this.state.workspace!.workspace.id,
         canvasId: document.canvas.id,
         expectedRevision: document.canvas.revision,
-        x: (40 - x) / zoom,
-        y: (40 - y) / zoom,
+        x: position ? position.x : (40 - x) / zoom,
+        y: position ? position.y : (40 - y) / zoom,
         width: 240,
         height: 160,
         text: "",
@@ -292,7 +396,18 @@ export class Editor {
       this.timer = setTimeout(() => void this.save(), 400);
   }
 
+  /** One save runs at a time; concurrent callers await the same attempt. */
   async save() {
+    if (this.savingTask) return this.savingTask;
+    this.savingTask = this.runSave();
+    try {
+      await this.savingTask;
+    } finally {
+      this.savingTask = null;
+    }
+  }
+
+  private async runSave() {
     clearTimeout(this.timer);
     if (
       this.state.busy ||
@@ -307,8 +422,11 @@ export class Editor {
         const document = this.state.document!;
         const workspaceId = this.state.workspace!.workspace.id;
         for (const artifact of document.artifacts) {
-          if (artifact.text === this.savedText.get(artifact.id)) continue;
-          this.attemptedText.set(artifact.id, artifact.text);
+          if (content(artifact) === this.savedArtifacts.get(artifact.id))
+            continue;
+          // Drawings are immutable once created; only text content is edited.
+          if (artifact.type !== "text") continue;
+          this.attemptedArtifacts.set(artifact.id, artifact.text);
           const result = await this.call(
             this.key(),
             false,
@@ -320,8 +438,8 @@ export class Editor {
               text: artifact.text,
             },
           );
-          this.savedText.set(artifact.id, artifact.text);
-          this.attemptedText.delete(artifact.id);
+          this.savedArtifacts.set(artifact.id, artifact.text);
+          this.attemptedArtifacts.delete(artifact.id);
           const current = this.state.document!;
           this.publish({
             document: {
@@ -390,9 +508,10 @@ export class Editor {
           "Saved placement or view changed elsewhere. Copy your unsaved edits for recovery.",
         );
       for (const artifact of remote.artifacts) {
+        const known = content(artifact);
         if (
-          artifact.text !== this.savedText.get(artifact.id) &&
-          artifact.text !== this.attemptedText.get(artifact.id)
+          known !== this.savedArtifacts.get(artifact.id) &&
+          known !== this.attemptedArtifacts.get(artifact.id)
         )
           throw new Error(
             "Saved text changed elsewhere. Copy your unsaved edits for recovery.",
@@ -403,10 +522,10 @@ export class Editor {
           "Saved artifacts changed elsewhere. Copy your unsaved edits for recovery.",
         );
       this.savedLayout = remoteLayout;
-      this.savedText = new Map(
-        remote.artifacts.map(({ id, text }) => [id, text]),
+      this.savedArtifacts = new Map(
+        remote.artifacts.map((artifact) => [artifact.id, content(artifact)]),
       );
-      this.attemptedText.clear();
+      this.attemptedArtifacts.clear();
       this.attemptedLayout = "";
       this.publish({
         error: "",

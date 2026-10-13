@@ -408,6 +408,139 @@
       "error": "WORKSPACE_NOT_OPEN"
     },
     {
+      "method": "node.createDrawing",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 5,
+        "x": 100,
+        "y": 200,
+        "width": 120,
+        "height": 80,
+        "drawing": {
+          "shapes": [
+            {
+              "kind": "path",
+              "points": [
+                [0, 0],
+                [60, 40]
+              ],
+              "color": "#7b7bf0",
+              "width": 3
+            }
+          ]
+        }
+      },
+      "save": { "drawingNode": "/node/id", "drawingArtifact": "/artifact/id" },
+      "expect": {
+        "revision": 6,
+        "node": { "x": 100, "y": 200, "width": 120, "height": 80 },
+        "artifact": {
+          "type": "drawing",
+          "schemaVersion": 1,
+          "revision": 1,
+          "drawing": {
+            "shapes": [{ "kind": "path", "color": "#7b7bf0", "width": 3 }]
+          }
+        }
+      }
+    },
+    {
+      "method": "node.createDrawing",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 6,
+        "x": -20,
+        "y": 500,
+        "width": 80,
+        "height": 60,
+        "drawing": {
+          "shapes": [
+            {
+              "kind": "rectangle",
+              "x": 0,
+              "y": 0,
+              "width": 40,
+              "height": 30,
+              "color": "#7b7bf0"
+            }
+          ]
+        }
+      },
+      "save": { "secondDrawingNode": "/node/id" },
+      "expect": { "revision": 7 }
+    },
+    {
+      "method": "node.createDrawing",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 7,
+        "x": 0,
+        "y": 0,
+        "width": 80,
+        "height": 60,
+        "drawing": {
+          "shapes": [{ "kind": "squiggle", "color": "#7b7bf0" }]
+        }
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "node.createDrawing",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 7,
+        "x": 0,
+        "y": 0,
+        "width": 10,
+        "height": 60,
+        "drawing": {
+          "shapes": [
+            {
+              "kind": "path",
+              "points": [[0, 0]],
+              "color": "#7b7bf0",
+              "width": 3
+            }
+          ]
+        }
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "node.delete",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 7,
+        "nodeId": "$secondDrawingNode"
+      },
+      "expect": { "revision": 8 }
+    },
+    {
+      "method": "node.delete",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 8,
+        "nodeId": "$secondDrawingNode"
+      },
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "node.delete",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 8,
+        "nodeId": "NOT-A-UUID"
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
       "method": "workspace.create",
       "params": { "name": "\u0085" },
       "save": { "otherWorkspace": "/workspace/id" },
@@ -460,7 +593,7 @@
         "canvas": {
           "id": "$canvasId",
           "title": "Plan",
-          "revision": 5,
+          "revision": 8,
           "viewport": { "x": -120.5, "y": 42, "zoom": 1.25 }
         },
         "nodes": [
@@ -479,6 +612,14 @@
             "y": 400,
             "width": 200,
             "height": 120
+          },
+          {
+            "id": "$drawingNode",
+            "artifactId": "$drawingArtifact",
+            "x": 100,
+            "y": 200,
+            "width": 120,
+            "height": 80
           }
         ],
         "edges": [
@@ -503,6 +644,25 @@
             "schemaVersion": 1,
             "revision": 1,
             "text": ""
+          },
+          {
+            "id": "$drawingArtifact",
+            "type": "drawing",
+            "schemaVersion": 1,
+            "revision": 1,
+            "drawing": {
+              "shapes": [
+                {
+                  "kind": "path",
+                  "points": [
+                    [0, 0],
+                    [60, 40]
+                  ],
+                  "color": "#7b7bf0",
+                  "width": 3
+                }
+              ]
+            }
           }
         ]
       }

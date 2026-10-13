@@ -36,6 +36,34 @@ export const ViewportSchema = z.strictObject({
   zoom: z.number().min(LIMITS.minZoom).max(LIMITS.maxZoom),
 });
 
+// Freehand and geometric shapes stored inside a drawing artifact. Coordinates
+// are local to the node origin, so moving the node moves the whole drawing.
+const DrawingColor = z.string().regex(/^#[0-9a-fA-F]{6}$/);
+const StrokeWidth = z.number().min(1).max(64);
+const PathShapeSchema = z.strictObject({
+  kind: z.literal("path"),
+  points: z
+    .array(z.tuple([Coordinate, Coordinate]))
+    .min(1)
+    .max(10_000),
+  color: DrawingColor,
+  width: StrokeWidth,
+});
+const BoxShapeSchema = z.strictObject({
+  kind: z.union([z.literal("rectangle"), z.literal("ellipse")]),
+  x: Coordinate,
+  y: Coordinate,
+  width: z.number().positive().max(LIMITS.coordinate),
+  height: z.number().positive().max(LIMITS.coordinate),
+  color: DrawingColor,
+});
+export const DrawingSchema = z.strictObject({
+  shapes: z
+    .array(z.union([PathShapeSchema, BoxShapeSchema]))
+    .min(1)
+    .max(1_000),
+});
+export type Drawing = z.infer<typeof DrawingSchema>;
 const ParamSchemas = {
   "workspace.list": z.strictObject({}),
   "workspace.create": z.strictObject({ name: Label }),
@@ -80,6 +108,17 @@ const ParamSchemas = {
     expectedRevision: Revision,
     text: Text,
   }),
+  "node.createDrawing": z.strictObject({
+    ...CanvasRef,
+    expectedRevision: Revision,
+    ...Geometry,
+    drawing: DrawingSchema,
+  }),
+  "node.delete": z.strictObject({
+    ...CanvasRef,
+    expectedRevision: Revision,
+    nodeId: IdSchema,
+  }),
 } as const;
 
 export type RuntimeMethod = "runtime.ping" | keyof typeof ParamSchemas;
@@ -116,6 +155,18 @@ export const TextArtifactSchema = z.strictObject({
   revision: Revision,
   text: z.string(),
 });
+export const DrawingArtifactSchema = z.strictObject({
+  id: IdSchema,
+  type: z.literal("drawing"),
+  schemaVersion: z.literal(1),
+  revision: Revision,
+  drawing: DrawingSchema,
+});
+export const ArtifactSchema = z.discriminatedUnion("type", [
+  TextArtifactSchema,
+  DrawingArtifactSchema,
+]);
+export type Artifact = z.infer<typeof ArtifactSchema>;
 export const NodeSchema = z.strictObject({
   id: IdSchema,
   artifactId: IdSchema,
@@ -156,7 +207,7 @@ export const ResultSchemas = {
     }),
     nodes: z.array(NodeSchema),
     edges: z.array(EdgeSchema),
-    artifacts: z.array(TextArtifactSchema),
+    artifacts: z.array(ArtifactSchema),
   }),
   "canvas.delete": z.strictObject({ canvases: z.array(CanvasSummary) }),
   "canvas.save": z.strictObject({ revision: Revision }),
@@ -167,6 +218,12 @@ export const ResultSchemas = {
   }),
   "edge.create": z.strictObject({ revision: Revision, edge: EdgeSchema }),
   "artifact.saveText": z.strictObject({ artifact: TextArtifactSchema }),
+  "node.createDrawing": z.strictObject({
+    revision: Revision,
+    node: NodeSchema,
+    artifact: DrawingArtifactSchema,
+  }),
+  "node.delete": z.strictObject({ revision: Revision }),
 } as const satisfies Record<RuntimeMethod, z.ZodType>;
 
 export type RuntimeResult<M extends RuntimeMethod> = z.infer<

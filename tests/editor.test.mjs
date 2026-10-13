@@ -28,6 +28,7 @@ async function setup(t, intercept = async () => {}) {
     ],
   };
   const calls = [];
+  let sequence = 0;
   // The stub owns the lists the runtime would return after a delete.
   let workspaceList = [{ id: workspaceId, name: "Work" }];
   let canvasList = [{ id: canvasId, title: "Plan" }];
@@ -52,6 +53,43 @@ async function setup(t, intercept = async () => {}) {
         canvases: structuredClone(canvasList),
       };
     if (method === "workspace.close") return {};
+    if (method === "node.createDrawing") {
+      assert.equal(params.expectedRevision, disk.canvas.revision);
+      sequence += 1;
+      const node = {
+        id: `00000000-0000-4000-8000-${String(100 + sequence).padStart(12, "0")}`,
+        artifactId: `00000000-0000-4000-8000-${String(200 + sequence).padStart(12, "0")}`,
+        x: params.x,
+        y: params.y,
+        width: params.width,
+        height: params.height,
+      };
+      const artifact = {
+        id: node.artifactId,
+        type: "drawing",
+        schemaVersion: 1,
+        revision: 1,
+        drawing: params.drawing,
+      };
+      disk.nodes = [...disk.nodes, node];
+      disk.artifacts = [...disk.artifacts, artifact];
+      disk.canvas = { ...disk.canvas, revision: params.expectedRevision + 1 };
+      return {
+        revision: disk.canvas.revision,
+        node: structuredClone(node),
+        artifact: structuredClone(artifact),
+      };
+    }
+    if (method === "node.delete") {
+      assert.equal(params.expectedRevision, disk.canvas.revision);
+      const node = disk.nodes.find((item) => item.id === params.nodeId);
+      if (!node) throw new Error("NOT_FOUND: Node on this canvas");
+      disk.nodes = disk.nodes.filter((item) => item.id !== params.nodeId);
+      const retained = new Set(disk.nodes.map((item) => item.artifactId));
+      disk.artifacts = disk.artifacts.filter((item) => retained.has(item.id));
+      disk.canvas = { ...disk.canvas, revision: params.expectedRevision + 1 };
+      return { revision: disk.canvas.revision };
+    }
     if (method === "canvas.open") return structuredClone(disk);
     if (method === "artifact.saveText") {
       assert.equal(params.expectedRevision, disk.artifacts[0].revision);
@@ -258,6 +296,94 @@ test("a reverted edit remains unsaved after an in-flight failure until reconcili
   await editor.retrySave();
   assert.equal(editor.state.dirty, false);
   assert.equal(editor.state.error, "");
+});
+
+test("drawings are created, moved and erased, and survive a reopen", async (t) => {
+  const { editor, disk } = await setup(t);
+  await editor.addDrawing(
+    { x: 120, y: 80, width: 60, height: 60 },
+    {
+      shapes: [
+        {
+          kind: "path",
+          points: [
+            [0, 0],
+            [40, 40],
+          ],
+          color: "#7b7bf0",
+          width: 3,
+        },
+      ],
+    },
+  );
+  assert.equal(editor.state.error, "");
+  assert.equal(editor.state.dirty, false);
+  const drawingNode = editor.state.document.nodes.find(
+    (node) => node.id !== nodeId,
+  );
+  assert.ok(drawingNode, "the drawing node was added");
+  assert.equal(
+    editor.state.document.artifacts.find(
+      (item) => item.id === drawingNode.artifactId,
+    ).type,
+    "drawing",
+  );
+
+  editor.placeNode(drawingNode.id, { x: 320 });
+  await editor.save();
+  assert.equal(disk.nodes.find((node) => node.id === drawingNode.id).x, 320);
+
+  const expected = structuredClone(editor.state.document);
+  await editor.closeWorkspace();
+  await editor.openWorkspace(workspaceId);
+  await editor.openCanvas(canvasId);
+  assert.deepEqual(editor.state.document, expected);
+
+  await editor.deleteNode(drawingNode.id);
+  assert.equal(editor.state.error, "");
+  assert.equal(editor.state.document.nodes.length, 1);
+  assert.equal(editor.state.document.artifacts.length, 1);
+  assert.equal(disk.nodes.length, 1);
+  assert.equal(disk.artifacts.length, 1);
+});
+
+test("drawings queued behind an in-flight save are not dropped", async (t) => {
+  const started = deferred();
+  const finish = deferred();
+  let delayed = false;
+  const { editor, disk } = await setup(t, async (method) => {
+    if (method === "artifact.saveText" && !delayed) {
+      delayed = true;
+      started.resolve();
+      await finish.promise;
+    }
+  });
+  editor.editText(artifactId, "Pending text");
+  void editor.save();
+  await started.promise;
+  const drawing = editor.addDrawing(
+    { x: 10, y: 10, width: 60, height: 60 },
+    {
+      shapes: [
+        {
+          kind: "path",
+          points: [
+            [0, 0],
+            [40, 40],
+          ],
+          color: "#7b7bf0",
+          width: 3,
+        },
+      ],
+    },
+  );
+  finish.resolve();
+  await drawing;
+  assert.equal(editor.state.error, "");
+  assert.equal(editor.state.dirty, false);
+  assert.equal(disk.artifacts[0].text, "Pending text");
+  assert.equal(disk.artifacts.length, 2);
+  assert.equal(disk.nodes.length, 2);
 });
 
 test("deleting a saved canvas and workspace updates the lists the pickers show", async (t) => {

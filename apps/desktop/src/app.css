@@ -990,6 +990,94 @@ label {
   color: var(--accent-strong);
 }
 
+.composer__lead--active {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+/* ----------------------------------------------------------------- toolbar */
+
+.toolbar {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  bottom: 5.6rem;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.35rem;
+  background: var(--surface-glass);
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(10px);
+}
+
+.toolbar__btn {
+  display: grid;
+  place-items: center;
+  width: 2.3rem;
+  height: 2.3rem;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  transition:
+    color 0.16s ease,
+    background 0.16s ease,
+    border-color 0.16s ease;
+}
+
+.toolbar__btn:hover:not(:disabled) {
+  color: var(--accent-strong);
+  background: var(--surface-soft);
+}
+
+.toolbar__btn--active {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.toolbar__btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* --------------------------------------------------------------- drawlayer */
+
+.drawlayer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.drawlayer--blocked {
+  cursor: not-allowed;
+}
+
+.drawlayer__preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.canvas--pan {
+  cursor: grab;
+}
+
+.canvas--pan:active {
+  cursor: grabbing;
+}
+
 /* --------------------------------------------------------------- inspector */
 
 .inspector {
