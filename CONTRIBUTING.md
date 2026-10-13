@@ -114,6 +114,36 @@ The top-level `pnpm test` builds the frontend and embedded backend before runnin
 
 ---
 
+## Line endings
+
+Tracked text files use LF endings in both the repository and the working tree.
+[`.gitattributes`](.gitattributes) (`* text=auto eol=lf`) enforces this and
+overrides Git for Windows' `core.autocrlf=true` default, while
+[`.editorconfig`](.editorconfig) declares `end_of_line = lf`. Oxfmt follows
+`.editorconfig`, so a CRLF working tree fails `pnpm format:check` for nearly
+every file. No per-user Git configuration change is needed once
+`.gitattributes` is present.
+
+A fresh clone is already correct. An existing checkout made before
+`.gitattributes` was added may still hold CRLF files; renormalize it once. The
+commands below rewrite tracked files from the index, so commit or stash your
+work first:
+
+```sh
+git rm --cached -r .
+git reset --hard
+pnpm format:check
+```
+
+`git add --renormalize .` also normalizes the index, but Git considers a CRLF
+file clean and will not rewrite it, so the working tree still needs the removal
+and reset above (or a fresh clone). Running `pnpm format` converts only the
+files Oxfmt checks; the reset covers the rest, such as Rust, TOML, and
+lockfiles. Do not commit CRLF files or weaken the check to work around a
+line-ending failure.
+
+---
+
 ## Commit style
 
 This repo is far enough along that clear commit messages matter more than enforcing a strict commit-format rule. Write messages that explain what changed and why:
