@@ -873,6 +873,17 @@ label {
   background: var(--bg);
 }
 
+.canvas__nodes {
+  position: absolute;
+  z-index: 7;
+  top: 0.7rem;
+  left: 0.7rem;
+  background: var(--surface-glass);
+  border-color: var(--line-strong);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow-sm);
+}
+
 .canvas__empty {
   position: absolute;
   inset: 0;
@@ -1165,21 +1176,50 @@ label {
 /* ------------------------------------------------------------------ drawer */
 
 .drawer {
-  width: 15rem;
+  position: relative;
+  width: var(--drawer-w, 15rem);
   flex: none;
   display: flex;
   flex-direction: column;
   gap: 0.7rem;
   padding: 1rem 0.9rem 1.2rem;
-  overflow-y: auto;
+  overflow: hidden;
   background: var(--surface);
   border-right: 1px solid var(--line);
 }
 
 .drawer__head {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 0.5rem;
+}
+
+.drawer__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.drawer__grip {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 7px;
+  height: 100%;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: col-resize;
+  touch-action: none;
+  transition: background 0.14s ease;
+}
+
+.drawer__grip:hover,
+.drawer__grip:focus-visible {
+  background: var(--accent);
+  outline: none;
 }
 
 .drawer__head h2 {
@@ -1558,7 +1598,7 @@ label {
     position: absolute;
     inset: 0 auto 0 0;
     z-index: 20;
-    width: min(15rem, 90%);
+    width: min(var(--drawer-w, 15rem), 90%);
     box-shadow: var(--shadow-lg);
   }
   .stage {
