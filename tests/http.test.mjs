@@ -17,6 +17,16 @@ import {
   RuntimeRequestSchema,
   RuntimeResponseSchema,
 } from "@agentica/protocol";
+import {
+  boxByText,
+  boxOf,
+  clickAt,
+  countOf,
+  dragBetween,
+  evaluate,
+  launchBrowser,
+  waitFor,
+} from "./support/chrome.mjs";
 
 const FRONTEND_ORIGIN = "http://127.0.0.1:1420";
 // The same Vite server answers on either loopback spelling, so a browser there
@@ -771,6 +781,240 @@ test("the UI save buffer recovers a real SQLite write failure and reopens after 
   } finally {
     editor.dispose();
     database?.close();
+    await stopBackend(backend.child);
+  }
+});
+
+test("drawing nodes expose usable handles and their connections survive a reopen", async () => {
+  const backend = await startBackend();
+  key = backend.connectionKey;
+  let browser;
+  // Calls from the seeding editor talk to the same runtime the app uses.
+  const call = async (_key, _connect, method, params) => {
+    const input = RuntimeRequestSchema.parse({
+      protocolVersion: 1,
+      id: crypto.randomUUID(),
+      method,
+      params,
+    });
+    const reply = await send(port, {
+      body: JSON.stringify(input),
+      timeout: 15000,
+    });
+    assert.equal(reply.status, 200);
+    const response = RuntimeResponseSchema.parse(JSON.parse(reply.text));
+    if (response.error)
+      throw new Error(`${response.error.code}: ${response.error.message}`);
+    return ResultSchemas[method].parse(response.result);
+  };
+  const editor = new Editor(
+    call,
+    () => key,
+    () => {},
+  );
+  let textNodeId;
+  const drawingIds = {};
+  try {
+    await editor.createWorkspace("Handle coverage");
+    await editor.createCanvas("Handle canvas");
+    await editor.addText();
+    textNodeId = editor.state.document.nodes.at(-1).id;
+    for (const [kind, geometry, shape] of [
+      [
+        "path",
+        { x: 520, y: 60, width: 200, height: 120 },
+        {
+          kind: "path",
+          points: [
+            [8, 8],
+            [70, 80],
+            [130, 20],
+            [190, 95],
+          ],
+          color: "#7b7bf0",
+          width: 4,
+        },
+      ],
+      [
+        "rectangle",
+        { x: 100, y: 340, width: 200, height: 120 },
+        {
+          kind: "rectangle",
+          x: 6,
+          y: 6,
+          width: 188,
+          height: 108,
+          color: "#ef4444",
+        },
+      ],
+      [
+        "ellipse",
+        { x: 520, y: 340, width: 200, height: 120 },
+        {
+          kind: "ellipse",
+          x: 6,
+          y: 6,
+          width: 188,
+          height: 108,
+          color: "#22c55e",
+        },
+      ],
+    ]) {
+      await editor.addDrawing(geometry, { shapes: [shape] });
+      drawingIds[kind] = editor.state.document.nodes.at(-1).id;
+    }
+    editor.placeNode(textNodeId, { x: 100, y: 60, width: 240, height: 160 });
+    await editor.save();
+    assert.equal(editor.state.error, "");
+    assert.equal(editor.state.dirty, false);
+    // Release the workspace so the app in the browser can open it.
+    await editor.closeWorkspace();
+
+    browser = await launchBrowser();
+    await browser.send(
+      "Page.navigate",
+      { url: `http://127.0.0.1:${port}/` },
+      browser.sessionId,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector("#connection-key")`,
+      "the connection form",
+    );
+    await evaluate(
+      browser,
+      `(() => {
+        const input = document.querySelector("#connection-key");
+        input.value = ${JSON.stringify(key)};
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        return true;
+      })()`,
+    );
+    await clickAt(
+      browser,
+      await boxOf(browser, ".connbar button[type='submit']"),
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector(".connbar--ok")`,
+      "the connected status",
+    );
+
+    for (const [picker, label] of [
+      ["workspace", "Handle coverage"],
+      ["canvas", "Handle canvas"],
+    ]) {
+      await waitFor(
+        browser,
+        `[...document.querySelectorAll(".cards .card")].some((card) => card.textContent.includes(${JSON.stringify(label)}))`,
+        `the seeded ${picker} card`,
+      );
+      await clickAt(browser, await boxByText(browser, ".cards .card", label));
+    }
+    await waitFor(
+      browser,
+      `!!document.querySelector(".svelte-flow")`,
+      "the canvas",
+    );
+    await waitFor(
+      browser,
+      `[...document.querySelectorAll(".svelte-flow__node")].length === 4 && [...document.querySelectorAll(".svelte-flow__node")].every((node) => node.getBoundingClientRect().height > 0)`,
+      "all four nodes to be measured",
+    );
+    // Every drawing kind must render its own connection handles.
+    for (const [kind, id] of Object.entries(drawingIds)) {
+      await waitFor(
+        browser,
+        `!!document.querySelector('[data-id="${id}"]')`,
+        `the ${kind} drawing node`,
+      );
+      const handles = await evaluate(
+        browser,
+        `(() => {
+          const node = document.querySelector('[data-id="${id}"]');
+          return {
+            target: node.querySelectorAll(".svelte-flow__handle.target").length,
+            source: node.querySelectorAll(".svelte-flow__handle.source").length,
+          };
+        })()`,
+      );
+      assert.equal(
+        handles.target,
+        1,
+        `the ${kind} drawing exposes a target handle`,
+      );
+      assert.equal(
+        handles.source,
+        1,
+        `the ${kind} drawing exposes a source handle`,
+      );
+    }
+
+    // Drag from each drawing's handle to the text node, as a user would.
+    await clickAt(browser, await boxOf(browser, ".composer__lead"));
+    await waitFor(
+      browser,
+      `!!document.querySelector('[aria-label="Arrow"]')`,
+      "the canvas toolbar",
+    );
+    await clickAt(browser, await boxOf(browser, '[aria-label="Arrow"]'));
+    for (const [kind, id] of Object.entries(drawingIds)) {
+      const before = await countOf(browser, ".svelte-flow__edge");
+      const source = await boxOf(
+        browser,
+        `[data-id="${id}"] .svelte-flow__handle.source`,
+      );
+      const target = await boxOf(
+        browser,
+        `[data-id="${textNodeId}"] .svelte-flow__handle.target`,
+      );
+      assert.ok(source, `the ${kind} drawing handle is laid out`);
+      assert.ok(target, "the text node handle is laid out");
+      await dragBetween(browser, source, target);
+      await waitFor(
+        browser,
+        `document.querySelectorAll(".svelte-flow__edge").length === ${before + 1}`,
+        `the ${kind} drawing to connect`,
+      );
+    }
+    assert.equal(
+      await countOf(browser, ".svelte-flow__edge"),
+      3,
+      "each drawing connected to the text node",
+    );
+    await waitFor(
+      browser,
+      `document.querySelector(".pill")?.textContent.includes("All changes saved")`,
+      "the save indicator to settle",
+    );
+
+    // Closing and reopening the canvas must bring the connections back.
+    await clickAt(
+      browser,
+      await boxOf(browser, '[aria-label="Canvas gallery"]'),
+    );
+    await waitFor(
+      browser,
+      `[...document.querySelectorAll(".cards .card")].some((card) => card.textContent.includes("Handle canvas"))`,
+      "the canvas picker",
+    );
+    await clickAt(
+      browser,
+      await boxByText(browser, ".cards .card", "Handle canvas"),
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector(".svelte-flow")`,
+      "the reopened canvas",
+    );
+    await waitFor(
+      browser,
+      `document.querySelectorAll(".svelte-flow__edge").length === 3`,
+      "the reopened connections to render",
+    );
+  } finally {
+    editor.dispose();
+    await browser?.close();
     await stopBackend(backend.child);
   }
 });

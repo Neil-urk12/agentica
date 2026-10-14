@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Drawing } from "@agentica/protocol";
+  import { Handle, Position } from "@xyflow/svelte";
 
   interface Props {
     data: { drawing: Drawing };
@@ -13,6 +14,9 @@
   const w = $derived(width || 1);
   const h = $derived(height || 1);
 </script>
+
+<!-- Custom nodes must render their own handles or edges cannot attach. -->
+<Handle type="target" position={Position.Top} />
 
 <svg
   class="drawing-node"
@@ -56,6 +60,7 @@
     {/if}
   {/each}
 </svg>
+<Handle type="source" position={Position.Bottom} />
 
 <style>
   .drawing-node {
