@@ -465,16 +465,27 @@ export class Editor {
     position?: { x: number; y: number },
     text = "",
     size?: { width: number; height: number },
+    origin?: { workspaceId: string; canvasId: string },
   ): Promise<RuntimeResult<"node.createText"> | undefined> {
     let created: RuntimeResult<"node.createText"> | undefined;
     await this.enqueue(async () => {
       await this.settleSave();
       if (this.state.error || this.disposed) return;
       await this.mutation(async () => {
-        const document = this.state.document!;
+        const document = this.state.document;
+        const workspaceId = this.state.workspace?.workspace.id;
+
+        if (
+          !document ||
+          !workspaceId ||
+          (origin &&
+            (origin.workspaceId !== workspaceId ||
+              origin.canvasId !== document.canvas.id))
+        )
+          return;
         const { x, y, zoom } = document.canvas.viewport;
-        const result = await this.call(this.key(), false, "node.createText", {
-          workspaceId: this.state.workspace!.workspace.id,
+        const params = {
+          workspaceId,
           canvasId: document.canvas.id,
           expectedRevision: document.canvas.revision,
           x: position ? position.x : (40 - x) / zoom,
@@ -482,7 +493,14 @@ export class Editor {
           width: size?.width ?? 240,
           height: size?.height ?? 160,
           text,
-        });
+        };
+
+        const result = await this.call(
+          this.key(),
+          false,
+          "node.createText",
+          params,
+        );
         created = result;
         this.load({
           ...document,
@@ -606,7 +624,7 @@ export class Editor {
         const workspaceId = this.state.workspace!.workspace.id;
         // A drawing whose creation failed is still a draft; create it now so a
         // retry persists each stroke exactly once.
-        for (;;) {
+        for (; ;) {
           const draft = this.state.document!;
           const pending = draft.artifacts.find(
             (artifact): artifact is Extract<Artifact, { type: "drawing" }> =>
@@ -729,16 +747,16 @@ export class Editor {
       const node = placements.length === 1 ? placements[0] : undefined;
       const created =
         attempted &&
-        artifact?.type === "drawing" &&
-        artifact.revision === 1 &&
-        content(artifact) === content(attempted.artifact) &&
-        node &&
-        !document.nodes.some((item) => item.id === node.id) &&
-        node.x === attempted.node.x &&
-        node.y === attempted.node.y &&
-        node.width === attempted.node.width &&
-        node.height === attempted.node.height &&
-        remote.canvas.revision === attempted.revision + 1
+          artifact?.type === "drawing" &&
+          artifact.revision === 1 &&
+          content(artifact) === content(attempted.artifact) &&
+          node &&
+          !document.nodes.some((item) => item.id === node.id) &&
+          node.x === attempted.node.x &&
+          node.y === attempted.node.y &&
+          node.width === attempted.node.width &&
+          node.height === attempted.node.height &&
+          remote.canvas.revision === attempted.revision + 1
           ? { node, artifact, revision: remote.canvas.revision }
           : undefined;
       const pending = new Set(
@@ -796,11 +814,11 @@ export class Editor {
             pending.has(draft.id)
               ? draft
               : {
-                  ...draft,
-                  revision: remote.artifacts.find(
-                    (artifact) => artifact.id === draft.id,
-                  )!.revision,
-                },
+                ...draft,
+                revision: remote.artifacts.find(
+                  (artifact) => artifact.id === draft.id,
+                )!.revision,
+              },
           ),
         },
       });

@@ -8,7 +8,7 @@
     loading?: boolean;
     disabled?: boolean;
     onToggleToolbar: () => void;
-    onSubmit?: (prompt: string) => void | Promise<void>;
+    onSubmit?: (prompt: string) => boolean | Promise<boolean>;
   }
 
   let {
@@ -22,17 +22,19 @@
 
   let promptText = $state("");
 
-  function submit() {
+  async function submit() {
+    const submittedText = promptText;
     const trimmed = promptText.trim();
     if (!trimmed || loading || disabled) return;
-    promptText = "";
-    void onSubmit?.(trimmed);
+    if ((await onSubmit?.(trimmed)) && promptText === submittedText) {
+      promptText = "";
+    }
   }
 
   function onKeydown(event: KeyboardEvent) {
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
-      submit();
+      void submit();
     }
   }
 </script>
@@ -59,7 +61,8 @@
     onkeydown={onKeydown}
     {disabled}
     maxlength={LIMITS.text}
-    {placeholder}></textarea>
+    {placeholder}
+  ></textarea>
 
   <div class="composer__tools">
     <button

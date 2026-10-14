@@ -71,7 +71,7 @@
       <span class="setting__icon"><Icon name="key" size={20} /></span>
       <div class="setting__text">
         <div class="setting__title-row">
-          <h2>OpenRouter API Key</h2>
+          <h2 id="openrouter-api-key-label">OpenRouter API Key</h2>
           {#if savedMessage}
             <span class="setting__status">
               <Icon name="check" size={14} />{savedMessage}
@@ -83,6 +83,7 @@
           <div class="setting__input-row">
             <input
               id="openrouter-api-key"
+              aria-labelledby="openrouter-api-key-label"
               type={showKey ? "text" : "password"}
               value={apiKey}
               oninput={(event) => onKeyInput(event.currentTarget.value)}
@@ -117,11 +118,14 @@
     <section class="setting setting--stacked">
       <span class="setting__icon"><Icon name="smart_toy" size={20} /></span>
       <div class="setting__text">
-        <h2>OpenRouter Model</h2>
-        <p>Specify any OpenRouter model identifier (defaults to free router).</p>
+        <h2 id="openrouter-model-label">OpenRouter Model</h2>
+        <p>
+          Specify any OpenRouter model identifier (defaults to free router).
+        </p>
         <div class="setting__body">
           <input
             id="openrouter-model"
+            aria-labelledby="openrouter-model-label"
             type="text"
             value={model}
             placeholder={DEFAULT_MODEL}

@@ -348,25 +348,29 @@
   }
 
   async function handlePromptSubmit(prompt: string) {
-    if (generating || !editorState.document) return;
+    if (generating || !editorState.document || !editorState.workspace)
+      return false;
+    const origin = {
+      workspaceId: editorState.workspace.workspace.id,
+      canvasId: editorState.document.canvas.id,
+    };
     promptError = "";
     generating = true;
     try {
       const responseText = await askOpenRouter(prompt);
-      const safeText =
-        responseText.length > LIMITS.text
-          ? responseText.slice(0, LIMITS.text)
-          : responseText;
+      if (
+        editorState.workspace?.workspace.id !== origin.workspaceId ||
+        editorState.document?.canvas.id !== origin.canvasId
+      ) {
+        throw new Error("The canvas changed while generating. Please retry.");
+      }
 
       const rect = canvasEl?.getBoundingClientRect();
       const nodeWidth = 340;
-      const lines = safeText.split("\n").length;
+      const lines = responseText.split("\n").length;
       const estimatedHeight = Math.min(
         LIMITS.maxSize,
-        Math.max(
-          LIMITS.minSize,
-          Math.min(480, Math.max(180, lines * 22 + 60)),
-        ),
+        Math.max(LIMITS.minSize, Math.min(480, Math.max(180, lines * 22 + 60))),
       );
 
       const position = rect
@@ -381,16 +385,25 @@
           }
         : undefined;
 
-      const created = await editor.addText(position, safeText, {
-        width: nodeWidth,
-        height: estimatedHeight,
-      });
-      if (created?.node) {
-        selectedId = created.node.id;
+      const created = await editor.addText(
+        position,
+        responseText,
+        { width: nodeWidth, height: estimatedHeight },
+        origin,
+      );
+
+      if (!created) {
+        throw new Error(
+          editorState.error || "The response could not be saved. Please retry.",
+        );
       }
+
+      selectedId = created.node.id;
+      return true;
     } catch (err) {
       promptError =
         err instanceof Error ? err.message : "Failed to generate LLM response.";
+      return false;
     } finally {
       generating = false;
     }
@@ -769,7 +782,9 @@
       <div class="banner banner--error" role="alert">
         <Icon name="error" size={18} />
         <span>{promptError}</span>
-        {#if promptError.toLowerCase().includes("settings") || !getOpenRouterApiKey()}
+        {#if promptError
+          .toLowerCase()
+          .includes("settings") || !getOpenRouterApiKey()}
           <button
             class="btn btn--soft"
             type="button"
@@ -1090,7 +1105,8 @@
           readonly
           value={recoveryCopy}
           rows="4"
-          onfocus={(event) => event.currentTarget.select()}></textarea>
+          onfocus={(event) => event.currentTarget.select()}
+        ></textarea>
         <button
           class="btn btn--ghost"
           type="button"

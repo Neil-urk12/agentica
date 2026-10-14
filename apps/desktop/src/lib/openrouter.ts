@@ -41,10 +41,7 @@ export function getOpenRouterModel(): string {
 
 export function setOpenRouterModel(model: string): void {
   try {
-    localStorage.setItem(
-      MODEL_STORAGE,
-      model.trim() || DEFAULT_MODEL,
-    );
+    localStorage.setItem(MODEL_STORAGE, model.trim() || DEFAULT_MODEL);
   } catch {
     // Storage may be unavailable
   }
@@ -69,7 +66,8 @@ export async function askOpenRouter(
   options?: { apiKey?: string; model?: string },
 ): Promise<string> {
   const apiKey = (options?.apiKey ?? getOpenRouterApiKey()).trim();
-  const model = (options?.model ?? getOpenRouterModel()).trim() || DEFAULT_MODEL;
+  const model =
+    (options?.model ?? getOpenRouterModel()).trim() || DEFAULT_MODEL;
 
   if (!apiKey) {
     throw new Error(
@@ -77,37 +75,39 @@ export async function askOpenRouter(
     );
   }
 
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-      "HTTP-Referer": "https://agentica.app",
-      "X-Title": "Agentica",
+  const response = await fetch(
+    "https://openrouter.ai/api/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://agentica.app",
+        "X-Title": "Agentica",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+      }),
     },
-    body: JSON.stringify({
-      model,
-      messages: [
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-    }),
-  });
+  );
 
   if (!response.ok) {
-    let errorMessage = `OpenRouter request failed with status ${response.status}`;
+    const errorMessage = `OpenRouter request failed with status ${response.status}`;
+    const text = await response.text();
+    let detail = text;
     try {
-      const errData = (await response.json()) as OpenRouterChatResponse;
+      const errData = JSON.parse(text) as OpenRouterChatResponse;
       if (errData?.error?.message) {
-        errorMessage = errData.error.message;
+        detail = errData.error.message;
       }
-    } catch {
-      const text = await response.text();
-      if (text) errorMessage = text;
-    }
-    throw new Error(errorMessage);
+    } catch { }
+    throw new Error(detail ? `${errorMessage}: ${detail}` : errorMessage);
   }
 
   const data = (await response.json()) as OpenRouterChatResponse;
