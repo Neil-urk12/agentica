@@ -148,6 +148,195 @@ function deferred() {
   return { promise, resolve };
 }
 
+const drawingGeometry = { x: 120, y: 80, width: 60, height: 60 };
+const drawingContent = {
+  shapes: [
+    {
+      kind: "path",
+      points: [
+        [0, 0],
+        [40, 40],
+      ],
+      color: "#7b7bf0",
+      width: 3,
+    },
+  ],
+};
+
+test("retry adopts a drawing committed without a reply and saves newer placement", async (t) => {
+  const { editor, disk, calls, call } = await setup(t);
+  let loseReply = true;
+  editor.call = async (...args) => {
+    const result = await call(...args);
+    if (args[2] === "node.createDrawing" && loseReply) {
+      loseReply = false;
+      throw new TypeError("Connection lost after commit");
+    }
+    return result;
+  };
+  await editor.addDrawing(drawingGeometry, drawingContent);
+  assert.equal(disk.nodes.length, 2);
+  assert.equal(editor.state.dirty, true);
+  const draftId = editor.state.document.nodes[1].id;
+  editor.placeNode(draftId, { x: 777 });
+  await editor.retrySave();
+  assert.equal(editor.state.error, "");
+  assert.equal(editor.state.dirty, false);
+  assert.equal(editor.state.document.nodes[1].id, disk.nodes[1].id);
+  assert.equal(disk.nodes[1].x, 777);
+  assert.equal(
+    calls.filter(({ method }) => method === "node.createDrawing").length,
+    1,
+  );
+  await editor.retrySave();
+  assert.equal(
+    disk.nodes.length,
+    2,
+    "further retries do not duplicate the drawing",
+  );
+  await editor.deleteNode(draftId);
+  assert.equal(editor.state.error, "");
+  assert.equal(
+    disk.nodes.length,
+    1,
+    "retained temporary IDs resolve after reconciliation",
+  );
+  const expected = structuredClone(editor.state.document);
+  await editor.closeCanvas();
+  assert.equal(editor.state.document, null);
+  await editor.openCanvas(canvasId);
+  assert.deepEqual(editor.state.document, expected);
+});
+
+test("drawing acknowledgements preserve placement edits made during creation", async (t) => {
+  const started = deferred();
+  const finish = deferred();
+  const { editor, disk, calls } = await setup(t, async (method) => {
+    if (method === "node.createDrawing") {
+      started.resolve();
+      await finish.promise;
+    }
+  });
+  const adding = editor.addDrawing(drawingGeometry, drawingContent);
+  await started.promise;
+  const draftId = editor.state.document.nodes[1].id;
+  const geometry = { x: 777, y: -50, width: 300, height: 200 };
+  editor.placeNode(draftId, geometry);
+  finish.resolve();
+  await adding;
+  assert.equal(editor.state.error, "");
+  assert.equal(editor.state.dirty, false);
+  for (const [key, value] of Object.entries(geometry)) {
+    assert.equal(editor.state.document.nodes[1][key], value);
+    assert.equal(disk.nodes[1][key], value);
+  }
+  assert.equal(
+    calls.filter(({ method }) => method === "canvas.save").length,
+    1,
+  );
+});
+
+test("queued deletions follow a drawing's server ID after creation", async (t) => {
+  const started = deferred();
+  const finish = deferred();
+  const { editor, disk, calls } = await setup(t, async (method) => {
+    if (method === "node.createDrawing") {
+      started.resolve();
+      await finish.promise;
+    }
+  });
+  const adding = editor.addDrawing(drawingGeometry, drawingContent);
+  await started.promise;
+  const draftId = editor.state.document.nodes[1].id;
+  const deleting = editor.deleteNode(draftId);
+  finish.resolve();
+  await Promise.all([adding, deleting]);
+  assert.equal(editor.state.error, "");
+  assert.equal(editor.state.dirty, false);
+  assert.notEqual(
+    calls.find(({ method }) => method === "node.delete").params.nodeId,
+    draftId,
+  );
+  assert.equal(disk.nodes.length, 1);
+  assert.equal(disk.artifacts.length, 1);
+  assert.equal(editor.state.document.nodes.length, 1);
+});
+
+for (const change of [
+  "content",
+  "geometry",
+  "revision",
+  "saved text",
+  "extra drawing",
+]) {
+  test(`retry refuses a lost drawing reply with unexpected remote ${change}`, async (t) => {
+    const { editor, disk, call } = await setup(t);
+    editor.call = async (...args) => {
+      const result = await call(...args);
+      if (args[2] === "node.createDrawing") throw new TypeError("Reply lost");
+      return result;
+    };
+    await editor.addDrawing(drawingGeometry, drawingContent);
+    if (change === "content")
+      disk.artifacts[1].drawing = {
+        shapes: [{ ...drawingContent.shapes[0], color: "#ffffff" }],
+      };
+    if (change === "geometry") disk.nodes[1].x = 999;
+    if (change === "revision") disk.canvas.revision += 1;
+    if (change === "saved text")
+      disk.artifacts[0].text = "Another editor's text";
+    if (change === "extra drawing") {
+      disk.artifacts.push({ ...disk.artifacts[1], id: crypto.randomUUID() });
+      disk.nodes.push({
+        ...disk.nodes[1],
+        id: crypto.randomUUID(),
+        artifactId: disk.artifacts[2].id,
+      });
+    }
+    const draft = structuredClone(editor.state.document);
+    await editor.retrySave();
+    assert.match(editor.state.error, /changed elsewhere/);
+    assert.equal(editor.state.dirty, true);
+    assert.deepEqual(
+      editor.state.document,
+      draft,
+      "failed reconciliation leaves drafts intact",
+    );
+    assert.equal(disk.nodes.length, change === "extra drawing" ? 3 : 2);
+  });
+}
+
+test("retry reconciles a lost split-stroke reply and creates only uncommitted segments", async (t) => {
+  const { editor, disk, calls, call } = await setup(t);
+  let creates = 0;
+  editor.call = async (...args) => {
+    const result = await call(...args);
+    if (args[2] === "node.createDrawing" && ++creates === 2)
+      throw new TypeError("Second segment committed without a reply");
+    return result;
+  };
+  const points = [...denseLoop(), ...denseLoop()];
+  await editor.addDrawing(
+    { x: 0, y: 0, width: 40, height: 40 },
+    { shapes: [{ kind: "path", points, color: "#7b7bf0", width: 3 }] },
+  );
+  const total = editor.state.document.nodes.length - 1;
+  assert.ok(total > 2);
+  assert.equal(disk.nodes.length - 1, 2);
+  await editor.retrySave();
+  assert.equal(editor.state.error, "");
+  assert.equal(editor.state.dirty, false);
+  assert.equal(disk.nodes.length - 1, total);
+  assert.equal(
+    calls.filter(({ method }) => method === "node.createDrawing").length,
+    total,
+  );
+  assert.deepEqual(
+    reassemble(disk.artifacts.filter(({ type }) => type === "drawing")),
+    points,
+  );
+});
+
 /** A dense loop that stays in a small area yet serializes past one frame. */
 function denseLoop() {
   return Array.from({ length: 2000 }, (_, index) => {

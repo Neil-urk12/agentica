@@ -49,6 +49,12 @@ export class Editor {
   private changed: (state: EditorState) => void;
   private savedArtifacts = new Map<string, string>();
   private attemptedArtifacts = new Map<string, string>();
+  private attemptedDrawing: {
+    node: Placement;
+    artifact: Artifact;
+    revision: number;
+  } | null = null;
+  private nodeIds = new Map<string, string>();
   private savedLayout = "";
   private attemptedLayout = "";
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -119,10 +125,13 @@ export class Editor {
   }
 
   private load(document: CanvasDocument) {
+    if (document.canvas.id !== this.state.document?.canvas.id)
+      this.nodeIds.clear();
     this.savedArtifacts = new Map(
       document.artifacts.map((artifact) => [artifact.id, content(artifact)]),
     );
     this.attemptedArtifacts.clear();
+    this.attemptedDrawing = null;
     this.savedLayout = JSON.stringify(this.layout(document));
     this.attemptedLayout = "";
     this.publish({ document });
@@ -334,6 +343,7 @@ export class Editor {
     await this.enqueue(async () => {
       await this.settleSave();
       if (this.state.error || this.disposed) return;
+      nodeId = this.nodeIds.get(nodeId) ?? nodeId;
       await this.mutation(async () => {
         const document = this.state.document!;
         const result = await this.call(this.key(), false, "node.delete", {
@@ -533,6 +543,43 @@ export class Editor {
     }
   }
 
+  /** Adopt server identities while keeping geometry edited during the request. */
+  private acknowledgeDrawing(
+    node: Placement,
+    result: RuntimeResult<"node.createDrawing">,
+  ) {
+    this.savedArtifacts.set(result.artifact.id, content(result.artifact));
+    const saved = JSON.parse(this.savedLayout) as ReturnType<Editor["layout"]>;
+    saved.nodes = [
+      ...saved.nodes,
+      {
+        id: result.node.id,
+        x: result.node.x,
+        y: result.node.y,
+        width: result.node.width,
+        height: result.node.height,
+      },
+    ].sort((left, right) => left.id.localeCompare(right.id));
+    this.savedLayout = JSON.stringify(saved);
+    this.nodeIds.set(node.id, result.node.id);
+    this.attemptedDrawing = null;
+    const latest = this.state.document!;
+    this.publish({
+      document: {
+        ...latest,
+        canvas: { ...latest.canvas, revision: result.revision },
+        nodes: latest.nodes.map((item) =>
+          item.id === node.id
+            ? { ...item, id: result.node.id, artifactId: result.artifact.id }
+            : item,
+        ),
+        artifacts: latest.artifacts.map((item) =>
+          item.id === node.artifactId ? result.artifact : item,
+        ),
+      },
+    });
+  }
+
   private async runSave() {
     clearTimeout(this.timer);
     if (
@@ -559,6 +606,11 @@ export class Editor {
           const node = draft.nodes.find(
             (item) => item.artifactId === pending.id,
           )!;
+          this.attemptedDrawing = {
+            node,
+            artifact: pending,
+            revision: draft.canvas.revision,
+          };
           const result = await this.call(
             this.key(),
             false,
@@ -574,42 +626,7 @@ export class Editor {
               drawing: pending.drawing,
             },
           );
-          this.savedArtifacts.set(result.artifact.id, content(result.artifact));
-          // `node.createDrawing` already committed this node's geometry.
-          const saved = JSON.parse(this.savedLayout) as {
-            viewport: Viewport;
-            nodes: {
-              id: string;
-              x: number;
-              y: number;
-              width: number;
-              height: number;
-            }[];
-          };
-          saved.nodes = [
-            ...saved.nodes,
-            {
-              id: result.node.id,
-              x: result.node.x,
-              y: result.node.y,
-              width: result.node.width,
-              height: result.node.height,
-            },
-          ].sort((left, right) => left.id.localeCompare(right.id));
-          this.savedLayout = JSON.stringify(saved);
-          const latest = this.state.document!;
-          this.publish({
-            document: {
-              ...latest,
-              canvas: { ...latest.canvas, revision: result.revision },
-              nodes: latest.nodes.map((item) =>
-                item.id === node.id ? result.node : item,
-              ),
-              artifacts: latest.artifacts.map((item) =>
-                item.id === pending.id ? result.artifact : item,
-              ),
-            },
-          });
+          this.acknowledgeDrawing(node, result);
         }
         const document = this.state.document!;
         for (const artifact of document.artifacts) {
@@ -682,15 +699,37 @@ export class Editor {
       return;
     this.publish({ busy: true });
     try {
-      const document = this.state.document;
+      let document = this.state.document;
       const workspaceId = this.state.workspace!.workspace.id;
       await this.call(this.key(), false, "workspace.open", { workspaceId });
       const remote = await this.call(this.key(), false, "canvas.open", {
         workspaceId,
         canvasId: document.canvas.id,
       });
-      // Draft drawings were never created on the server, so they are local-only
-      // until `save` retries them; the reconciliation below ignores them.
+      // One lost creation reply can account for exactly one new drawing and revision.
+      const attempted = this.attemptedDrawing;
+      const unknown = remote.artifacts.filter(
+        (artifact) => !this.savedArtifacts.has(artifact.id),
+      );
+      const artifact = unknown.length === 1 ? unknown[0] : undefined;
+      const placements = remote.nodes.filter(
+        (node) => node.artifactId === artifact?.id,
+      );
+      const node = placements.length === 1 ? placements[0] : undefined;
+      const created =
+        attempted &&
+        artifact?.type === "drawing" &&
+        artifact.revision === 1 &&
+        content(artifact) === content(attempted.artifact) &&
+        node &&
+        !document.nodes.some((item) => item.id === node.id) &&
+        node.x === attempted.node.x &&
+        node.y === attempted.node.y &&
+        node.width === attempted.node.width &&
+        node.height === attempted.node.height &&
+        remote.canvas.revision === attempted.revision + 1
+          ? { node, artifact, revision: remote.canvas.revision }
+          : undefined;
       const pending = new Set(
         document.artifacts
           .filter((artifact) => !this.savedArtifacts.has(artifact.id))
@@ -705,7 +744,10 @@ export class Editor {
         throw new Error(
           "Saved placement or view changed elsewhere. Copy your unsaved edits for recovery.",
         );
-      for (const artifact of remote.artifacts) {
+      const existing = remote.artifacts.filter(
+        (artifact) => artifact.id !== created?.artifact.id,
+      );
+      for (const artifact of existing) {
         const known = content(artifact);
         if (
           known !== this.savedArtifacts.get(artifact.id) &&
@@ -718,11 +760,17 @@ export class Editor {
       const committed = document.artifacts.filter(
         (artifact) => !pending.has(artifact.id),
       );
-      if (remote.artifacts.length !== committed.length)
+      if (existing.length !== committed.length)
         throw new Error(
           "Saved artifacts changed elsewhere. Copy your unsaved edits for recovery.",
         );
-      this.savedLayout = remoteLayout;
+      if (created && attempted) {
+        this.acknowledgeDrawing(attempted.node, created);
+        document = this.state.document!;
+        pending.delete(attempted.artifact.id);
+      }
+      this.attemptedDrawing = null;
+      this.savedLayout = JSON.stringify(this.layout(remote));
       this.savedArtifacts = new Map(
         remote.artifacts.map((artifact) => [artifact.id, content(artifact)]),
       );

@@ -13,6 +13,16 @@ validation evidence in the [development docs](docs/development/README.md).
 
 ### 2026-10-14
 
+#### Drawing save recovery
+
+- Drawing creation records its attempted content, placement, and revision so
+  Retry save can adopt a uniquely matching committed drawing after a lost reply
+  and create only unfinished segments. Unknown remote changes still block retry.
+- Creation acknowledgements adopt server IDs while preserving the latest local
+  geometry; subsequent canvas saves persist edits made during the request.
+- Queued drawing deletions resolve temporary node IDs after creation, allowing
+  the eraser to remove a drawing while its creation response is pending.
+
 #### Browser RPC preflight
 
 - The detached backend accepts the development frontend at `http://localhost:1420`
