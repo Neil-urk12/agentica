@@ -461,27 +461,38 @@ export class Editor {
     });
   }
 
-  async addText(position?: { x: number; y: number }) {
-    await this.operation(async () => {
-      const document = this.state.document!;
-      const { x, y, zoom } = document.canvas.viewport;
-      const result = await this.call(this.key(), false, "node.createText", {
-        workspaceId: this.state.workspace!.workspace.id,
-        canvasId: document.canvas.id,
-        expectedRevision: document.canvas.revision,
-        x: position ? position.x : (40 - x) / zoom,
-        y: position ? position.y : (40 - y) / zoom,
-        width: 240,
-        height: 160,
-        text: "",
-      });
-      this.load({
-        ...document,
-        canvas: { ...document.canvas, revision: result.revision },
-        nodes: [...document.nodes, result.node],
-        artifacts: [...document.artifacts, result.artifact],
+  async addText(
+    position?: { x: number; y: number },
+    text = "",
+    size?: { width: number; height: number },
+  ): Promise<RuntimeResult<"node.createText"> | undefined> {
+    let created: RuntimeResult<"node.createText"> | undefined;
+    await this.enqueue(async () => {
+      await this.settleSave();
+      if (this.state.error || this.disposed) return;
+      await this.mutation(async () => {
+        const document = this.state.document!;
+        const { x, y, zoom } = document.canvas.viewport;
+        const result = await this.call(this.key(), false, "node.createText", {
+          workspaceId: this.state.workspace!.workspace.id,
+          canvasId: document.canvas.id,
+          expectedRevision: document.canvas.revision,
+          x: position ? position.x : (40 - x) / zoom,
+          y: position ? position.y : (40 - y) / zoom,
+          width: size?.width ?? 240,
+          height: size?.height ?? 160,
+          text,
+        });
+        created = result;
+        this.load({
+          ...document,
+          canvas: { ...document.canvas, revision: result.revision },
+          nodes: [...document.nodes, result.node],
+          artifacts: [...document.artifacts, result.artifact],
+        });
       });
     });
+    return created;
   }
 
   editText(artifactId: string, text: string) {
