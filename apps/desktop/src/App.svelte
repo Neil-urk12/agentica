@@ -10,6 +10,7 @@
   import DrawingNode from "./lib/components/DrawingNode.svelte";
   import Icon from "./lib/components/Icon.svelte";
   import Settings from "./lib/components/Settings.svelte";
+  import { askOpenRouter, getOpenRouterApiKey } from "./lib/openrouter";
   import WorkspacePicker from "./lib/components/WorkspacePicker.svelte";
   import CanvasPicker from "./lib/components/CanvasPicker.svelte";
   import NodeDrawer from "./lib/components/NodeDrawer.svelte";
@@ -63,6 +64,8 @@
   let closeNotice = $state("");
   let tool = $state<Tool>("select");
   let toolbarOpen = $state(false);
+  let generating = $state(false);
+  let promptError = $state("");
   let canvasEl = $state<HTMLElement>();
   let drawSurface = $state<HTMLDivElement>();
   let gesture = $state.raw<Gesture | null>(null);
@@ -338,6 +341,55 @@
   function selectTool(next: Tool) {
     tool = next;
     gesture = null;
+  }
+
+  async function handlePromptSubmit(prompt: string) {
+    if (generating || !editorState.document) return;
+    promptError = "";
+    generating = true;
+    try {
+      const responseText = await askOpenRouter(prompt);
+      const safeText =
+        responseText.length > LIMITS.text
+          ? responseText.slice(0, LIMITS.text)
+          : responseText;
+
+      const rect = canvasEl?.getBoundingClientRect();
+      const nodeWidth = 340;
+      const lines = safeText.split("\n").length;
+      const estimatedHeight = Math.min(
+        LIMITS.maxSize,
+        Math.max(
+          LIMITS.minSize,
+          Math.min(480, Math.max(180, lines * 22 + 60)),
+        ),
+      );
+
+      const position = rect
+        ? {
+            x: Math.round(
+              (rect.width / 2 - viewport.x) / viewport.zoom - nodeWidth / 2,
+            ),
+            y: Math.round(
+              (rect.height / 2 - viewport.y) / viewport.zoom -
+                estimatedHeight / 2,
+            ),
+          }
+        : undefined;
+
+      const created = await editor.addText(position, safeText, {
+        width: nodeWidth,
+        height: estimatedHeight,
+      });
+      if (created?.node) {
+        selectedId = created.node.id;
+      }
+    } catch (err) {
+      promptError =
+        err instanceof Error ? err.message : "Failed to generate LLM response.";
+    } finally {
+      generating = false;
+    }
   }
 
   $effect(() => {
@@ -708,6 +760,35 @@
         <span>{closeNotice}</span>
       </div>
     {/if}
+    {#if promptError}
+      <div class="banner banner--error" role="alert">
+        <Icon name="error" size={18} />
+        <span>{promptError}</span>
+        {#if promptError.toLowerCase().includes("settings") || !getOpenRouterApiKey()}
+          <button
+            class="btn btn--soft"
+            type="button"
+            onclick={() => {
+              settingsOpen = true;
+            }}
+          >
+            <Icon name="settings" size={16} />
+            Open settings
+          </button>
+        {/if}
+        <button
+          class="icon-btn"
+          type="button"
+          title="Dismiss"
+          aria-label="Dismiss error"
+          onclick={() => {
+            promptError = "";
+          }}
+        >
+          <Icon name="close" size={18} />
+        </button>
+      </div>
+    {/if}
 
     <div class="stage">
       {#if drawerOpen && editorState.document}
@@ -882,7 +963,10 @@
 
         <Composer
           {toolbarOpen}
+          loading={generating}
+          disabled={!connected || !editorState.document}
           onToggleToolbar={() => (toolbarOpen = !toolbarOpen)}
+          onSubmit={handlePromptSubmit}
         />
       </main>
 
