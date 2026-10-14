@@ -5,21 +5,38 @@
   interface Props {
     placeholder?: string;
     toolbarOpen: boolean;
+    loading?: boolean;
+    disabled?: boolean;
     onToggleToolbar: () => void;
+    onSubmit?: (prompt: string) => void | Promise<void>;
   }
 
   let {
     placeholder = "Ask anything, or describe what you want to add…",
     toolbarOpen,
+    loading = false,
+    disabled = false,
     onToggleToolbar,
+    onSubmit,
   }: Props = $props();
+
+  let promptText = $state("");
+
+  function submit() {
+    const trimmed = promptText.trim();
+    if (!trimmed || loading || disabled) return;
+    promptText = "";
+    void onSubmit?.(trimmed);
+  }
+
+  function onKeydown(event: KeyboardEvent) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      submit();
+    }
+  }
 </script>
 
-<!--
-  The prompt field is still a visual placeholder, but the leading button opens
-  the canvas toolbar. The mic and send buttons stay decorative until the prompt
-  flow is wired up.
--->
 <div class="composer" role="group" aria-label="Canvas prompt">
   <button
     class="composer__lead"
@@ -38,15 +55,42 @@
     id="canvas-prompt"
     class="composer__input"
     rows="1"
+    bind:value={promptText}
+    onkeydown={onKeydown}
+    {disabled}
     maxlength={LIMITS.text}
     {placeholder}></textarea>
 
-  <div class="composer__tools" aria-hidden="true">
-    <button class="icon-btn" type="button" tabindex="-1">
-      <Icon name="mic" size={20} />
-    </button>
-    <button class="composer__send" type="button" tabindex="-1">
-      <Icon name="arrow_upward" size={20} />
+  <div class="composer__tools">
+    <button
+      class="composer__send"
+      type="button"
+      title={loading ? "Generating response…" : "Send prompt (Enter)"}
+      aria-label="Send prompt"
+      disabled={disabled || loading || !promptText.trim()}
+      onclick={submit}
+    >
+      {#if loading}
+        <span class="spinner" aria-hidden="true"></span>
+      {:else}
+        <Icon name="arrow_upward" size={20} />
+      {/if}
     </button>
   </div>
 </div>
+
+<style>
+  .composer__send:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    border-color: var(--line);
+    color: var(--muted);
+  }
+
+  .composer__send .spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--line-strong);
+    border-top-color: var(--accent);
+  }
+</style>
