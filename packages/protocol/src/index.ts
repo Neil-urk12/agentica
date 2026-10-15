@@ -14,7 +14,7 @@ export const LIMITS = {
 } as const;
 
 const RequestId = z.string().min(1).max(128);
-// Runtime-generated lowercase UUIDs; clients never send paths.
+// Lowercase UUID identities; clients never send paths.
 export const IdSchema = z
   .string()
   .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
@@ -29,6 +29,87 @@ const Size = z.number().min(LIMITS.minSize).max(LIMITS.maxSize);
 const Geometry = { x: Coordinate, y: Coordinate, width: Size, height: Size };
 const WorkspaceRef = { workspaceId: IdSchema };
 const CanvasRef = { ...WorkspaceRef, canvasId: IdSchema };
+
+export const TextPurposeSchema = z.enum(["note", "instruction"]);
+const ArtifactRef = { artifactId: IdSchema, expectedRevision: Revision };
+export const ArtifactOperationSchema = z.discriminatedUnion("op", [
+  z.strictObject({ op: z.literal("text.replace"), ...ArtifactRef, text: Text }),
+  z.strictObject({
+    op: z.literal("mindmap.addTopic"),
+    ...ArtifactRef,
+    topicId: IdSchema,
+    parentId: IdSchema.nullable(),
+    title: Label,
+  }),
+  z.strictObject({
+    op: z.literal("mindmap.renameTopic"),
+    ...ArtifactRef,
+    topicId: IdSchema,
+    title: Label,
+  }),
+  z.strictObject({
+    op: z.literal("mindmap.moveTopic"),
+    ...ArtifactRef,
+    topicId: IdSchema,
+    parentId: IdSchema.nullable(),
+  }),
+  z.strictObject({
+    op: z.literal("mindmap.removeTopic"),
+    ...ArtifactRef,
+    topicId: IdSchema,
+  }),
+]);
+export const ArtifactBatchSchema = z
+  .strictObject({
+    ...CanvasRef,
+    operations: z.array(ArtifactOperationSchema).min(1).max(32),
+  })
+  .superRefine(({ operations }, ctx) => {
+    // shortcut: one operation per artifact, group topic edits when mind-map storage is added.
+    const seen = new Set<string>();
+    for (const [index, operation] of operations.entries()) {
+      if (seen.has(operation.artifactId))
+        ctx.addIssue({
+          code: "custom",
+          path: ["operations", index],
+          message: "Use one operation per artifact in a batch",
+        });
+      seen.add(operation.artifactId);
+      if ("parentId" in operation && operation.parentId === operation.topicId)
+        ctx.addIssue({
+          code: "custom",
+          path: ["operations", index],
+          message: "A topic cannot parent itself",
+        });
+    }
+  });
+export type ArtifactBatch = z.infer<typeof ArtifactBatchSchema>;
+
+const UniqueIds = z
+  .array(IdSchema)
+  .max(128)
+  .refine((ids) => new Set(ids).size === ids.length, "IDs must be unique");
+export const AgentStartSchema = z
+  .strictObject({
+    ...CanvasRef,
+    instructionArtifactId: IdSchema,
+    readArtifactIds: UniqueIds,
+    writeArtifactIds: UniqueIds,
+  })
+  .refine(
+    (scope) =>
+      scope.readArtifactIds.includes(scope.instructionArtifactId) &&
+      scope.writeArtifactIds.every((id) => scope.readArtifactIds.includes(id)),
+    "Instructions and writable artifacts must be in the read scope",
+  );
+
+export const CodexCapabilitiesSchema = z.strictObject({
+  provider: z.literal("codex"),
+  status: z.literal("unsupported"),
+  executionEnabled: z.literal(false),
+  osIsolationVerified: z.literal(false),
+  reason: z.string().min(1),
+});
 
 export const ViewportSchema = z.strictObject({
   x: Coordinate,
@@ -65,6 +146,15 @@ export const DrawingSchema = z.strictObject({
 });
 export type Drawing = z.infer<typeof DrawingSchema>;
 const ParamSchemas = {
+  "artifact.applyBatch": ArtifactBatchSchema,
+  "agent.capabilities": z.strictObject({}),
+  "agent.start": AgentStartSchema,
+  "agent.cancel": z.strictObject({ ...WorkspaceRef, runId: IdSchema }),
+  "agent.events": z.strictObject({
+    ...WorkspaceRef,
+    runId: IdSchema,
+    after: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  }),
   "workspace.list": z.strictObject({}),
   "workspace.create": z.strictObject({ name: Label }),
   "workspace.open": z.strictObject(WorkspaceRef),
@@ -89,6 +179,7 @@ const ParamSchemas = {
     expectedRevision: Revision,
     ...Geometry,
     text: Text,
+    purpose: TextPurposeSchema.optional(),
   }),
   "edge.create": z
     .strictObject({
@@ -154,6 +245,7 @@ export const TextArtifactSchema = z.strictObject({
   schemaVersion: z.literal(1),
   revision: Revision,
   text: z.string(),
+  purpose: TextPurposeSchema.optional(),
 });
 export const DrawingArtifactSchema = z.strictObject({
   id: IdSchema,
@@ -187,6 +279,17 @@ const WorkspaceState = z.strictObject({
 });
 
 export const ResultSchemas = {
+  "artifact.applyBatch": z.strictObject({
+    artifacts: z.array(TextArtifactSchema).min(1).max(32),
+  }),
+  "agent.capabilities": CodexCapabilitiesSchema,
+  // Contracts for the supervisor; current runtime returns unsupported errors.
+  "agent.start": z.strictObject({ runId: IdSchema }),
+  "agent.cancel": z.strictObject({
+    runId: IdSchema,
+    status: z.enum(["cancelling", "terminal"]),
+  }),
+  "agent.events": z.lazy(() => RunEventPageSchema),
   "runtime.ping": z.strictObject({ status: z.literal("ok") }),
   "workspace.list": z.strictObject({ workspaces: WorkspaceSummaries }),
   "workspace.create": WorkspaceState,
@@ -241,7 +344,109 @@ export const ErrorCodeSchema = z.enum([
   "CONFLICT",
   "UNSUPPORTED_STORAGE",
   "STORAGE_ERROR",
+  "UNSUPPORTED_CAPABILITY",
+  "SCOPE_DENIED",
+  "BACKPRESSURE",
+  "INVALID_EVENT_ORDER",
 ]);
+
+export const RunEventSchema = z.strictObject({
+  protocolVersion: z.literal(1),
+  requestId: RequestId,
+  runId: IdSchema,
+  sequence: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  event: z.discriminatedUnion("type", [
+    z.strictObject({ type: z.literal("started") }),
+    z.strictObject({
+      type: z.literal("batchApplied"),
+      revisions: z
+        .array(z.strictObject({ artifactId: IdSchema, revision: Revision }))
+        .min(1)
+        .max(32)
+        .refine(
+          (items) =>
+            new Set(items.map((item) => item.artifactId)).size === items.length,
+          "Committed artifact IDs must be unique",
+        ),
+    }),
+    z.strictObject({
+      type: z.literal("textDelta"),
+      text: z.string().min(1).max(2_000),
+    }),
+    z.strictObject({ type: z.literal("cancelRequested") }),
+    z.strictObject({ type: z.literal("completed") }),
+    z.strictObject({ type: z.literal("cancelled") }),
+    z.strictObject({
+      type: z.literal("failed"),
+      code: ErrorCodeSchema,
+      message: z.string().min(1).max(1_000),
+    }),
+  ]),
+});
+export type RunEvent = z.infer<typeof RunEventSchema>;
+
+// Leave room for the versioned response envelope and its correlated request ID.
+export const MAX_EVENT_PAGE_BYTES = 14 * 1024;
+export const RunEventPageSchema = z
+  .strictObject({
+    events: z.array(RunEventSchema).max(16),
+    nextSequence: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  })
+  .superRefine((page, ctx) => {
+    if (
+      new TextEncoder().encode(JSON.stringify(page)).length >
+      MAX_EVENT_PAGE_BYTES
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "Drain a smaller event page; the response exceeds 14 KiB",
+      });
+    const first = page.events[0];
+    if (
+      first &&
+      (page.nextSequence !== page.events.at(-1)?.sequence ||
+        page.events.some(
+          (event, index) =>
+            event.sequence !== first.sequence + index ||
+            event.runId !== first.runId ||
+            event.requestId !== first.requestId,
+        ))
+    )
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "Event pages must have contiguous, correlated sequences and the last sequence as cursor",
+      });
+  });
+
+/** Validate a complete run history, including cancellation and terminal ordering. */
+export const RunHistorySchema = z
+  .array(RunEventSchema)
+  .max(128)
+  .superRefine((events, ctx) => {
+    let cancelling = false;
+    let terminal = false;
+    for (const [index, event] of events.entries()) {
+      const type = event.event.type;
+      if (
+        event.sequence !== index + 1 ||
+        event.runId !== events[0]?.runId ||
+        event.requestId !== events[0]?.requestId ||
+        terminal ||
+        (index === 0 ? type !== "started" : type === "started") ||
+        (cancelling && type !== "cancelled" && type !== "failed") ||
+        (type === "cancelled" && !cancelling)
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: [index],
+          message: "Invalid run event order or correlation",
+        });
+      cancelling ||= type === "cancelRequested";
+      terminal =
+        type === "completed" || type === "cancelled" || type === "failed";
+    }
+  });
 
 /** Envelope; validate `result` with `ResultSchemas[method]`. */
 export const RuntimeResponseSchema = z.union([
