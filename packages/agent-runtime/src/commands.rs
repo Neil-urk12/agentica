@@ -9,6 +9,9 @@ use serde_json::{json, Value};
 use crate::contracts::{validate_agent_start, ArtifactBatch, ArtifactOperation, CODEX_UNSUPPORTED};
 use crate::store::{delete_workspace, is_id, list_workspaces, new_id, RuntimeError, Workspace};
 
+#[path = "conversation.rs"]
+mod conversation;
+
 // Limits shared with packages/protocol/src/index.ts.
 const MAX_LABEL: usize = 120;
 const MAX_TEXT: usize = 10_000;
@@ -26,6 +29,10 @@ const MAX_POINTS: usize = 10_000;
 const MAX_STROKE_WIDTH: f64 = 64.0;
 
 pub(crate) const METHODS: &[&str] = &[
+    "conversation.start",
+    "conversation.finish",
+    "conversation.resolve",
+    "conversation.list",
     "artifact.applyBatch",
     "agent.capabilities",
     "agent.start",
@@ -297,6 +304,8 @@ struct BoxShape {
     width: f64,
     height: f64,
     color: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    label: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -322,6 +331,9 @@ impl Shape {
                 color(&path.color)
             }
             Shape::Rectangle(box_shape) | Shape::Ellipse(box_shape) => {
+                if box_shape.label.encode_utf16().count() > MAX_LABEL {
+                    return Err(invalid("Shape label must not exceed 120 characters."));
+                }
                 in_range("x", box_shape.x, -MAX_COORDINATE, MAX_COORDINATE)?;
                 in_range("y", box_shape.y, -MAX_COORDINATE, MAX_COORDINATE)?;
                 in_range("width", box_shape.width, f64::MIN_POSITIVE, MAX_COORDINATE)?;
@@ -398,6 +410,17 @@ impl Runtime {
 
     pub(crate) fn call(&mut self, method: &str, params: Value) -> Result<Value, RuntimeError> {
         match method {
+            "conversation.start"
+            | "conversation.finish"
+            | "conversation.resolve"
+            | "conversation.list" => {
+                let workspace_id = params
+                    .get("workspaceId")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| invalid("workspaceId is required."))?
+                    .to_owned();
+                self.transact(&workspace_id, |tx| conversation::call(tx, method, params))
+            }
             "agent.capabilities" => {
                 let _: Empty = parse(params)?;
                 Ok(

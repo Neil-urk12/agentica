@@ -1,0 +1,1012 @@
+{
+  "steps": [
+    {
+      "method": "workspace.create",
+      "params": {
+        "name": "Canvas conversation"
+      },
+      "expect": {},
+      "save": {
+        "cw": "/workspace/id"
+      }
+    },
+    {
+      "method": "canvas.create",
+      "params": {
+        "workspaceId": "$cw",
+        "title": "Conversation"
+      },
+      "expect": {},
+      "save": {
+        "cc": "/canvas/id"
+      }
+    },
+    {
+      "method": "node.createText",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "expectedRevision": 1,
+        "x": 300,
+        "y": 0,
+        "width": 240,
+        "height": 160,
+        "text": "Original"
+      },
+      "expect": {},
+      "save": {
+        "cn1": "/node/id",
+        "ca1": "/artifact/id"
+      }
+    },
+    {
+      "method": "node.createText",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "expectedRevision": 2,
+        "x": 600,
+        "y": 0,
+        "width": 240,
+        "height": 160,
+        "text": "Unrelated"
+      },
+      "expect": {},
+      "save": {
+        "cn2": "/node/id",
+        "ca2": "/artifact/id"
+      }
+    },
+    {
+      "method": "conversation.start",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000001",
+        "prompt": "Make a useful diagram",
+        "model": "openrouter/free",
+        "nodeIds": ["$cn1"],
+        "anchor": {
+          "x": 1000,
+          "y": 100
+        }
+      },
+      "expect": {
+        "turn": {
+          "id": "10000000-0000-4000-8000-000000000001",
+          "status": "generating"
+        },
+        "context": {
+          "nodes": [
+            {
+              "id": "$cn1"
+            }
+          ],
+          "edges": [],
+          "artifacts": [
+            {
+              "id": "$ca1",
+              "text": "Original"
+            }
+          ]
+        },
+        "history": []
+      },
+      "save": {
+        "cp1": "/turn/promptNodeId"
+      }
+    },
+    {
+      "method": "conversation.start",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000002",
+        "prompt": "Make a useful diagram",
+        "model": "openrouter/free",
+        "nodeIds": ["$cn1"],
+        "anchor": {
+          "x": 1000,
+          "y": 100
+        }
+      },
+      "error": "CONFLICT"
+    },
+    {
+      "method": "conversation.finish",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000001",
+        "operations": [
+          {
+            "op": "createShape",
+            "nodeId": "10000000-0000-4000-8000-000000000007",
+            "artifactId": "10000000-0000-4000-8000-000000000008",
+            "x": 1400,
+            "y": 100,
+            "width": 200,
+            "height": 100,
+            "kind": "rectangle",
+            "color": "#123456",
+            "label": "Start"
+          },
+          {
+            "op": "updateText",
+            "nodeId": "$cn1",
+            "text": "Agent revision"
+          },
+          {
+            "op": "createText",
+            "nodeId": "10000000-0000-4000-8000-000000000009",
+            "artifactId": "10000000-0000-4000-8000-000000000010",
+            "x": 1700,
+            "y": 100,
+            "width": 200,
+            "height": 100,
+            "text": "Finish"
+          },
+          {
+            "op": "connect",
+            "edgeId": "10000000-0000-4000-8000-000000000013",
+            "sourceNodeId": "10000000-0000-4000-8000-000000000007",
+            "targetNodeId": "10000000-0000-4000-8000-000000000009"
+          }
+        ],
+        "status": "complete",
+        "reply": "Here is the proposed change.",
+        "error": ""
+      },
+      "expect": {
+        "turn": {
+          "id": "10000000-0000-4000-8000-000000000001",
+          "status": "pending"
+        }
+      },
+      "save": {
+        "cr1": "/turn/replyNodeId"
+      }
+    },
+    {
+      "method": "conversation.finish",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000001",
+        "operations": [
+          {
+            "op": "createShape",
+            "nodeId": "10000000-0000-4000-8000-000000000007",
+            "artifactId": "10000000-0000-4000-8000-000000000008",
+            "x": 1400,
+            "y": 100,
+            "width": 200,
+            "height": 100,
+            "kind": "rectangle",
+            "color": "#123456",
+            "label": "Start"
+          },
+          {
+            "op": "updateText",
+            "nodeId": "$cn1",
+            "text": "Agent revision"
+          },
+          {
+            "op": "createText",
+            "nodeId": "10000000-0000-4000-8000-000000000009",
+            "artifactId": "10000000-0000-4000-8000-000000000010",
+            "x": 1700,
+            "y": 100,
+            "width": 200,
+            "height": 100,
+            "text": "Finish"
+          },
+          {
+            "op": "connect",
+            "edgeId": "10000000-0000-4000-8000-000000000013",
+            "sourceNodeId": "10000000-0000-4000-8000-000000000007",
+            "targetNodeId": "10000000-0000-4000-8000-000000000009"
+          }
+        ],
+        "status": "complete",
+        "reply": "Here is the proposed change.",
+        "error": ""
+      },
+      "expect": {
+        "turn": {
+          "id": "10000000-0000-4000-8000-000000000001",
+          "status": "pending",
+          "replyNodeId": "$cr1"
+        }
+      }
+    },
+    {
+      "method": "canvas.open",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc"
+      },
+      "expect": {
+        "nodes": [
+          {
+            "id": "$cn1"
+          },
+          {
+            "id": "$cn2"
+          },
+          {
+            "id": "$cp1"
+          },
+          {
+            "id": "$cr1"
+          }
+        ],
+        "edges": [],
+        "artifacts": [
+          {
+            "id": "$ca1",
+            "text": "Original"
+          },
+          {
+            "id": "$ca2",
+            "text": "Unrelated"
+          },
+          {
+            "text": "Make a useful diagram"
+          },
+          {
+            "text": "Here is the proposed change."
+          }
+        ]
+      }
+    },
+    {
+      "restart": true
+    },
+    {
+      "method": "workspace.open",
+      "params": {
+        "workspaceId": "$cw"
+      },
+      "expect": {}
+    },
+    {
+      "method": "conversation.list",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "before": 0
+      },
+      "expect": {
+        "turns": [
+          {
+            "id": "10000000-0000-4000-8000-000000000001",
+            "status": "pending"
+          }
+        ],
+        "nextBefore": 0
+      }
+    },
+    {
+      "method": "conversation.resolve",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000001",
+        "action": "apply"
+      },
+      "expect": {
+        "turn": {
+          "id": "10000000-0000-4000-8000-000000000001",
+          "status": "applied"
+        }
+      }
+    },
+    {
+      "method": "conversation.resolve",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000001",
+        "action": "apply"
+      },
+      "expect": {
+        "turn": {
+          "id": "10000000-0000-4000-8000-000000000001",
+          "status": "applied"
+        }
+      }
+    },
+    {
+      "method": "conversation.resolve",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000001",
+        "action": "discard"
+      },
+      "error": "CONFLICT"
+    },
+    {
+      "method": "canvas.open",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc"
+      },
+      "expect": {
+        "nodes": [
+          {
+            "id": "$cn1"
+          },
+          {
+            "id": "$cn2"
+          },
+          {
+            "id": "$cp1"
+          },
+          {
+            "id": "$cr1"
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000007"
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000009"
+          }
+        ],
+        "edges": [
+          {
+            "id": "10000000-0000-4000-8000-000000000013",
+            "sourceNodeId": "10000000-0000-4000-8000-000000000007",
+            "targetNodeId": "10000000-0000-4000-8000-000000000009"
+          }
+        ],
+        "artifacts": [
+          {
+            "id": "$ca1",
+            "text": "Agent revision",
+            "revision": 2
+          },
+          {
+            "id": "$ca2",
+            "text": "Unrelated"
+          },
+          {
+            "text": "Make a useful diagram"
+          },
+          {
+            "text": "Here is the proposed change."
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000008",
+            "drawing": {
+              "shapes": [
+                {
+                  "kind": "rectangle",
+                  "label": "Start"
+                }
+              ]
+            }
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000010",
+            "text": "Finish"
+          }
+        ]
+      }
+    },
+    {
+      "method": "conversation.start",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000002",
+        "prompt": "Make a useful diagram",
+        "model": "openrouter/free",
+        "nodeIds": ["$cn1"],
+        "anchor": {
+          "x": 1000,
+          "y": 100
+        }
+      },
+      "expect": {
+        "turn": {
+          "status": "generating"
+        }
+      },
+      "save": {
+        "cp2": "/turn/promptNodeId"
+      }
+    },
+    {
+      "method": "conversation.finish",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000002",
+        "operations": [
+          {
+            "op": "updateText",
+            "nodeId": "$cn2",
+            "text": "Unauthorized"
+          }
+        ],
+        "status": "complete",
+        "reply": "Here is the proposed change.",
+        "error": ""
+      },
+      "error": "SCOPE_DENIED"
+    },
+    {
+      "method": "conversation.finish",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000002",
+        "operations": [
+          {
+            "op": "createText",
+            "nodeId": "10000000-0000-4000-8000-000000000011",
+            "artifactId": "10000000-0000-4000-8000-000000000012",
+            "x": 1400,
+            "y": 300,
+            "width": 200,
+            "height": 100,
+            "text": "Must roll back"
+          },
+          {
+            "op": "place",
+            "nodeId": "$cn2",
+            "x": 1,
+            "y": 1,
+            "width": 200,
+            "height": 100
+          }
+        ],
+        "status": "complete",
+        "reply": "Here is the proposed change.",
+        "error": ""
+      },
+      "error": "SCOPE_DENIED"
+    },
+    {
+      "method": "conversation.finish",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000002",
+        "operations": [
+          {
+            "op": "createText",
+            "nodeId": "10000000-0000-4000-8000-000000000011",
+            "artifactId": "10000000-0000-4000-8000-000000000012",
+            "x": 1400,
+            "y": 300,
+            "width": 200,
+            "height": 100,
+            "text": "Must roll back"
+          },
+          {
+            "op": "updateText",
+            "nodeId": "$cn1",
+            "text": "Stale proposal"
+          }
+        ],
+        "status": "complete",
+        "reply": "Here is the proposed change.",
+        "error": ""
+      },
+      "expect": {
+        "turn": {
+          "status": "pending"
+        }
+      },
+      "save": {
+        "cr2": "/turn/replyNodeId"
+      }
+    },
+    {
+      "method": "artifact.saveText",
+      "params": {
+        "workspaceId": "$cw",
+        "artifactId": "$ca1",
+        "expectedRevision": 2,
+        "text": "Manual revision"
+      },
+      "expect": {}
+    },
+    {
+      "method": "conversation.resolve",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000002",
+        "action": "apply"
+      },
+      "error": "CONFLICT"
+    },
+    {
+      "method": "canvas.open",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc"
+      },
+      "expect": {
+        "nodes": [
+          {
+            "id": "$cn1"
+          },
+          {
+            "id": "$cn2"
+          },
+          {
+            "id": "$cp1"
+          },
+          {
+            "id": "$cr1"
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000007"
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000009"
+          },
+          {
+            "id": "$cp2"
+          },
+          {
+            "id": "$cr2"
+          }
+        ],
+        "edges": [
+          {
+            "id": "10000000-0000-4000-8000-000000000013"
+          }
+        ],
+        "artifacts": [
+          {
+            "id": "$ca1",
+            "text": "Manual revision",
+            "revision": 3
+          },
+          {
+            "id": "$ca2",
+            "text": "Unrelated"
+          },
+          {
+            "text": "Make a useful diagram"
+          },
+          {
+            "text": "Here is the proposed change."
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000008"
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000010"
+          },
+          {
+            "text": "Make a useful diagram"
+          },
+          {
+            "text": "Here is the proposed change."
+          }
+        ]
+      }
+    },
+    {
+      "method": "conversation.resolve",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000002",
+        "action": "discard"
+      },
+      "expect": {
+        "turn": {
+          "status": "discarded"
+        }
+      }
+    },
+    {
+      "method": "conversation.resolve",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000002",
+        "action": "discard"
+      },
+      "expect": {
+        "turn": {
+          "status": "discarded"
+        }
+      }
+    },
+    {
+      "method": "conversation.start",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000003",
+        "prompt": "Make a useful diagram",
+        "model": "openrouter/free",
+        "nodeIds": [],
+        "anchor": {
+          "x": 1000,
+          "y": 100
+        }
+      },
+      "expect": {
+        "history": [
+          {
+            "status": "applied"
+          },
+          {
+            "status": "discarded"
+          }
+        ]
+      }
+    },
+    {
+      "method": "conversation.finish",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000003",
+        "operations": [],
+        "status": "complete",
+        "reply": "Here is the proposed change.",
+        "error": ""
+      },
+      "expect": {
+        "turn": {
+          "status": "complete",
+          "operations": []
+        }
+      }
+    },
+    {
+      "method": "conversation.start",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000004",
+        "prompt": "Make a useful diagram",
+        "model": "openrouter/free",
+        "nodeIds": ["$cn1"],
+        "anchor": {
+          "x": 1000,
+          "y": 100
+        }
+      },
+      "expect": {}
+    },
+    {
+      "method": "conversation.finish",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000004",
+        "operations": [],
+        "status": "cancelled",
+        "reply": "",
+        "error": ""
+      },
+      "expect": {
+        "turn": {
+          "status": "cancelled",
+          "replyNodeId": null
+        }
+      }
+    },
+    {
+      "method": "conversation.start",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000005",
+        "prompt": "Make a useful diagram",
+        "model": "openrouter/free",
+        "nodeIds": ["$cn1"],
+        "anchor": {
+          "x": 1000,
+          "y": 100
+        }
+      },
+      "expect": {}
+    },
+    {
+      "restart": true
+    },
+    {
+      "method": "workspace.open",
+      "params": {
+        "workspaceId": "$cw"
+      },
+      "expect": {}
+    },
+    {
+      "method": "conversation.list",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "before": 0
+      },
+      "expect": {
+        "turns": [
+          {
+            "id": "10000000-0000-4000-8000-000000000005",
+            "status": "interrupted"
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000004",
+            "status": "cancelled"
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000003",
+            "status": "complete"
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000002",
+            "status": "discarded"
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000001",
+            "status": "applied"
+          }
+        ],
+        "nextBefore": 0
+      }
+    },
+    {
+      "method": "conversation.start",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000006",
+        "prompt": "Make a useful diagram",
+        "model": "openrouter/free",
+        "nodeIds": ["$cn1"],
+        "anchor": {
+          "x": 1000,
+          "y": 100
+        }
+      },
+      "expect": {}
+    },
+    {
+      "method": "conversation.finish",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000006",
+        "operations": [
+          {
+            "op": "place",
+            "nodeId": "$cn1",
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 100
+          }
+        ],
+        "status": "complete",
+        "reply": "Here is the proposed change.",
+        "error": ""
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "conversation.finish",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000006",
+        "operations": [],
+        "status": "failed",
+        "reply": "",
+        "error": ""
+      },
+      "expect": {
+        "turn": {
+          "status": "failed"
+        }
+      }
+    },
+    {
+      "method": "conversation.list",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "before": 3
+      },
+      "expect": {
+        "turns": [
+          {
+            "id": "10000000-0000-4000-8000-000000000002"
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000001"
+          }
+        ],
+        "nextBefore": 0
+      }
+    },
+    {
+      "method": "conversation.start",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000014",
+        "prompt": "Refine the shape",
+        "model": "openrouter/free",
+        "nodeIds": ["10000000-0000-4000-8000-000000000007"],
+        "anchor": {
+          "x": 2100,
+          "y": 0
+        }
+      },
+      "expect": {}
+    },
+    {
+      "method": "conversation.finish",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000014",
+        "reply": "Review the refinement.",
+        "status": "complete",
+        "error": "",
+        "operations": [
+          {
+            "op": "updateShape",
+            "nodeId": "10000000-0000-4000-8000-000000000007",
+            "kind": "ellipse",
+            "color": "#aabbcc",
+            "label": "Refined"
+          },
+          {
+            "op": "place",
+            "nodeId": "10000000-0000-4000-8000-000000000007",
+            "x": 1600,
+            "y": 200,
+            "width": 300,
+            "height": 150
+          }
+        ]
+      },
+      "expect": {
+        "turn": {
+          "status": "pending"
+        }
+      }
+    },
+    {
+      "method": "conversation.resolve",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000014",
+        "action": "apply"
+      },
+      "expect": {
+        "turn": {
+          "status": "applied"
+        }
+      }
+    },
+    {
+      "method": "conversation.start",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000015",
+        "prompt": "Check the refined shape",
+        "model": "openrouter/free",
+        "nodeIds": ["10000000-0000-4000-8000-000000000007"],
+        "anchor": {
+          "x": 2600,
+          "y": 0
+        }
+      },
+      "expect": {
+        "context": {
+          "nodes": [
+            {
+              "id": "10000000-0000-4000-8000-000000000007",
+              "x": 1600,
+              "y": 200,
+              "width": 300,
+              "height": 150
+            }
+          ],
+          "artifacts": [
+            {
+              "revision": 2,
+              "drawing": {
+                "shapes": [
+                  {
+                    "kind": "ellipse",
+                    "x": 0,
+                    "y": 0,
+                    "width": 200,
+                    "height": 100,
+                    "color": "#aabbcc",
+                    "label": "Refined"
+                  }
+                ]
+              }
+            }
+          ],
+          "edges": []
+        }
+      }
+    },
+    {
+      "method": "conversation.finish",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000015",
+        "reply": "",
+        "status": "cancelled",
+        "error": "",
+        "operations": []
+      },
+      "expect": {
+        "turn": {
+          "status": "cancelled"
+        }
+      }
+    },
+    {
+      "method": "conversation.list",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "before": 0
+      },
+      "expect": {
+        "turns": [
+          {
+            "id": "10000000-0000-4000-8000-000000000015"
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000014"
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000006"
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000005"
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000004"
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000003"
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000002"
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000001"
+          }
+        ],
+        "nextBefore": 1
+      }
+    },
+    {
+      "method": "conversation.list",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "before": 1
+      },
+      "expect": {
+        "turns": [],
+        "nextBefore": 0
+      }
+    }
+  ]
+}

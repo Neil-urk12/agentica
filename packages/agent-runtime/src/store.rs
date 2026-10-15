@@ -18,6 +18,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("schema_v1.sql"),
     include_str!("schema_v2.sql"),
     include_str!("schema_v3.sql"),
+    include_str!("schema_v4.sql"),
 ];
 pub const STORAGE_VERSION: i64 = MIGRATIONS.len() as i64;
 
@@ -229,6 +230,7 @@ impl Workspace {
         if version < STORAGE_VERSION {
             migrate(&tx, version, MIGRATIONS)?;
         }
+        tx.execute("UPDATE conversation_turn SET status = 'interrupted', error = 'Generation was interrupted. Retry explicitly.' WHERE status = 'generating'", [])?;
         let stored: Option<String> = tx
             .query_row("SELECT id FROM workspace", [], |row| row.get(0))
             .optional()?;

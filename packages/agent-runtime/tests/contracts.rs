@@ -70,7 +70,17 @@ fn shared_fixture_round_trips_through_the_desktop_transport() {
     .unwrap();
     let mut backend = desktop(temp.path());
     let mut saved = HashMap::new();
-    for (index, step) in fixture["steps"].as_array().unwrap().iter().enumerate() {
+    let conversation: Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/conversation-roundtrip.json"
+    ))
+    .unwrap();
+    for (index, step) in fixture["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(conversation["steps"].as_array().unwrap())
+        .enumerate()
+    {
         if step.get("restart").is_some() {
             drop(backend);
             backend = desktop(temp.path());

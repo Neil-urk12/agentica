@@ -137,6 +137,7 @@ const BoxShapeSchema = z.strictObject({
   width: z.number().positive().max(LIMITS.coordinate),
   height: z.number().positive().max(LIMITS.coordinate),
   color: DrawingColor,
+  label: z.string().max(LIMITS.label).optional(),
 });
 export const DrawingSchema = z.strictObject({
   shapes: z
@@ -145,7 +146,92 @@ export const DrawingSchema = z.strictObject({
     .max(1_000),
 });
 export type Drawing = z.infer<typeof DrawingSchema>;
+
+export const CanvasOperationSchema = z.discriminatedUnion("op", [
+  z.strictObject({
+    op: z.literal("createText"),
+    nodeId: IdSchema,
+    artifactId: IdSchema,
+    ...Geometry,
+    text: Text,
+  }),
+  z.strictObject({
+    op: z.literal("createShape"),
+    nodeId: IdSchema,
+    artifactId: IdSchema,
+    ...Geometry,
+    kind: z.enum(["rectangle", "ellipse"]),
+    color: DrawingColor,
+    label: z.string().max(LIMITS.label).optional(),
+  }),
+  z.strictObject({ op: z.literal("updateText"), nodeId: IdSchema, text: Text }),
+  z.strictObject({
+    op: z.literal("updateShape"),
+    nodeId: IdSchema,
+    kind: z.enum(["rectangle", "ellipse"]),
+    color: DrawingColor,
+    label: z.string().max(LIMITS.label).optional(),
+  }),
+  z.strictObject({ op: z.literal("place"), nodeId: IdSchema, ...Geometry }),
+  z.strictObject({
+    op: z.literal("connect"),
+    edgeId: IdSchema,
+    sourceNodeId: IdSchema,
+    targetNodeId: IdSchema,
+  }),
+]);
+export type CanvasOperation = z.infer<typeof CanvasOperationSchema>;
+export const CanvasOperationJsonSchema = z.toJSONSchema(CanvasOperationSchema);
+const Operations = z.array(CanvasOperationSchema).max(32);
+const Anchor = z.strictObject({ x: Coordinate, y: Coordinate });
+const TurnRef = { ...CanvasRef, turnId: IdSchema };
+const ConversationStatus = z.enum([
+  "generating",
+  "pending",
+  "complete",
+  "applied",
+  "discarded",
+  "failed",
+  "cancelled",
+  "interrupted",
+]);
+export const ConversationTurnSchema = z.strictObject({
+  id: IdSchema,
+  sequence: z.number().int().positive(),
+  model: Label,
+  prompt: Text,
+  reply: Text,
+  promptNodeId: IdSchema,
+  replyNodeId: IdSchema.nullable(),
+  anchor: Anchor,
+  status: ConversationStatus,
+  operations: Operations,
+  error: Text,
+});
+export type ConversationTurn = z.infer<typeof ConversationTurnSchema>;
 const ParamSchemas = {
+  "conversation.start": z.strictObject({
+    ...TurnRef,
+    prompt: Text.refine((s) => s.trim().length > 0),
+    model: Label,
+    nodeIds: UniqueIds,
+    anchor: Anchor,
+  }),
+  "conversation.finish": z.strictObject({
+    ...TurnRef,
+    reply: Text,
+    operations: Operations,
+    status: z.enum(["complete", "failed", "cancelled", "interrupted"]),
+    error: Text,
+  }),
+  "conversation.resolve": z.strictObject({
+    ...TurnRef,
+    action: z.enum(["apply", "discard"]),
+  }),
+  "conversation.list": z.strictObject({
+    ...CanvasRef,
+    before: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  }),
   "artifact.applyBatch": ArtifactBatchSchema,
   "agent.capabilities": z.strictObject({}),
   "agent.start": AgentStartSchema,
@@ -279,6 +365,29 @@ const WorkspaceState = z.strictObject({
 });
 
 export const ResultSchemas = {
+  "conversation.start": z.strictObject({
+    turn: ConversationTurnSchema,
+    context: z.strictObject({
+      nodes: z.array(NodeSchema),
+      edges: z.array(EdgeSchema),
+      artifacts: z.array(ArtifactSchema),
+    }),
+    history: z
+      .array(
+        z.strictObject({
+          prompt: Text,
+          reply: Text,
+          status: ConversationStatus,
+        }),
+      )
+      .max(8),
+  }),
+  "conversation.finish": z.strictObject({ turn: ConversationTurnSchema }),
+  "conversation.resolve": z.strictObject({ turn: ConversationTurnSchema }),
+  "conversation.list": z.strictObject({
+    turns: z.array(ConversationTurnSchema).max(8),
+    nextBefore: z.number().int().nonnegative(),
+  }),
   "artifact.applyBatch": z.strictObject({
     artifacts: z.array(TextArtifactSchema).min(1).max(32),
   }),
