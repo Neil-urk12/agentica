@@ -30,6 +30,7 @@
   }: Props = $props();
 
   const ICONS: Record<string, string> = {
+    instruction: "note_add",
     text: "text_fields",
     path: "gesture",
     rectangle: "crop_square",
@@ -37,6 +38,7 @@
   };
 
   const KINDS: Record<string, string> = {
+    instruction: "Instruction note",
     text: "Text",
     path: "Drawing",
     rectangle: "Rectangle",

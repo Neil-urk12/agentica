@@ -785,7 +785,7 @@ test("the UI save buffer recovers a real SQLite write failure and reopens after 
   }
 });
 
-test("drawing nodes expose usable handles and their connections survive a reopen", async () => {
+test("drawing connections and keyboard instruction notes reopen without Codex", async () => {
   const backend = await startBackend();
   key = backend.connectionKey;
   let browser;
@@ -951,7 +951,26 @@ test("drawing nodes expose usable handles and their connections survive a reopen
     }
 
     // Drag from each drawing's handle to the text node, as a user would.
-    await clickAt(browser, await boxOf(browser, ".composer__lead"));
+    const press = async (key, code, modifiers = 0) => {
+      const windowsVirtualKeyCode = { Enter: 13, Tab: 9, KeyA: 65 }[code];
+      for (const type of ["keyDown", "keyUp"])
+        await browser.send(
+          "Input.dispatchKeyEvent",
+          {
+            type,
+            key,
+            code,
+            modifiers,
+            windowsVirtualKeyCode,
+            ...(type === "keyDown" && key === "Enter"
+              ? { text: "\r", unmodifiedText: "\r" }
+              : {}),
+          },
+          browser.sessionId,
+        );
+    };
+    await evaluate(browser, `document.activeElement?.blur()`);
+    await press("a", "KeyA");
     await waitFor(
       browser,
       `!!document.querySelector('[aria-label="Arrow"]')`,
@@ -988,6 +1007,57 @@ test("drawing nodes expose usable handles and their connections survive a reopen
       "the save indicator to settle",
     );
 
+    // Activate the ordinary button with a real keyboard event, then type into
+    // the existing inspector. The backend has an empty PATH (no Codex).
+    await waitFor(
+      browser,
+      `[...document.querySelectorAll("button")].some((button) => button.textContent.includes("Add instruction note") && !button.disabled)`,
+      "note creation to be enabled after the connection saves",
+    );
+    await evaluate(
+      browser,
+      `([...document.querySelectorAll("button")].find((button) => button.textContent.includes("Add instruction note"))).focus()`,
+    );
+    assert.equal(
+      await evaluate(
+        browser,
+        `document.activeElement?.tagName === "BUTTON" && document.activeElement.textContent.includes("Add instruction note")`,
+      ),
+      true,
+      "the enabled instruction button receives keyboard focus",
+    );
+    await press("Enter", "Enter");
+    await waitFor(
+      browser,
+      `document.activeElement?.id === "text-content" && !!document.querySelector("#instruction-reference")`,
+      "the instruction editor to receive keyboard focus",
+    );
+    const instructionReference = await evaluate(
+      browser,
+      `document.querySelector("#instruction-reference").value`,
+    );
+    await browser.send(
+      "Input.insertText",
+      { text: "Draft a release plan from these notes." },
+      browser.sessionId,
+    );
+    await evaluate(browser, `document.querySelector("#node-x").focus()`);
+    await press("a", "KeyA", 2);
+    await browser.send("Input.insertText", { text: "180" }, browser.sessionId);
+    await press("Tab", "Tab");
+    await waitFor(
+      browser,
+      `document.querySelector(".pill")?.textContent.includes("All changes saved") && document.querySelector("#node-x")?.value === "180"`,
+      "instruction content and placement to save",
+    );
+    assert.match(
+      await evaluate(
+        browser,
+        `document.querySelector("label[for='text-content']").textContent`,
+      ),
+      /Agent instructions/,
+    );
+
     // Closing and reopening the canvas must bring the connections back.
     await clickAt(
       browser,
@@ -1011,6 +1081,29 @@ test("drawing nodes expose usable handles and their connections survive a reopen
       browser,
       `document.querySelectorAll(".svelte-flow__edge").length === 3`,
       "the reopened connections to render",
+    );
+    await waitFor(
+      browser,
+      `document.querySelector("#instruction-reference")?.value === ${JSON.stringify(instructionReference)}`,
+      "the selected instruction note to reopen with the same reference",
+    );
+    assert.equal(
+      await evaluate(browser, `document.querySelector("#text-content").value`),
+      "Draft a release plan from these notes.",
+    );
+    assert.equal(
+      await evaluate(browser, `document.querySelector("#node-x").value`),
+      "180",
+    );
+
+    await evaluate(
+      browser,
+      `document.querySelector('[aria-label="Settings"]').click()`,
+    );
+    await waitFor(
+      browser,
+      `document.querySelector("[aria-labelledby='codex-status-label']")?.textContent.includes("Codex execution is unsupported")`,
+      "the explicit unsupported Codex state",
     );
   } finally {
     editor.dispose();

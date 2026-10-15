@@ -13,6 +13,19 @@ validation evidence in the [development docs](docs/development/README.md).
 
 ### 2026-10-15
 
+#### M1 contracts and manual instruction notes
+
+- Define typed artifact operations and normalized, correlated run events with
+  bounded pages and cancellation-order validation. Text batches reuse
+  revision-checked saves in one SQLite transaction and reject artifacts outside
+  the requested canvas. Mind-map mutations remain explicitly unsupported.
+- Expose Codex execution as unsupported in the runtime and Settings until tool
+  scopes, approval mediation, and host restrictions have been verified. OpenRouter
+  remains a separate text-generation path. No OS isolation claim is made.
+- Add instruction notes through the existing text editor and save queue, with
+  keyboard creation/editing, stable references, placement persistence, and remembered
+  selection. Storage version 3 adds text purpose; existing text migrates as notes.
+
 #### Complete generated text or visible save failure
 
 - Text creation passes the complete response to the existing runtime validation

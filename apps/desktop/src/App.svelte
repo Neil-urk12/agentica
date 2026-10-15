@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { LIMITS } from "@agentica/protocol";
   import { callRuntime, desktopMode, pingRuntime } from "./lib/runtime";
@@ -43,6 +43,7 @@
   let edges = $state.raw<Edge[]>([]);
   let viewport = $state.raw({ x: 0, y: 0, zoom: 1 });
   let selectedId = $state("");
+  let selectionCanvasId = "";
   let connectionKey = $state("");
   let status = $state<"disconnected" | "connecting" | "connected" | "failed">(
     "disconnected",
@@ -122,15 +123,19 @@
       const kind =
         artifact?.type === "drawing"
           ? (artifact.drawing.shapes[0]?.kind ?? "path")
-          : "text";
+          : artifact?.purpose === "instruction"
+            ? "instruction"
+            : "text";
       const name =
-        kind === "text"
-          ? "Text"
-          : kind === "rectangle"
-            ? "Rectangle"
-            : kind === "ellipse"
-              ? "Ellipse"
-              : "Drawing";
+        kind === "instruction"
+          ? "Instruction note"
+          : kind === "text"
+            ? "Text"
+            : kind === "rectangle"
+              ? "Rectangle"
+              : kind === "ellipse"
+                ? "Ellipse"
+                : "Drawing";
       return { id: node.id, kind, label: `${name} ${index + 1}` };
     });
   });
@@ -347,6 +352,21 @@
     gesture = null;
   }
 
+  async function addInstruction() {
+    const created = await editor.addText(
+      undefined,
+      "",
+      undefined,
+      undefined,
+      "instruction",
+    );
+    if (!created) return;
+    selectedId = created.node.id;
+    inspectorOpen = true;
+    await tick();
+    document.getElementById("text-content")?.focus();
+  }
+
   async function handlePromptSubmit(prompt: string) {
     if (generating || !editorState.document || !editorState.workspace)
       return false;
@@ -431,7 +451,10 @@
                   label:
                     artifact?.type === "text" && artifact.text
                       ? artifact.text
-                      : `Text ${index + 1}`,
+                      : artifact?.type === "text" &&
+                          artifact.purpose === "instruction"
+                        ? "Instruction note"
+                        : `Text ${index + 1}`,
                 },
           };
         }) ?? [];
@@ -442,9 +465,33 @@
           target: edge.targetNodeId,
         })) ?? [];
       viewport = document?.canvas.viewport ?? { x: 0, y: 0, zoom: 1 };
+      if (document && selectionCanvasId !== document.canvas.id) {
+        selectionCanvasId = document.canvas.id;
+        try {
+          selectedId =
+            localStorage.getItem(`agentica.selection.${document.canvas.id}`) ??
+            "";
+        } catch {
+          selectedId = "";
+        }
+      }
       if (!document?.nodes.some((node) => node.id === selectedId))
         selectedId = document?.nodes[0]?.id ?? "";
+      if (!document) selectionCanvasId = "";
     });
+  });
+
+  $effect(() => {
+    const document = editorState.document;
+    if (!document?.nodes.some((node) => node.id === selectedId)) return;
+    try {
+      localStorage.setItem(
+        `agentica.selection.${document.canvas.id}`,
+        selectedId,
+      );
+    } catch {
+      /* Selection still works when browser storage is unavailable. */
+    }
   });
 
   $effect(() => {
@@ -720,15 +767,15 @@
         >
           <Icon name="settings" size={20} />
         </button>
-        <!-- <button
+        <button
           class="btn btn--soft"
           type="button"
           disabled={!canEdit}
-          onclick={() => void editor.addText()}
+          onclick={() => void addInstruction()}
         >
           <Icon name="add_box" size={18} />
-          Add text
-        </button> -->
+          Add instruction note
+        </button>
         <button
           class="btn btn--primary"
           type="button"
@@ -1009,8 +1056,8 @@
             <label for="text-node">Selected node</label>
             {#if editorState.document.nodes.length > 0}
               <select id="text-node" bind:value={selectedId}>
-                {#each editorState.document.nodes as node, index (node.id)}
-                  <option value={node.id}>Text {index + 1}</option>
+                {#each nodeItems as node (node.id)}
+                  <option value={node.id}>{node.label}</option>
                 {/each}
               </select>
             {:else}
@@ -1021,18 +1068,40 @@
           {#if selected && artifact}
             {#if textArtifact}
               <div class="field">
-                <label for="text-content">Text content</label>
+                <label for="text-content"
+                  >{textArtifact.purpose === "instruction"
+                    ? "Agent instructions"
+                    : "Text content"}</label
+                >
                 <textarea
                   id="text-content"
                   value={textArtifact.text}
                   maxlength={LIMITS.text}
                   disabled={editorState.busy}
                   rows="7"
-                  placeholder="Write something…"
+                  placeholder={textArtifact.purpose === "instruction"
+                    ? "Describe the task and the result you want…"
+                    : "Write something…"}
                   oninput={(event) =>
                     editor.editText(textArtifact.id, event.currentTarget.value)}
                 ></textarea>
               </div>
+              {#if textArtifact.purpose === "instruction"}
+                <div class="field">
+                  <label for="instruction-reference"
+                    >Instruction reference</label
+                  >
+                  <input
+                    id="instruction-reference"
+                    readonly
+                    value={textArtifact.id}
+                  />
+                  <p class="muted">
+                    Saved as a note. Editing instructions does not start an
+                    agent.
+                  </p>
+                </div>
+              {/if}
             {/if}
             <fieldset class="grid" disabled={editorState.busy}>
               <legend>Placement &amp; size</legend>
@@ -1105,8 +1174,7 @@
           readonly
           value={recoveryCopy}
           rows="4"
-          onfocus={(event) => event.currentTarget.select()}
-        ></textarea>
+          onfocus={(event) => event.currentTarget.select()}></textarea>
         <button
           class="btn btn--ghost"
           type="button"
@@ -1123,6 +1191,8 @@
   {#if settingsOpen}
     <Settings
       {theme}
+      {connectionKey}
+      {connected}
       onChange={(next) => (theme = next)}
       onClose={() => (settingsOpen = false)}
     />

@@ -2,6 +2,7 @@ import {
   MAX_FRAME_BYTES,
   type Drawing,
   type RuntimeResult,
+  type RuntimeParams,
 } from "@agentica/protocol";
 import type { callRuntime } from "./runtime";
 
@@ -466,6 +467,7 @@ export class Editor {
     text = "",
     size?: { width: number; height: number },
     origin?: { workspaceId: string; canvasId: string },
+    purpose?: RuntimeParams<"node.createText">["purpose"],
   ): Promise<RuntimeResult<"node.createText"> | undefined> {
     let created: RuntimeResult<"node.createText"> | undefined;
     await this.enqueue(async () => {
@@ -493,6 +495,7 @@ export class Editor {
           width: size?.width ?? 240,
           height: size?.height ?? 160,
           text,
+          ...(purpose ? { purpose } : {}),
         };
 
         const result = await this.call(
@@ -624,7 +627,7 @@ export class Editor {
         const workspaceId = this.state.workspace!.workspace.id;
         // A drawing whose creation failed is still a draft; create it now so a
         // retry persists each stroke exactly once.
-        for (; ;) {
+        for (;;) {
           const draft = this.state.document!;
           const pending = draft.artifacts.find(
             (artifact): artifact is Extract<Artifact, { type: "drawing" }> =>
@@ -747,16 +750,16 @@ export class Editor {
       const node = placements.length === 1 ? placements[0] : undefined;
       const created =
         attempted &&
-          artifact?.type === "drawing" &&
-          artifact.revision === 1 &&
-          content(artifact) === content(attempted.artifact) &&
-          node &&
-          !document.nodes.some((item) => item.id === node.id) &&
-          node.x === attempted.node.x &&
-          node.y === attempted.node.y &&
-          node.width === attempted.node.width &&
-          node.height === attempted.node.height &&
-          remote.canvas.revision === attempted.revision + 1
+        artifact?.type === "drawing" &&
+        artifact.revision === 1 &&
+        content(artifact) === content(attempted.artifact) &&
+        node &&
+        !document.nodes.some((item) => item.id === node.id) &&
+        node.x === attempted.node.x &&
+        node.y === attempted.node.y &&
+        node.width === attempted.node.width &&
+        node.height === attempted.node.height &&
+        remote.canvas.revision === attempted.revision + 1
           ? { node, artifact, revision: remote.canvas.revision }
           : undefined;
       const pending = new Set(
@@ -814,11 +817,11 @@ export class Editor {
             pending.has(draft.id)
               ? draft
               : {
-                ...draft,
-                revision: remote.artifacts.find(
-                  (artifact) => artifact.id === draft.id,
-                )!.revision,
-              },
+                  ...draft,
+                  revision: remote.artifacts.find(
+                    (artifact) => artifact.id === draft.id,
+                  )!.revision,
+                },
           ),
         },
       });

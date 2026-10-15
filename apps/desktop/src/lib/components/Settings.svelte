@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount } from "svelte";
+  import { callRuntime } from "../runtime";
   import type { Theme } from "../theme";
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
@@ -11,12 +13,36 @@
   } from "../openrouter";
 
   interface Props {
+    connectionKey: string;
+    connected: boolean;
     theme: Theme;
     onChange: (theme: Theme) => void;
     onClose: () => void;
   }
 
-  let { theme, onChange, onClose }: Props = $props();
+  let { theme, onChange, onClose, connectionKey, connected }: Props = $props();
+  let codexStatus = $state(
+    "Connect the backend to check Codex availability. Manual editing works without Codex.",
+  );
+  onMount(() => {
+    if (connected) {
+      codexStatus = "Checking Codex availability…";
+      void callRuntime(
+        connectionKey.trim(),
+        false,
+        "agent.capabilities",
+        {},
+      ).then(
+        (capabilities) => {
+          codexStatus = capabilities.reason;
+        },
+        () => {
+          codexStatus =
+            "Codex capability check failed. Execution is unavailable; reconnect the backend and reopen settings. Manual editing remains available.";
+        },
+      );
+    }
+  });
 
   const dark = $derived(theme === "dark");
 
@@ -67,6 +93,18 @@
   {onClose}
 >
   <div class="settings-stack">
+    <section
+      class="setting setting--stacked"
+      aria-labelledby="codex-status-label"
+    >
+      <div class="setting__text">
+        <h2 id="codex-status-label">Codex agent execution</h2>
+        <p role="status">{codexStatus}</p>
+        <p>
+          OpenRouter generates response text only. It cannot run artifact tools.
+        </p>
+      </div>
+    </section>
     <section class="setting setting--stacked">
       <span class="setting__icon"><Icon name="key" size={20} /></span>
       <div class="setting__text">
