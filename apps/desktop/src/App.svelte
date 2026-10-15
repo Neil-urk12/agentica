@@ -652,18 +652,17 @@
     const source = document?.artifacts.find((a) => a.id === node?.artifactId);
     if (!node || !source) return;
     if (source.type === "drawing") {
-      const shape = source.drawing.shapes[0];
-      if (
-        source.drawing.shapes.length !== 1 ||
-        !shape ||
-        shape.kind === "path" ||
-        !shape.label
-      )
-        return;
+      const labels = source.drawing.shapes
+        .filter((shape) => shape.kind !== "path")
+        .filter((shape) => shape.label);
+      if (!labels.length) return;
       reader = {
-        title: `${shape.kind === "ellipse" ? "Ellipse" : "Rectangle"} label`,
+        title:
+          source.drawing.shapes.length > 1
+            ? "Drawing labels"
+            : `${labels[0]?.kind === "ellipse" ? "Ellipse" : "Rectangle"} label`,
         subtitle: "Read-only label",
-        text: shape.label,
+        text: labels.map((shape) => shape.label).join("\n\n"),
         markdown: false,
       };
       return;
@@ -1680,7 +1679,7 @@
                 </div>
               {/if}
             {/if}
-            {#if textArtifact || (artifact.type === "drawing" && artifact.drawing.shapes.length === 1 && artifact.drawing.shapes[0]?.kind !== "path" && artifact.drawing.shapes[0]?.label)}
+            {#if textArtifact || (artifact.type === "drawing" && artifact.drawing.shapes.some((shape) => shape.kind !== "path" && shape.label))}
               <div class="field">
                 <span class="field__label">Content</span>
                 <div class="inspector__actions">

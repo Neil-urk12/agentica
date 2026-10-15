@@ -49,11 +49,9 @@
   let overflowing = $state(false);
 
   $effect(() => {
-    const elements = scaled?.label
-      ? Array.from(
-          drawingEl?.querySelectorAll<HTMLElement>(".shape-label") ?? [],
-        )
-      : [];
+    const elements = Array.from(
+      drawingEl?.querySelectorAll<HTMLElement>(".shape-label") ?? [],
+    );
     void data.drawing;
     void scaled;
     if (!elements.length) {

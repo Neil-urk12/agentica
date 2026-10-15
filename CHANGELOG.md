@@ -33,8 +33,8 @@ released version and date. Keep validation evidence in the
 - A screen-sized reader opens full text from a card, the inspector, or the
   review bar. It offers **Edit source** for editable text, is read-only for
   labels and proposals, closes with Escape or **Close**, and returns focus.
-- Overflowing text and single-shape labels show a **Read more**/**Read label**
-  action; previews indicate overflow without changing proposed geometry. **Fit text**
+- Overflowing text and labels show a **Read more**/**Read label** action;
+  previews indicate overflow without changing proposed geometry. **Fit text**
   grows a text node or single labeled rectangle/ellipse to its measured content
   from its top-left corner, refusing growth into occupied space or past the size
   limit with an explanation. Single-shape labels now render in node pixels, so
@@ -61,6 +61,9 @@ released version and date. Keep validation evidence in the
   proposal inspection, apply after a simulated resolution failure, and reopening
   without geometry writes. The Tauri host compiles; launching its window was not
   exercised in this environment.
+- Composite drawings observe every non-path label for overflow, so clipped
+  labels expose **Read label**. The inspector also opens these drawings in the
+  reader, which includes all nonempty labels in shape order as read-only text.
 
 ### 2026-10-15
 

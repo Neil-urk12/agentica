@@ -793,7 +793,7 @@ test("the UI save buffer recovers a real SQLite write failure and reopens after 
   }
 });
 
-test("drawing connections and keyboard instruction notes reopen without Codex", async () => {
+test("drawing labels, connections and keyboard instruction notes reopen without Codex", async () => {
   const backend = await startBackend();
   key = backend.connectionKey;
   let browser;
@@ -871,6 +871,25 @@ test("drawing connections and keyboard instruction notes reopen without Codex", 
       await editor.addDrawing(geometry, { shapes: [shape] });
       drawingIds[kind] = editor.state.document.nodes.at(-1).id;
     }
+    const labels = [
+      "Start",
+      "Composite label content that must remain readable. ".repeat(2),
+    ];
+    await editor.addDrawing(
+      { x: 100, y: 520, width: 420, height: 100 },
+      {
+        shapes: labels.map((label, index) => ({
+          kind: index === 0 ? "rectangle" : "ellipse",
+          x: index * 220,
+          y: 0,
+          width: 200,
+          height: 60,
+          color: "#7b7bf0",
+          label,
+        })),
+      },
+    );
+    const compositeId = editor.state.document.nodes.at(-1).id;
     editor.placeNode(textNodeId, { x: 100, y: 60, width: 240, height: 160 });
     await editor.save();
     assert.equal(editor.state.error, "");
@@ -926,8 +945,96 @@ test("drawing connections and keyboard instruction notes reopen without Codex", 
     );
     await waitFor(
       browser,
-      `[...document.querySelectorAll(".svelte-flow__node")].length === 4 && [...document.querySelectorAll(".svelte-flow__node")].every((node) => node.getBoundingClientRect().height > 0)`,
-      "all four nodes to be measured",
+      `[...document.querySelectorAll(".svelte-flow__node")].length === 5 && [...document.querySelectorAll(".svelte-flow__node")].every((node) => node.getBoundingClientRect().height > 0)`,
+      "all five nodes to be measured",
+    );
+    const composite = `[data-id="${compositeId}"]`;
+    assert.equal(
+      await evaluate(
+        browser,
+        `(() => {
+        const labels = document.querySelectorAll('${composite} .shape-label');
+        return labels.length === 2 && labels[0].scrollHeight <= labels[0].clientHeight + 1 && labels[1].scrollHeight > labels[1].clientHeight + 1;
+      })()`,
+      ),
+      true,
+      "only the second composite label is clipped",
+    );
+    await waitFor(
+      browser,
+      `document.querySelector('${composite} .drawing__more')?.textContent === 'Read label'`,
+      "reader access for a clipped composite label",
+    );
+    await clickAt(browser, await boxOf(browser, `${composite} .drawing__more`));
+    await waitFor(
+      browser,
+      `!!document.querySelector('dialog[open] .reader__plain')`,
+      "the label reader",
+    );
+    assert.equal(
+      await evaluate(
+        browser,
+        `document.querySelector('.reader__plain').textContent`,
+      ),
+      labels.join("\n\n"),
+      "the reader includes every label, including the clipped second label",
+    );
+    assert.equal(
+      await evaluate(
+        browser,
+        `[...document.querySelectorAll('dialog[open] button')].some(button => button.textContent.includes('Edit source'))`,
+      ),
+      false,
+      "drawing labels are read-only",
+    );
+    await clickAt(
+      browser,
+      await boxByText(browser, "dialog[open] button", "Close"),
+    );
+    // Change the measured box to exercise the observer independently of rerenders.
+    await evaluate(
+      browser,
+      `document.querySelectorAll('${composite} .shape-label')[1].style.height = '400px'`,
+    );
+    await waitFor(
+      browser,
+      `!document.querySelector('${composite} .drawing__more')`,
+      "the overflow action to clear when every label fits",
+    );
+    await clickAt(browser, await boxOf(browser, `${composite} rect`));
+    await waitFor(
+      browser,
+      `[...document.querySelectorAll('.inspector button')].some(button => button.textContent.includes('Read full content'))`,
+      "inspector reader access for a composite drawing",
+    );
+    await clickAt(
+      browser,
+      await boxByText(browser, ".inspector button", "Read full content"),
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('dialog[open] .reader__plain')`,
+      "the inspector label reader",
+    );
+    assert.equal(
+      await evaluate(
+        browser,
+        `document.querySelector('.reader__plain').textContent`,
+      ),
+      labels.join("\n\n"),
+    );
+    await clickAt(
+      browser,
+      await boxByText(browser, "dialog[open] button", "Close"),
+    );
+    await evaluate(
+      browser,
+      `document.querySelectorAll('${composite} .shape-label')[1].style.height = '60px'`,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('${composite} .drawing__more')`,
+      "the overflow action to return after shrinking a label",
     );
     // Every drawing kind must render its own connection handles.
     for (const [kind, id] of Object.entries(drawingIds)) {
