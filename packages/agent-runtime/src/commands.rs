@@ -6,6 +6,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::contracts::{validate_agent_start, ArtifactBatch, ArtifactOperation, CODEX_UNSUPPORTED};
 use crate::store::{delete_workspace, is_id, list_workspaces, new_id, RuntimeError, Workspace};
 
 // Limits shared with packages/protocol/src/index.ts.
@@ -25,6 +26,11 @@ const MAX_POINTS: usize = 10_000;
 const MAX_STROKE_WIDTH: f64 = 64.0;
 
 pub(crate) const METHODS: &[&str] = &[
+    "artifact.applyBatch",
+    "agent.capabilities",
+    "agent.start",
+    "agent.cancel",
+    "agent.events",
     "workspace.list",
     "workspace.create",
     "workspace.open",
@@ -41,7 +47,7 @@ pub(crate) const METHODS: &[&str] = &[
     "node.delete",
 ];
 
-fn invalid(message: impl Into<String>) -> RuntimeError {
+pub(crate) fn invalid(message: impl Into<String>) -> RuntimeError {
     RuntimeError::new("INVALID_PARAMS", message)
 }
 
@@ -63,7 +69,7 @@ fn parse<T: DeserializeOwned>(params: Value) -> Result<T, RuntimeError> {
     serde_json::from_value(params).map_err(|error| invalid(format!("Invalid parameters: {error}.")))
 }
 
-fn id(field: &str, value: &str) -> Result<(), RuntimeError> {
+pub(crate) fn id(field: &str, value: &str) -> Result<(), RuntimeError> {
     if is_id(value) {
         Ok(())
     } else {
@@ -72,7 +78,7 @@ fn id(field: &str, value: &str) -> Result<(), RuntimeError> {
 }
 
 // Zod measures JavaScript strings in UTF-16 code units.
-fn label(field: &str, value: &str) -> Result<(), RuntimeError> {
+pub(crate) fn label(field: &str, value: &str) -> Result<(), RuntimeError> {
     // Match JavaScript trim(), whose whitespace set differs from Rust's.
     let blank = value.chars().all(|c| {
         matches!(
@@ -98,7 +104,7 @@ fn label(field: &str, value: &str) -> Result<(), RuntimeError> {
     Ok(())
 }
 
-fn text(value: &str) -> Result<(), RuntimeError> {
+pub(crate) fn text(value: &str) -> Result<(), RuntimeError> {
     if value.encode_utf16().count() > MAX_TEXT {
         return Err(invalid(format!(
             "text must not exceed {MAX_TEXT} characters."
@@ -117,7 +123,7 @@ fn color(value: &str) -> Result<(), RuntimeError> {
     }
 }
 
-fn revision(value: f64) -> Result<i64, RuntimeError> {
+pub(crate) fn revision(value: f64) -> Result<i64, RuntimeError> {
     if value.fract() == 0.0 && (1.0..=MAX_REVISION as f64).contains(&value) {
         Ok(value as i64)
     } else {
@@ -225,6 +231,25 @@ struct CreateTextNode {
     width: f64,
     height: f64,
     text: String,
+    #[serde(default)]
+    purpose: TextPurpose,
+}
+
+#[derive(Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum TextPurpose {
+    #[default]
+    Note,
+    Instruction,
+}
+
+impl TextPurpose {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Note => "note",
+            Self::Instruction => "instruction",
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -373,6 +398,71 @@ impl Runtime {
 
     pub(crate) fn call(&mut self, method: &str, params: Value) -> Result<Value, RuntimeError> {
         match method {
+            "agent.capabilities" => {
+                let _: Empty = parse(params)?;
+                Ok(
+                    json!({ "provider": "codex", "status": "unsupported", "executionEnabled": false,
+                    "osIsolationVerified": false, "reason": CODEX_UNSUPPORTED }),
+                )
+            }
+            "agent.start" => {
+                validate_agent_start(params)?;
+                Err(RuntimeError::new(
+                    "UNSUPPORTED_CAPABILITY",
+                    CODEX_UNSUPPORTED,
+                ))
+            }
+            "agent.cancel" | "agent.events" => {
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase", deny_unknown_fields)]
+                struct RunRef {
+                    workspace_id: String,
+                    run_id: String,
+                    #[serde(default)]
+                    after: Option<f64>,
+                }
+                if method == "agent.cancel" && params.get("after").is_some() {
+                    return Err(invalid("agent.cancel does not accept an after cursor."));
+                }
+                let run: RunRef = parse(params)?;
+                id("workspaceId", &run.workspace_id)?;
+                id("runId", &run.run_id)?;
+                if method == "agent.events"
+                    && !run.after.is_some_and(|n| {
+                        n.fract() == 0.0 && (0.0..=MAX_REVISION as f64).contains(&n)
+                    })
+                {
+                    return Err(invalid("after must be a non-negative safe integer."));
+                }
+                Err(RuntimeError::new(
+                    "UNSUPPORTED_CAPABILITY",
+                    CODEX_UNSUPPORTED,
+                ))
+            }
+            "artifact.applyBatch" => {
+                let batch: ArtifactBatch = parse(params)?;
+                batch.validate()?;
+                if batch
+                    .operations
+                    .iter()
+                    .any(|op| !matches!(op, ArtifactOperation::ReplaceText { .. }))
+                {
+                    return Err(RuntimeError::new("UNSUPPORTED_CAPABILITY", "Mind-map operations are defined but storage is not implemented. The entire batch was rejected; no artifacts changed."));
+                }
+                self.transact(&batch.workspace_id, |tx| {
+                    canvas_revision(tx, &batch.canvas_id)?;
+                    let mut artifacts = Vec::new();
+                    for operation in &batch.operations {
+                        let ArtifactOperation::ReplaceText { artifact_id, expected_revision, text } = operation else { unreachable!() };
+                        let on_canvas: bool = tx.query_row(
+                            "SELECT EXISTS(SELECT 1 FROM canvas_node WHERE canvas_id = ?1 AND artifact_id = ?2)",
+                            (&batch.canvas_id, artifact_id), |row| row.get(0))?;
+                        if !on_canvas { return Err(RuntimeError::new("SCOPE_DENIED", "The artifact is outside this canvas. Open its canvas and retry; the entire batch was rolled back.")); }
+                        artifacts.push(save_text(tx, artifact_id, revision(*expected_revision)?, text)?);
+                    }
+                    Ok(json!({ "artifacts": artifacts }))
+                })
+            }
             "workspace.list" => {
                 let _: Empty = parse(params)?;
                 Ok(json!({ "workspaces": self.workspaces()? }))
@@ -547,8 +637,8 @@ impl Runtime {
                 self.transact(&params.workspace_id, |tx| {
                     check_canvas(tx, &params.canvas_id, expected)?;
                     tx.execute(
-                        "INSERT INTO text_content (id, body) VALUES (?1, ?2)",
-                        (&content_id, &params.text),
+                        "INSERT INTO text_content (id, body, purpose) VALUES (?1, ?2, ?3)",
+                        (&content_id, &params.text, params.purpose.as_str()),
                     )?;
                     tx.execute(
                         "INSERT INTO artifact (id, type, schema_version, revision, content_store, content_id)
@@ -696,33 +786,7 @@ impl Runtime {
                 let expected = revision(params.expected_revision)?;
                 text(&params.text)?;
                 self.transact(&params.workspace_id, |tx| {
-                    let current: Option<(String, i64)> = tx
-                        .query_row(
-                            "SELECT type, revision FROM artifact WHERE id = ?1",
-                            [&params.artifact_id],
-                            |row| Ok((row.get(0)?, row.get(1)?)),
-                        )
-                        .optional()?;
-                    match current {
-                        None => return Err(not_found("Artifact")),
-                        Some((kind, _)) if kind != "text" => {
-                            return Err(not_found("Text artifact"))
-                        }
-                        Some((_, current)) if current != expected => {
-                            return Err(conflict("artifact", current))
-                        }
-                        Some(_) => {}
-                    }
-                    tx.execute(
-                        "UPDATE text_content SET body = ?2
-                         WHERE id = (SELECT content_id FROM artifact WHERE id = ?1)",
-                        (&params.artifact_id, &params.text),
-                    )?;
-                    tx.execute(
-                        "UPDATE artifact SET revision = revision + 1 WHERE id = ?1",
-                        [&params.artifact_id],
-                    )?;
-                    Ok(json!({ "artifact": artifact(tx, &params.artifact_id)? }))
+                    Ok(json!({ "artifact": save_text(tx, &params.artifact_id, expected, &params.text)? }))
                 })
             }
             _ => unreachable!("methods are checked against METHODS"),
@@ -815,6 +879,37 @@ fn bump(tx: &Transaction, canvas_id: &str, expected: i64) -> Result<i64, Runtime
     Ok(expected + 1)
 }
 
+fn save_text(
+    tx: &Transaction,
+    artifact_id: &str,
+    expected: i64,
+    body: &str,
+) -> Result<Value, RuntimeError> {
+    let current: Option<(String, i64)> = tx
+        .query_row(
+            "SELECT type, revision FROM artifact WHERE id = ?1",
+            [artifact_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    match current {
+        None => return Err(not_found("Artifact")),
+        Some((kind, _)) if kind != "text" => return Err(not_found("Text artifact")),
+        Some((_, current)) if current != expected => return Err(conflict("artifact", current)),
+        Some(_) => {}
+    }
+    tx.execute(
+        "UPDATE text_content SET body = ?2
+         WHERE id = (SELECT content_id FROM artifact WHERE id = ?1)",
+        (artifact_id, body),
+    )?;
+    tx.execute(
+        "UPDATE artifact SET revision = revision + 1 WHERE id = ?1",
+        [artifact_id],
+    )?;
+    artifact(tx, artifact_id)
+}
+
 fn artifact(tx: &Transaction, artifact_id: &str) -> Result<Value, RuntimeError> {
     let (kind, schema_version, revision, content_id): (String, i64, i64, String) = tx
         .query_row(
@@ -826,16 +921,16 @@ fn artifact(tx: &Transaction, artifact_id: &str) -> Result<Value, RuntimeError> 
         .ok_or_else(|| not_found("Artifact"))?;
     match kind.as_str() {
         "text" => {
-            let body: String = tx.query_row(
-                "SELECT body FROM text_content WHERE id = ?1",
+            let (body, purpose): (String, String) = tx.query_row(
+                "SELECT body, purpose FROM text_content WHERE id = ?1",
                 [&content_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
             Ok(json!({
                 "id": artifact_id, "type": "text",
                 "schemaVersion": schema_version,
                 "revision": revision,
-                "text": body,
+                "text": body, "purpose": purpose,
             }))
         }
         "drawing" => {

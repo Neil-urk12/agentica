@@ -1,4 +1,5 @@
 mod commands;
+pub mod contracts;
 pub mod http;
 mod store;
 
