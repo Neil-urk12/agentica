@@ -1240,7 +1240,7 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
     await submit("Draw an idea");
     await waitFor(
       browser,
-      `document.querySelectorAll('.drawing.preview').length === 1 && document.querySelectorAll('.review button').length === 2`,
+      `document.querySelectorAll('.drawing.preview').length === 1 && !!document.querySelector('.review-bar')`,
       "the diagram preview and review controls",
     );
     assert.equal(
@@ -1287,7 +1287,7 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
       "the restored pending proposal",
     );
     const review = async (action) => {
-      const expression = `[...document.querySelectorAll('.review button')].find(b => b.textContent.trim() === ${JSON.stringify(action)})`;
+      const expression = `[...document.querySelectorAll('.review-bar button')].find(b => b.textContent.trim() === ${JSON.stringify(action)})`;
       await waitFor(
         browser,
         `${expression} && !(${expression}).disabled`,
@@ -1330,7 +1330,42 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
       "successful approval must not leave a stale-preview warning",
     );
     const replyNode = applied.nodes[1];
-    const selector = `[data-id="${replyNode.id}"] .body`;
+    assert.ok(replyNode.height <= 220, "new reply cards stay bounded");
+    await waitFor(
+      browser,
+      `document.querySelector('[data-id="${replyNode.id}"] .card-head')?.textContent.includes('Changes applied')`,
+      "the applied status in the reply header",
+    );
+    assert.match(
+      await evaluate(
+        browser,
+        `document.querySelector('[data-id="${replyNode.id}"] .card-body').textContent`,
+      ),
+      /A diagram you can edit\./,
+      "status presentation leaves reply prose unchanged",
+    );
+    const readButton = `[data-id="${replyNode.id}"] .card-action`;
+    await evaluate(
+      browser,
+      `(() => { const b = document.querySelector(${JSON.stringify(readButton)}); b.focus(); b.click(); })()`,
+    );
+    await waitFor(
+      browser,
+      `document.querySelector('dialog[open] .reader__content')?.textContent.includes('A diagram you can edit.')`,
+      "the full-content reader",
+    );
+    for (const type of ["keyDown", "keyUp"])
+      await browser.send(
+        "Input.dispatchKeyEvent",
+        { type, key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 },
+        browser.sessionId,
+      );
+    await waitFor(
+      browser,
+      `!document.querySelector('dialog[open]') && document.activeElement === document.querySelector(${JSON.stringify(readButton)})`,
+      "the closed reader restoring focus",
+    );
+    const selector = `[data-id="${replyNode.id}"] .card-body`;
     await evaluate(
       browser,
       `document.querySelector(${JSON.stringify(selector)}).focus()`,
@@ -1347,12 +1382,12 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
     );
     await waitFor(
       browser,
-      `document.activeElement === document.querySelector('textarea[aria-label="Edit canvas text"]') && !!document.activeElement`,
+      `document.activeElement === document.querySelector('textarea.card-body') && !!document.activeElement`,
       "keyboard inline editing",
     );
     await evaluate(
       browser,
-      `(() => { const input = document.querySelector('textarea[aria-label="Edit canvas text"]'); input.value = 'Human revision'; input.dispatchEvent(new Event('input', {bubbles:true})); input.blur(); })()`,
+      `(() => { const input = document.querySelector('textarea.card-body'); input.value = 'Human revision'; input.dispatchEvent(new Event('input', {bubbles:true})); input.blur(); })()`,
     );
     await waitFor(
       browser,
@@ -1367,13 +1402,13 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
     await clickAt(browser, await boxOf(browser, selector));
     await waitFor(
       browser,
-      `document.querySelector('.composer-context').textContent.includes('1 selected')`,
+      `document.querySelector('.composer__scope').textContent.includes('1 selected object')`,
       "selected-object context",
     );
     await submit("Change this text");
     await waitFor(
       browser,
-      `document.querySelectorAll('.canvas-text.preview').length === 1 && document.querySelectorAll('.review button').length === 2`,
+      `document.querySelectorAll('.canvas-text.preview').length === 1 && !!document.querySelector('.review-bar')`,
       "a targeted text preview",
     );
     assert.equal(
@@ -1416,12 +1451,12 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
     );
     await waitFor(
       browser,
-      `document.activeElement === document.querySelector('textarea[aria-label="Edit canvas text"]') && !!document.activeElement`,
+      `document.activeElement === document.querySelector('textarea.card-body') && !!document.activeElement`,
       "editing during generation",
     );
     await evaluate(
       browser,
-      `(() => { const input = document.querySelector('textarea[aria-label="Edit canvas text"]'); input.value = 'Human edit while generating'; input.dispatchEvent(new Event('input', {bubbles:true})); input.blur(); })()`,
+      `(() => { const input = document.querySelector('textarea.card-body'); input.value = 'Human edit while generating'; input.dispatchEvent(new Event('input', {bubbles:true})); input.blur(); })()`,
     );
     await evaluate(
       browser,
@@ -1449,7 +1484,7 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
       );
       await waitFor(
         browser,
-        `document.querySelectorAll('.drawing.preview').length === 1 && document.querySelectorAll('.review button').length === 2`,
+        `document.querySelectorAll('.drawing.preview').length === 1 && !!document.querySelector('.review-bar')`,
         `the pending proposal for ${action}`,
       );
       const {
@@ -1484,13 +1519,13 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
       }
       await waitFor(
         browser,
-        `document.querySelectorAll('.conversation-recovery.review button').length === 2`,
+        `!!document.querySelector('.review-bar')`,
         "proposal controls after deleting the reply",
       );
       await reopen();
       await waitFor(
         browser,
-        `document.querySelectorAll('.conversation-recovery.review button').length === 2 && document.querySelector('#canvas-prompt').disabled`,
+        `!!document.querySelector('.review-bar') && document.querySelector('#canvas-prompt').disabled`,
         "proposal controls restored without the conversation nodes",
       );
       assert.equal(
@@ -1500,7 +1535,7 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
       await review(action);
       await waitFor(
         browser,
-        `document.querySelectorAll('.preview').length === 0 && !document.querySelector('#canvas-prompt').disabled && !document.querySelector('.conversation-recovery.review')`,
+        `document.querySelectorAll('.preview').length === 0 && !document.querySelector('#canvas-prompt').disabled && !document.querySelector('.review-bar')`,
         `${action} clears the proposal and restores the composer`,
       );
       assert.equal(
@@ -1532,7 +1567,7 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
     await evaluate(browser, `(${textOnly}).click()`);
     await waitFor(
       browser,
-      `!document.body.innerText.includes('Response waiting to save') && document.querySelectorAll('.drawing.preview').length === 1 && document.querySelectorAll('.review button').length === 2`,
+      `!document.body.innerText.includes('Response waiting to save') && document.querySelectorAll('.drawing.preview').length === 1 && !!document.querySelector('.review-bar')`,
       "the saved proposal adopted for review",
     );
     assert.deepEqual(
@@ -1650,7 +1685,7 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
     );
   } catch (error) {
     if (browser)
-      error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({text:document.body.innerText.slice(-2000),focus:document.activeElement?.tagName,review:document.querySelector('.review')?.outerHTML,requests:window.__runtimeRequests})")}`;
+      error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({text:document.body.innerText.slice(-2000),focus:document.activeElement?.tagName,review:document.querySelector('.review-bar')?.outerHTML,requests:window.__runtimeRequests})")}`;
     throw error;
   } finally {
     await browser?.close();

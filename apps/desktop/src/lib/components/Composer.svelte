@@ -9,7 +9,12 @@
     disabled?: boolean;
     onToggleToolbar: () => void;
     onSubmit?: (prompt: string) => boolean | Promise<boolean>;
-    scopeLabel?: string;
+    /** Short scope line, such as "2 selected objects · recent conversation". */
+    scope?: string;
+    /** Provider name and model shown in the disclosure. */
+    provider?: string;
+    /** What the next request actually transmits. */
+    details?: string[];
     notice?: string;
     onCancel?: () => void;
   }
@@ -21,12 +26,15 @@
     disabled = false,
     onToggleToolbar,
     onSubmit,
-    scopeLabel = "",
+    scope = "",
+    provider = "",
+    details = [],
     notice = "",
     onCancel,
   }: Props = $props();
 
   let promptText = $state("");
+  let detailsOpen = $state(false);
 
   async function submit() {
     const submittedText = promptText;
@@ -46,66 +54,82 @@
 </script>
 
 <div class="composer" role="group" aria-label="Canvas prompt">
-  <div class="composer-context" role="status">
-    {scopeLabel}{notice ? ` · ${notice}` : ""}
-  </div>
-  <button
-    class="composer__lead"
-    class:composer__lead--active={toolbarOpen}
-    type="button"
-    title="Canvas tools"
-    aria-label="Canvas tools"
-    aria-expanded={toolbarOpen}
-    onclick={onToggleToolbar}
-  >
-    <Icon name="build" size={20} />
-  </button>
-
-  <label class="sr-only" for="canvas-prompt">Prompt</label>
-  <textarea
-    id="canvas-prompt"
-    class="composer__input"
-    rows="1"
-    bind:value={promptText}
-    onkeydown={onKeydown}
-    {disabled}
-    maxlength={LIMITS.text}
-    {placeholder}></textarea>
-
-  <div class="composer__tools">
-    {#if loading}<button type="button" class="btn btn--soft" onclick={onCancel}
-        >Cancel</button
-      >{/if}
+  <div class="composer__context">
+    <span class="composer__scope" aria-live="polite">
+      <span class="sr-only">Context:</span>{scope}
+    </span>
     <button
-      class="composer__send"
+      class="composer__disclose"
       type="button"
-      title={loading ? "Generating response…" : "Send prompt (Enter)"}
-      aria-label="Send prompt"
-      disabled={disabled || loading || !promptText.trim()}
-      onclick={submit}
+      aria-expanded={detailsOpen}
+      aria-controls="composer-details"
+      onclick={() => (detailsOpen = !detailsOpen)}
     >
-      {#if loading}
-        <span class="spinner" aria-hidden="true"></span>
-      {:else}
-        <Icon name="arrow_upward" size={20} />
-      {/if}
+      <Icon name={detailsOpen ? "expand_more" : "info"} size={16} />
+      Context details
     </button>
+  </div>
+  {#if detailsOpen}
+    <div id="composer-details" class="composer__details">
+      <p>
+        <strong>Provider:</strong>
+        {provider || "Not configured — choose one in Settings"}
+      </p>
+      <ul>
+        {#each details as line}<li>{line}</li>{/each}
+      </ul>
+      {#if notice}<p>{notice}</p>{/if}
+    </div>
+  {/if}
+  <div class="composer__row">
+    <button
+      class="composer__lead"
+      class:composer__lead--active={toolbarOpen}
+      type="button"
+      title="Canvas tools"
+      aria-label="Canvas tools"
+      aria-expanded={toolbarOpen}
+      onclick={onToggleToolbar}
+    >
+      <Icon name="build" size={20} />
+    </button>
+
+    <label class="sr-only" for="canvas-prompt">Prompt</label>
+    <textarea
+      id="canvas-prompt"
+      class="composer__input"
+      rows="1"
+      bind:value={promptText}
+      onkeydown={onKeydown}
+      {disabled}
+      maxlength={LIMITS.text}
+      {placeholder}></textarea>
+
+    <div class="composer__tools">
+      {#if loading}<button
+          type="button"
+          class="btn btn--soft"
+          onclick={onCancel}>Cancel</button
+        >{/if}
+      <button
+        class="composer__send"
+        type="button"
+        title={loading ? "Generating response…" : "Send prompt (Enter)"}
+        aria-label="Send prompt"
+        disabled={disabled || loading || !promptText.trim()}
+        onclick={submit}
+      >
+        {#if loading}
+          <span class="spinner" aria-hidden="true"></span>
+        {:else}
+          <Icon name="arrow_upward" size={20} />
+        {/if}
+      </button>
+    </div>
   </div>
 </div>
 
 <style>
-  .composer-context {
-    position: absolute;
-    bottom: calc(100% + 8px);
-    left: 0;
-    right: 0;
-    font-size: 12px;
-    line-height: 1.4;
-    color: var(--ink-soft);
-    background: var(--surface);
-    border-radius: 8px;
-    padding: 6px 10px;
-  }
   .composer__send:disabled {
     opacity: 0.45;
     cursor: not-allowed;

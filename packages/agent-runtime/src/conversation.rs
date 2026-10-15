@@ -165,12 +165,20 @@ fn insert_node(
     Ok(())
 }
 
-fn text_height(body: &str) -> f64 {
+/// Conversation cards match the frontend layout budget (`CARD` in
+/// `canvas-view.ts`): a fixed width and a bounded height. Long text stays in
+/// the artifact and is read in full through the reader, so cards never grow
+/// with the complete reply.
+const CARD_WIDTH: f64 = 340.0;
+const CARD_MIN_HEIGHT: f64 = 160.0;
+const CARD_MAX_HEIGHT: f64 = 220.0;
+
+fn card_height(body: &str) -> f64 {
     let lines: usize = body
         .split('\n')
         .map(|line| line.encode_utf16().count().div_ceil(36).max(1))
         .sum();
-    (lines as f64 * 24.0 + 56.0).clamp(160.0, MAX_SIZE)
+    (lines as f64 * 24.0 + 56.0).clamp(CARD_MIN_HEIGHT, CARD_MAX_HEIGHT)
 }
 
 fn open_position(
@@ -539,8 +547,8 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                 Geometry {
                     x: p.anchor.x,
                     y: p.anchor.y,
-                    width: 340.0,
-                    height: text_height(&p.prompt),
+                    width: CARD_WIDTH,
+                    height: card_height(&p.prompt),
                 },
             )?;
             insert_node(tx, &p.canvas_id, &node_id, &new_id()?, &g, &p.prompt, false)?;
@@ -614,7 +622,7 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                 let (x, y, height) = prompt_node.unwrap_or((
                     t["anchor"]["x"].as_f64().unwrap(),
                     t["anchor"]["y"].as_f64().unwrap(),
-                    160.0,
+                    CARD_MIN_HEIGHT,
                 ));
                 let g = open_position(
                     tx,
@@ -622,8 +630,8 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                     Geometry {
                         x,
                         y: y + height + 32.0,
-                        width: 340.0,
-                        height: text_height(&p.reply),
+                        width: CARD_WIDTH,
+                        height: card_height(&p.reply),
                     },
                 )?;
                 insert_node(tx, &p.canvas_id, &node_id, &new_id()?, &g, &p.reply, false)?;
@@ -697,5 +705,17 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
             Ok(json!({"turns":turns,"nextBefore":next}))
         }
         _ => unreachable!(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conversation_cards_stay_bounded_for_long_text() {
+        assert_eq!(card_height("Short"), CARD_MIN_HEIGHT);
+        assert_eq!(card_height(&"word ".repeat(2_000)), CARD_MAX_HEIGHT);
+        assert_eq!(card_height(&"line\n".repeat(400)), CARD_MAX_HEIGHT);
     }
 }

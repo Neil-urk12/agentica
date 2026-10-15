@@ -10,6 +10,58 @@ released version and date. Keep validation evidence in the
 
 ## Unreleased
 
+### 2026-10-16
+
+#### Make the canvas easier to read and review
+
+- Distinguish prompts, agent replies, instruction notes, ordinary text, and
+  shapes with role labels, surfaces, and a shared type scale in both themes.
+  Selection is a solid outline with handles, keyboard focus a separate dashed
+  outline, and proposals a dashed outline with a **Proposed** label. Control
+  text and soft/primary buttons now meet 4.5:1 contrast in both themes.
+- New conversation cards keep a 340-unit width and a 160–220-unit height
+  instead of growing with the reply; the runtime and frontend placement
+  reservation share this budget. Saved geometry of existing canvases is never
+  changed on load. **Compact conversation** in the inspector shrinks a selected
+  prompt or reply through the normal placement save, without moving neighbours.
+- Cards and annotations render a bounded Markdown subset (paragraphs,
+  headings, lists, emphasis, inline and fenced code, links). A small token
+  parser feeds an escaped Svelte renderer, so no HTML is trusted: markup stays
+  literal, images are never fetched, and only HTTP(S) links are actionable,
+  and only in the browser reader (the desktop webview has no external opener).
+  Editing always exposes the exact source.
+- A screen-sized reader opens full text from a card, the inspector, or the
+  review bar. It offers **Edit source** for editable text, is read-only for
+  labels and proposals, closes with Escape or **Close**, and returns focus.
+- Overflowing text and single-shape labels show a **Read more**/**Read label**
+  action; previews indicate overflow without changing proposed geometry. **Fit text**
+  grows a text node or single labeled rectangle/ellipse to its measured content
+  from its top-left corner, refusing growth into occupied space or past the size
+  limit with an explanation. Single-shape labels now render in node pixels, so
+  resized shapes no longer stretch their text.
+- Card headers show persisted turn status (pending review, applied, discarded,
+  complete, generating, failed, cancelled, interrupted) without rewriting prose.
+- One review bar above the composer carries the change count, **Show changes**,
+  read-only proposed text, **Apply**, and **Discard**, independent of the reply
+  node. Resolution failures are reported there and the proposal stays pending.
+- The composer shows a one-line context summary with a disclosure naming the
+  provider and what the request transmits (prompt, selection or whole canvas,
+  up to 8 earlier turns). Tools, recovery, review, and composer share one
+  measured overlay stack.
+- Zoom, a visible zoom value (reset to 100%), **Fit canvas**, **Focus
+  selection**, and **Show changes** fit targets within the canvas area left
+  free by the composer stack, navigation, and overlay panels, measured at the
+  time of the action. Navigation changes only the viewport.
+- Verification: unit tests for Markdown safety and source preservation, card
+  sizing, fitting limits and collisions, overlay insets, and viewport fitting;
+  a Rust test for bounded card heights; the rendered-app conversation test now
+  checks the review bar, applied status, unchanged reply prose, and reader focus
+  restoration. Manually checked in Chromium in both themes at 1280×800,
+  1400×900, and 680×800: reading, source editing, compaction, fitting,
+  proposal inspection, apply after a simulated resolution failure, and reopening
+  without geometry writes. The Tauri host compiles; launching its window was not
+  exercised in this environment.
+
 ### 2026-10-15
 
 #### Recover replies whose save acknowledgement was lost

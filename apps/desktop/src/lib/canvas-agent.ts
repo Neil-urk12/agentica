@@ -4,9 +4,9 @@ import {
   type CanvasOperation,
 } from "@agentica/protocol";
 import type { CanvasDocument } from "./editor.ts";
+import { EXCHANGE_RESERVE, type Box } from "./canvas-view.ts";
 
 type Context = Pick<CanvasDocument, "nodes" | "edges" | "artifacts">;
-type Box = { x: number; y: number; width: number; height: number };
 
 export function exchangePosition(
   nodes: (Box & { id: string })[],
@@ -18,13 +18,14 @@ export function exchangePosition(
     ? Math.max(...selected.map((n) => n.x + n.width)) + 64
     : center.x;
   const y = selected.length ? Math.min(...selected.map((n) => n.y)) : center.y;
-  // Reserve room for the prompt, reply, and a nearby diagram without moving user work.
+  // Reserve room for the compact prompt and reply cards plus a nearby
+  // diagram without moving user work; the runtime caps card heights to match.
   for (let attempts = 0; attempts <= nodes.length; attempts++) {
     const overlap = nodes.find(
       (n) =>
-        n.x < x + 760 &&
+        n.x < x + EXCHANGE_RESERVE.width &&
         n.x + n.width > x - 32 &&
-        n.y < y + 560 &&
+        n.y < y + EXCHANGE_RESERVE.height &&
         n.y + n.height > y - 32,
     );
     if (!overlap) return { x, y };

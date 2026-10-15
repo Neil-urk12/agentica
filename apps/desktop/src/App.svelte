@@ -10,6 +10,25 @@
   import { Editor, type DrawingSegment } from "./lib/editor";
   import { applyTheme, readTheme, type Theme } from "./lib/theme";
   import Composer from "./lib/components/Composer.svelte";
+  import Reader from "./lib/components/Reader.svelte";
+  import ReviewBar from "./lib/components/ReviewBar.svelte";
+  import CanvasNavigation from "./lib/components/CanvasNavigation.svelte";
+  import {
+    CARD,
+    EXCHANGE_RESERVE,
+    areaCentre,
+    compactSize,
+    fitTextHeight,
+    fitViewport,
+    overlayInsets,
+    proposedContent,
+    unionBox,
+    usableArea,
+    zoomAbout,
+    type Box,
+    type ProposedContent,
+    type Viewport,
+  } from "./lib/canvas-view";
   import CanvasToolbar from "./lib/components/CanvasToolbar.svelte";
   import DrawingNode from "./lib/components/DrawingNode.svelte";
   import TextNode from "./lib/components/TextNode.svelte";
@@ -33,7 +52,6 @@
   } from "./lib/tools";
   import {
     Background,
-    Controls,
     MarkerType,
     SvelteFlow,
     type Edge,
@@ -85,6 +103,19 @@
   let pendingReply = $state.raw<RuntimeParams<"conversation.finish"> | null>(
     null,
   );
+  type ReaderState = {
+    title: string;
+    subtitle?: string;
+    /** Live, editable source; absent for labels and proposed content. */
+    artifactId?: string;
+    text: string;
+    markdown: boolean;
+    startEditing?: boolean;
+  };
+  let reader = $state.raw<ReaderState | null>(null);
+  let reviewError = $state("");
+  let resolving = $state(false);
+  let fitNotice = $state("");
   const contextIds = $derived(
     nodes
       .filter((n) => n.selected && !n.id.startsWith("preview-"))
@@ -95,6 +126,34 @@
       (t) => t.status === "pending" || t.status === "generating",
     ),
   );
+  // Review is derived from the turn record, not from the reply node, so it
+  // stays available when the reply is offscreen or missing.
+  const pendingTurn = $derived(
+    editorState.turns.find((t) => t.status === "pending"),
+  );
+  const pendingContent = $derived(
+    pendingTurn ? proposedContent(pendingTurn.operations) : [],
+  );
+  const readerText = $derived.by(() => {
+    if (!reader) return "";
+    const source = reader.artifactId
+      ? editorState.document?.artifacts.find((a) => a.id === reader?.artifactId)
+      : undefined;
+    return source?.type === "text" ? source.text : reader.text;
+  });
+  const providerLabel = $derived.by(() => {
+    void settingsOpen;
+    const config = getProviderConfig();
+    let host = config.baseUrl;
+    try {
+      host = new URL(config.baseUrl).host;
+    } catch {
+      /* Shown as entered; validation reports it on submit. */
+    }
+    const name =
+      config.kind === "custom" ? `Custom provider (${host})` : "OpenRouter";
+    return `${name} · ${config.model || "no model selected"}`;
+  });
   let canvasEl = $state<HTMLElement>();
   let drawSurface = $state<HTMLDivElement>();
   let gesture = $state.raw<Gesture | null>(null);
@@ -154,8 +213,14 @@
           : artifact?.purpose === "instruction"
             ? "instruction"
             : "text";
-      const name =
-        kind === "instruction"
+      const turn = editorState.turns.find(
+        (t) => t.promptNodeId === node.id || t.replyNodeId === node.id,
+      );
+      const name = turn
+        ? turn.promptNodeId === node.id
+          ? "Your prompt"
+          : "Agent reply"
+        : kind === "instruction"
           ? "Instruction note"
           : kind === "text"
             ? "Text"
@@ -169,6 +234,20 @@
   });
   // Drawings may start while autosave is pending: the commit waits for it.
   const canDraw = $derived(connected && !editorState.busy);
+  const selectedTurn = $derived(
+    editorState.turns.find(
+      (t) => t.promptNodeId === selectedId || t.replyNodeId === selectedId,
+    ),
+  );
+  const selectedBox = $derived.by(() => {
+    if (artifact?.type !== "drawing") return undefined;
+    const shapes = artifact.drawing.shapes;
+    const shape = shapes.length === 1 ? shapes[0] : undefined;
+    return shape && shape.kind !== "path" ? shape : undefined;
+  });
+  const canFit = $derived(
+    (!!textArtifact && !selectedTurn) || !!selectedBox?.label,
+  );
 
   type Point = { x: number; y: number };
   type Gesture = { kind: "path" | "rectangle" | "ellipse"; points: Point[] };
@@ -475,10 +554,16 @@
         ? "Canvas edits will appear as proposals for review."
         : "This model supports text replies only. Choose a tool-capable model in Settings to propose canvas edits.";
       controller.signal.throwIfAborted();
-      const rect = canvasEl?.getBoundingClientRect();
+      const area = usable();
+      const centre = area
+        ? areaCentre(viewport, area)
+        : {
+            x: (340 - viewport.x) / viewport.zoom,
+            y: (300 - viewport.y) / viewport.zoom,
+          };
       const anchor = exchangePosition(editorState.document.nodes, nodeIds, {
-        x: ((rect?.width ?? 680) / 2 - viewport.x) / viewport.zoom - 170,
-        y: ((rect?.height ?? 600) / 2 - viewport.y) / viewport.zoom - 80,
+        x: centre.x - CARD.width / 2,
+        y: centre.y - EXCHANGE_RESERVE.height / 2,
       });
       const requestedId = crypto.randomUUID();
       const start = await editor.startConversation({
@@ -560,6 +645,187 @@
     nodes = nodes.map((node) => ({ ...node, selected: node.id === id }));
   }
 
+  /** Open the full-content reader for a saved node's text or label. */
+  function openNodeReader(nodeId: string, startEditing = false) {
+    const document = editorState.document;
+    const node = document?.nodes.find((item) => item.id === nodeId);
+    const source = document?.artifacts.find((a) => a.id === node?.artifactId);
+    if (!node || !source) return;
+    if (source.type === "drawing") {
+      const shape = source.drawing.shapes[0];
+      if (
+        source.drawing.shapes.length !== 1 ||
+        !shape ||
+        shape.kind === "path" ||
+        !shape.label
+      )
+        return;
+      reader = {
+        title: `${shape.kind === "ellipse" ? "Ellipse" : "Rectangle"} label`,
+        subtitle: "Read-only label",
+        text: shape.label,
+        markdown: false,
+      };
+      return;
+    }
+    const turn = editorState.turns.find(
+      (t) => t.promptNodeId === nodeId || t.replyNodeId === nodeId,
+    );
+    reader = {
+      title: turn
+        ? turn.promptNodeId === nodeId
+          ? "Your prompt"
+          : "Agent reply"
+        : source.purpose === "instruction"
+          ? "Instruction note"
+          : "Text",
+      subtitle: "Reading view · editing changes the saved source",
+      artifactId: source.id,
+      text: source.text,
+      markdown: true,
+      startEditing,
+    };
+  }
+
+  /**
+   * The unobscured canvas region in canvas-element pixels, measured from the
+   * overlays actually rendered now (composer, review, tools, navigation, and
+   * any panel drawn over the canvas).
+   */
+  function usable(): Box | undefined {
+    if (!canvasEl) return undefined;
+    const rect = canvasEl.getBoundingClientRect();
+    if (!rect.width || !rect.height) return undefined;
+    const obstacles = [
+      ...canvasEl.querySelectorAll<HTMLElement>(
+        ".canvas-dock > *, .canvas-nav, .canvas__nodes, .canvas__inspector",
+      ),
+      ...document.querySelectorAll<HTMLElement>(".drawer, .inspector"),
+    ].map((element) => element.getBoundingClientRect());
+    return usableArea(
+      { width: rect.width, height: rect.height },
+      overlayInsets(rect, obstacles),
+    );
+  }
+
+  /** Navigation changes only the viewport; object geometry is never written. */
+  function setView(next: Viewport) {
+    if (!editorState.document) return;
+    viewport = next;
+    editor.setViewport(next);
+  }
+
+  function zoomBy(factor: number) {
+    const area = usable();
+    if (area) setView(zoomAbout(viewport, area, factor));
+  }
+
+  function fitCanvas() {
+    const area = usable();
+    const target = unionBox(
+      nodes.map((node) => ({
+        x: node.position.x,
+        y: node.position.y,
+        width: node.width ?? CARD.width,
+        height: node.height ?? CARD.minHeight,
+      })),
+    );
+    if (!area) return;
+    setView(
+      target
+        ? fitViewport(target, area)
+        : { x: area.x + area.width / 2, y: area.y + area.height / 2, zoom: 1 },
+    );
+  }
+
+  function focusSelection() {
+    const area = usable();
+    if (!area || !selected) return;
+    setView(fitViewport(selected, area, Math.max(1, viewport.zoom)));
+  }
+
+  function showChanges() {
+    const area = usable();
+    const target = unionBox(
+      nodes
+        .filter((node) => node.id.startsWith("preview-"))
+        .map((node) => ({
+          x: node.position.x,
+          y: node.position.y,
+          width: node.width ?? CARD.width,
+          height: node.height ?? CARD.minHeight,
+        })),
+    );
+    if (area && target) setView(fitViewport(target, area));
+  }
+
+  function readProposed(item: ProposedContent) {
+    reader = {
+      title: item.title,
+      subtitle: "Proposed content · read-only until applied",
+      text: item.text,
+      markdown: item.title.endsWith("text"),
+    };
+  }
+
+  async function resolvePending(action: "apply" | "discard") {
+    const turn = pendingTurn;
+    if (!turn || resolving) return;
+    resolving = true;
+    reviewError = "";
+    try {
+      await editor.resolveConversation(turn.id, action);
+    } finally {
+      resolving = false;
+    }
+    // The runtime keeps the proposal pending when resolution fails.
+    if (
+      editorState.turns.some((t) => t.id === turn.id && t.status === "pending")
+    )
+      reviewError =
+        editorState.error ||
+        `The proposal could not be ${action === "apply" ? "applied" : "discarded"}.`;
+  }
+
+  function compactSelected() {
+    if (!selected || !selectedTurn) return;
+    editor.placeNode(selected.id, compactSize(selected));
+    fitNotice = "Conversation compacted. Use Read to view the full text.";
+  }
+
+  /** Grow the selected text or single labeled shape to its measured content. */
+  function fitSelected() {
+    const document = editorState.document;
+    if (!document || !selected || !canvasEl) return;
+    const element = canvasEl.querySelector<HTMLElement>(
+      `.svelte-flow__node[data-id="${CSS.escape(selected.id)}"]`,
+    );
+    const content = element?.querySelector<HTMLElement>(
+      textArtifact ? ".card-body" : ".shape-label",
+    );
+    if (!content || !content.clientHeight) {
+      fitNotice = "This object's text could not be measured. Try again.";
+      return;
+    }
+    const extra = content.scrollHeight - content.clientHeight;
+    // Layout pixels match canvas units; the label area may be inset within
+    // the node, so its growth scales by the area-to-node ratio.
+    const ratio = textArtifact ? 1 : content.clientHeight / selected.height;
+    // Overflow is measured with the "Read more" indicator shown; growing by
+    // the full overflow keeps the result stable once the indicator hides.
+    const result = fitTextHeight(
+      selected,
+      selected.height + Math.max(0, extra / ratio),
+      document.nodes,
+    );
+    if (!result.ok) {
+      fitNotice = result.reason;
+      return;
+    }
+    editor.placeNode(selected.id, { height: result.height });
+    fitNotice = "Resized to fit the text.";
+  }
+
   $effect(() => {
     const document = editorState.document;
     const currentTool = tool;
@@ -604,23 +870,21 @@
                 ? "You"
                 : "Agent"
               : undefined,
-            status:
-              turn?.promptNodeId === node.id && turn.status === "pending"
-                ? "complete"
-                : turn?.status,
+            // Cards present the persisted turn status; reply prose is untouched.
+            status: turn?.status,
             error: turn?.error,
-            changes: turn?.operations.length,
             onEdit: (text: string) => {
               editor.editText(node.artifactId, text);
-              editor.placeNode(node.id, {
-                height: textHeight(text, node.width),
-              });
+              // Conversation cards stay bounded; long source is read in full.
+              if (!turn)
+                editor.placeNode(node.id, {
+                  height: textHeight(text, node.width),
+                });
             },
             onResize: (width: number, height: number) =>
               editor.placeNode(node.id, { width, height }),
-            onResolve: (action: "apply" | "discard") =>
-              turn && void editor.resolveConversation(turn.id, action),
             onRetry: () => turn && void handlePromptSubmit(turn.prompt),
+            onRead: preview ? undefined : () => openNodeReader(node.id),
           },
         };
       };
@@ -727,6 +991,15 @@
     applyTheme(theme);
   });
 
+  $effect(() => {
+    void selectedId;
+    fitNotice = "";
+  });
+
+  $effect(() => {
+    if (!pendingTurn) reviewError = "";
+  });
+
   async function checkConnection(connect = false) {
     if (busy) return;
     busy = true;
@@ -794,7 +1067,7 @@
   const TYPING_TAGS = ["INPUT", "TEXTAREA", "SELECT"];
 
   function onKeydown(event: KeyboardEvent) {
-    if (settingsOpen) return;
+    if (settingsOpen || reader) return;
     if (event.key === "Escape") {
       if (stage === "canvas") void backToWorkspaces();
       return;
@@ -1140,8 +1413,7 @@
             }}
             onmove={(_, next) => editor.setViewport(next)}
           >
-            <Background patternColor={dark ? "#2a2f52" : "#d7d9ec"} gap={24} />
-            <Controls showLock={false} />
+            <Background patternColor={dark ? "#2c2c30" : "#d9dbe4"} gap={24} />
           </SvelteFlow>
         {/key}
 
@@ -1243,94 +1515,103 @@
           </div>
         {/if}
 
-        {#if toolbarOpen}
-          <CanvasToolbar
-            {tool}
-            color={strokeColor}
-            width={strokeWidth}
-            onSelect={selectTool}
-            onColor={(value) => (strokeColor = value)}
-            onWidth={(value) => (strokeWidth = value)}
+        {#if editorState.document}
+          <CanvasNavigation
+            zoom={viewport.zoom}
+            canFocus={!!selected}
+            disabled={editorState.busy}
+            onZoom={zoomBy}
+            onReset={() => zoomBy(1 / viewport.zoom)}
+            onFit={fitCanvas}
+            onFocus={focusSelection}
           />
         {/if}
 
-        <Composer
-          {toolbarOpen}
-          loading={generating}
-          disabled={!connected ||
-            !editorState.document ||
-            !!activeTurn ||
-            !!pendingReply}
-          scopeLabel={contextIds.length
-            ? `Send ${contextIds.length} selected objects and recent conversation to the configured provider`
-            : "Send the current canvas and recent conversation to the configured provider"}
-          notice={toolsNotice}
-          onCancel={() => conversationAbort?.abort()}
-          onToggleToolbar={() => (toolbarOpen = !toolbarOpen)}
-          onSubmit={handlePromptSubmit}
-        />
-        {#if editorState.document && activeTurn?.status === "pending" && !editorState.document.nodes.some((node) => node.id === activeTurn?.replyNodeId)}
-          <div
-            class="conversation-recovery review"
-            role="group"
-            aria-label="Review canvas changes"
-          >
-            <span>{activeTurn.operations.length} proposed changes</span>
-            <button
-              type="button"
-              class="btn btn--primary"
-              disabled={!canEdit}
-              onclick={() =>
-                activeTurn &&
-                void editor.resolveConversation(activeTurn.id, "apply")}
-              >Apply</button
-            >
-            <button
-              type="button"
-              class="btn btn--soft"
-              disabled={!canEdit}
-              onclick={() =>
-                activeTurn &&
-                void editor.resolveConversation(activeTurn.id, "discard")}
-              >Discard</button
-            >
-          </div>
-        {/if}
-        {#if pendingReply || (activeTurn?.status === "generating" && !generating)}
-          <div class="conversation-recovery" role="status">
-            {#if pendingReply}
-              <span>Response waiting to save</span>
-              <button
-                type="button"
-                class="btn btn--soft"
-                onclick={() => void saveReply()}>Retry response save</button
-              >
-              <button
-                type="button"
-                class="btn btn--soft"
-                onclick={() =>
-                  (recoveryCopy = JSON.stringify(pendingReply, null, 2))}
-                >Copy response</button
-              >
-              {#if pendingReply.operations.length}
+        <!-- One measured stack: tools, recovery, review, and composer never overlap. -->
+        <div class="canvas-dock">
+          {#if toolbarOpen}
+            <CanvasToolbar
+              {tool}
+              color={strokeColor}
+              width={strokeWidth}
+              onSelect={selectTool}
+              onColor={(value) => (strokeColor = value)}
+              onWidth={(value) => (strokeWidth = value)}
+            />
+          {/if}
+          {#if pendingReply || (activeTurn?.status === "generating" && !generating)}
+            <div class="conversation-recovery" role="status">
+              {#if pendingReply}
+                <span>Response waiting to save</span>
                 <button
                   type="button"
                   class="btn btn--soft"
-                  onclick={() => void saveReply(true)}>Save text only</button
+                  onclick={() => void saveReply()}>Retry response save</button
+                >
+                <button
+                  type="button"
+                  class="btn btn--soft"
+                  onclick={() =>
+                    (recoveryCopy = JSON.stringify(pendingReply, null, 2))}
+                  >Copy response</button
+                >
+                {#if pendingReply.operations.length}
+                  <button
+                    type="button"
+                    class="btn btn--soft"
+                    onclick={() => void saveReply(true)}>Save text only</button
+                  >
+                {/if}
+              {:else}
+                <span
+                  >This turn was interrupted or is running in another tab.</span
+                >
+                <button
+                  type="button"
+                  class="btn btn--soft"
+                  onclick={() => void interruptTurn()}>Mark interrupted</button
                 >
               {/if}
-            {:else}
-              <span
-                >This turn was interrupted or is running in another tab.</span
-              >
-              <button
-                type="button"
-                class="btn btn--soft"
-                onclick={() => void interruptTurn()}>Mark interrupted</button
-              >
-            {/if}
-          </div>
-        {/if}
+            </div>
+          {/if}
+          {#if editorState.document && pendingTurn}
+            <ReviewBar
+              count={pendingTurn.operations.length}
+              content={pendingContent}
+              disabled={!canEdit}
+              {resolving}
+              error={reviewError}
+              onShow={showChanges}
+              onApply={() => void resolvePending("apply")}
+              onDiscard={() => void resolvePending("discard")}
+              onRead={readProposed}
+            />
+          {/if}
+          <Composer
+            {toolbarOpen}
+            loading={generating}
+            disabled={!connected ||
+              !editorState.document ||
+              !!activeTurn ||
+              !!pendingReply}
+            scope={contextIds.length
+              ? `${contextIds.length} selected ${contextIds.length === 1 ? "object" : "objects"} · recent conversation`
+              : "Current canvas · recent conversation"}
+            provider={providerLabel}
+            details={[
+              "Your prompt.",
+              contextIds.length
+                ? `The ${contextIds.length} selected ${contextIds.length === 1 ? "object" : "objects"}: position, size, text or drawing, and connections between them.`
+                : "Every object on this canvas, including conversation cards and notes: position, size, text or drawing, and connections.",
+              "Up to 8 earlier prompts and replies from this canvas, with their outcomes.",
+              "Select objects before sending to limit what is shared.",
+            ]}
+            notice={toolsNotice}
+            onCancel={() => conversationAbort?.abort()}
+            onToggleToolbar={() => (toolbarOpen = !toolbarOpen)}
+            onSubmit={handlePromptSubmit}
+          />
+        </div>
       </main>
 
       {#if inspectorOpen && editorState.document}
@@ -1398,6 +1679,46 @@
                   </p>
                 </div>
               {/if}
+            {/if}
+            {#if textArtifact || (artifact.type === "drawing" && artifact.drawing.shapes.length === 1 && artifact.drawing.shapes[0]?.kind !== "path" && artifact.drawing.shapes[0]?.label)}
+              <div class="field">
+                <span class="field__label">Content</span>
+                <div class="inspector__actions">
+                  <button
+                    class="btn btn--soft"
+                    type="button"
+                    onclick={() => openNodeReader(selected.id)}
+                  >
+                    <Icon name="open_in_full" size={16} />Read full content
+                  </button>
+                  {#if selectedTurn}
+                    {@const compact = compactSize(selected)}
+                    <button
+                      class="btn btn--soft"
+                      type="button"
+                      disabled={!canDraw ||
+                        (compact.width === selected.width &&
+                          compact.height === selected.height)}
+                      onclick={compactSelected}
+                    >
+                      <Icon name="compress" size={16} />Compact conversation
+                    </button>
+                  {/if}
+                  {#if canFit}
+                    <button
+                      class="btn btn--soft"
+                      type="button"
+                      disabled={!canDraw}
+                      onclick={fitSelected}
+                    >
+                      <Icon name="height" size={16} />Fit text
+                    </button>
+                  {/if}
+                </div>
+                {#if fitNotice}<p class="muted" role="status">
+                    {fitNotice}
+                  </p>{/if}
+              </div>
             {/if}
             <fieldset class="grid" disabled={editorState.busy}>
               <legend>Placement &amp; size</legend>
@@ -1482,6 +1803,22 @@
         </button>
       </div>
     {/if}
+  {/if}
+
+  {#if reader}
+    <Reader
+      title={reader.title}
+      subtitle={reader.subtitle}
+      text={readerText}
+      markdown={reader.markdown}
+      startEditing={reader.startEditing}
+      editDisabled={editorState.busy}
+      onEdit={reader.artifactId
+        ? (text) =>
+            reader?.artifactId && editor.editText(reader.artifactId, text)
+        : undefined}
+      onClose={() => (reader = null)}
+    />
   {/if}
 
   {#if settingsOpen}

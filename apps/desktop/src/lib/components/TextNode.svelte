@@ -1,33 +1,77 @@
 <script lang="ts">
   import { Handle, NodeResizer, Position } from "@xyflow/svelte";
   import { LIMITS } from "@agentica/protocol";
+  import { turnStatus } from "../canvas-view";
+  import Icon from "./Icon.svelte";
+  import Markdown from "./Markdown.svelte";
 
   interface Props {
     selected?: boolean;
     data: {
       text: string;
       purpose?: string;
-      role?: string;
+      role?: "You" | "Agent";
       status?: string;
       error?: string;
       preview?: boolean;
       connectable?: boolean;
       editable?: boolean;
-      changes?: number;
       onEdit?: (text: string) => void;
       onResize?: (width: number, height: number) => void;
-      onResolve?: (action: "apply" | "discard") => void;
       onRetry?: () => void;
+      onRead?: () => void;
     };
   }
   let { data, selected = false }: Props = $props();
   let editing = $state(false);
   let textarea = $state<HTMLTextAreaElement>();
+  let body = $state<HTMLElement>();
+  let overflowing = $state(false);
+
+  const kind = $derived(
+    data.role === "You"
+      ? "prompt"
+      : data.role === "Agent"
+        ? "reply"
+        : data.purpose === "instruction"
+          ? "instruction"
+          : "text",
+  );
+  const label = $derived(
+    kind === "prompt"
+      ? "You"
+      : kind === "reply"
+        ? "Agent"
+        : kind === "instruction"
+          ? "Instruction note"
+          : "Text",
+  );
+  const turnState = $derived(data.role && turnStatus(data.status, data.role));
+  const framed = $derived(kind !== "text" || !!data.preview);
+
   function edit() {
     if (!data.editable || data.preview) return;
     editing = true;
     requestAnimationFrame(() => textarea?.focus());
   }
+
+  // Overflow is measured from layout boxes, which canvas zoom does not
+  // change; detection never alters the node's saved or proposed geometry.
+  $effect(() => {
+    const element = body;
+    void data.text;
+    if (!element) return;
+    const check = () => {
+      overflowing = element.scrollHeight > element.clientHeight + 1;
+    };
+    const frame = requestAnimationFrame(check);
+    const observer = new ResizeObserver(check);
+    observer.observe(element);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  });
 </script>
 
 <NodeResizer
@@ -39,20 +83,43 @@
   onResizeEnd={(_, params) => data.onResize?.(params.width, params.height)}
 />
 <div
-  class="canvas-text"
+  class={`canvas-text canvas-text--${kind}`}
+  class:canvas-text--framed={framed}
   class:preview={data.preview}
   class:handles-hidden={!data.connectable}
 >
   <Handle type="target" position={Position.Top} />
-  {#if data.preview}<span class="caption">Proposed</span>
-  {:else if data.role || data.purpose === "instruction"}<span class="caption"
-      >{data.role || "Instruction"}</span
-    >{/if}
+  {#if framed}
+    <div class="card-head">
+      {#if data.preview}<span class="chip chip--proposal">Proposed</span>{/if}
+      <span class="card-role">
+        {#if kind === "instruction"}<Icon name="sticky_note_2" size={14} />{/if}
+        {label}
+      </span>
+      {#if turnState}
+        <span class={`chip chip--${turnState.tone}`} role="status"
+          >{turnState.label}</span
+        >
+      {/if}
+      {#if data.onRead && !data.preview}
+        <button
+          class="card-action nodrag"
+          type="button"
+          title="Read full content"
+          aria-label={`Read full ${label.toLowerCase()} content`}
+          onkeydown={(event) => event.stopPropagation()}
+          onclick={data.onRead}
+        >
+          <Icon name="open_in_full" size={16} />
+        </button>
+      {/if}
+    </div>
+  {/if}
   {#if editing && !data.preview}
     <textarea
       bind:this={textarea}
-      class="nodrag nowheel"
-      aria-label="Edit canvas text"
+      class="card-body nodrag nowheel"
+      aria-label={`Edit ${label.toLowerCase()} text`}
       value={data.text}
       maxlength={LIMITS.text}
       oninput={(event) => data.onEdit?.(event.currentTarget.value)}
@@ -66,13 +133,18 @@
           editing = false;
       }}></textarea>
   {:else if data.preview}
-    <div class="body">{data.text}</div>
+    <div class="card-body" bind:this={body}>
+      <Markdown source={data.text} />
+    </div>
   {:else}
     <div
-      class="body"
+      bind:this={body}
+      class="card-body"
+      class:nodrag={framed}
       role="button"
       tabindex="0"
-      title="Double-click or press Enter to edit canvas text."
+      title="Double-click or press Enter to edit the source text."
+      aria-label={`${label}: ${data.text.slice(0, 160) || "empty"}`}
       aria-disabled={!data.editable}
       ondblclick={edit}
       onkeydown={(event) => {
@@ -83,106 +155,34 @@
         }
       }}
     >
-      {data.text || "Double-click to write…"}
+      {#if data.text}
+        <Markdown source={data.text} />
+      {:else}
+        <span class="card-placeholder">Double-click to write…</span>
+      {/if}
     </div>
   {/if}
-  {#if data.status === "pending" && !data.preview}
-    <div class="review nodrag nowheel" aria-label="Review canvas changes">
-      <span>{data.changes} proposed changes</span>
+  {#if overflowing && !editing}
+    {#if data.preview}
+      <span class="card-more">More · see Proposed text</span>
+    {:else if data.onRead}
       <button
+        class="card-more nodrag"
         type="button"
-        class="btn btn--primary"
-        disabled={!data.editable}
         onkeydown={(event) => event.stopPropagation()}
-        onclick={() => data.onResolve?.("apply")}>Apply</button
-      >
-      <button
-        type="button"
-        class="btn btn--soft"
-        disabled={!data.editable}
-        onkeydown={(event) => event.stopPropagation()}
-        onclick={() => data.onResolve?.("discard")}>Discard</button
-      >
-    </div>
-  {:else if data.status && data.status !== "complete" && !data.preview}
-    <div class="caption" role="status">
-      {data.status === "generating" ? "Generating…" : data.status}{data.error
-        ? `: ${data.error}`
-        : ""}
-    </div>
-    {#if data.role === "You" && ["failed", "cancelled", "interrupted"].includes(data.status)}
-      <button
-        type="button"
-        class="btn btn--soft nodrag"
-        disabled={!data.editable}
-        onkeydown={(event) => event.stopPropagation()}
-        onclick={data.onRetry}>Retry request</button
+        onclick={data.onRead}>Read more</button
       >
     {/if}
   {/if}
+  {#if data.role === "You" && data.status && ["failed", "cancelled", "interrupted"].includes(data.status) && !data.preview}
+    {#if data.error}<p class="card-error">{data.error}</p>{/if}
+    <button
+      type="button"
+      class="btn btn--soft nodrag card-retry"
+      disabled={!data.editable}
+      onkeydown={(event) => event.stopPropagation()}
+      onclick={data.onRetry}>Retry request</button
+    >
+  {/if}
   <Handle type="source" position={Position.Bottom} />
 </div>
-
-<style>
-  .canvas-text {
-    width: 100%;
-    height: 100%;
-    position: relative;
-    color: var(--ink);
-    text-align: left;
-    padding: 8px;
-    display: flex;
-    flex-direction: column;
-  }
-  .body,
-  textarea {
-    font: inherit;
-    font-size: 16px;
-    line-height: 1.5;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    flex: 1;
-    min-height: 0;
-    overflow: auto;
-    width: 100%;
-  }
-  .body {
-    cursor: text;
-    outline-offset: 4px;
-    user-select: text;
-  }
-  textarea {
-    resize: none;
-    border: 1px solid var(--accent);
-    border-radius: 4px;
-    background: var(--surface);
-    color: inherit;
-    padding: 0;
-  }
-  .caption {
-    font-size: 12px;
-    line-height: 1.5;
-    color: var(--ink-soft);
-  }
-  .preview {
-    outline: 2px dashed var(--accent);
-    background: var(--surface);
-    opacity: 0.95;
-    pointer-events: none;
-  }
-  .review {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    align-items: center;
-    padding-top: 8px;
-    font-size: 12px;
-  }
-  .review button {
-    min-height: 36px;
-  }
-  .handles-hidden :global(.svelte-flow__handle) {
-    opacity: 0;
-    pointer-events: none;
-  }
-</style>
