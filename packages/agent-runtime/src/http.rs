@@ -81,7 +81,7 @@ async fn dispatch(State(state): State<Arc<HttpState>>, request: Request) -> Resp
         HeaderValue::from_static("no-referrer"),
     );
     headers.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(
-        "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://openrouter.ai; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+                    "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
     ));
     if let Some(origin) = cors_origin {
         headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);

@@ -24,6 +24,7 @@ async fn runtime_request(
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tauri::Builder::default()
+        .plugin(tauri_plugin_http::init())
         .manage(Arc::new(Mutex::new(DesktopBackend::new(Runtime::new(
             default_data_root(),
         )))))
