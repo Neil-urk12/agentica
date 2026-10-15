@@ -3,6 +3,7 @@ import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { test } from "node:test";
 import { LIMITS, MAX_FRAME_BYTES } from "@agentica/protocol";
 import { Editor } from "../apps/desktop/src/lib/editor.ts";
+import { stageOperations } from "../apps/desktop/src/lib/canvas-agent.ts";
 
 // The runtime's TypeScript parameter property needs transformation, not stripping.
 const runtimeUrl = new URL(
@@ -61,6 +62,7 @@ async function setup(t, intercept = async () => {}) {
     await intercept(method, params);
     if (method === "workspace.list")
       return { workspaces: structuredClone(workspaceList) };
+    if (method === "conversation.list") return { turns: [], nextBefore: 0 };
     if (method === "workspace.delete") {
       workspaceList = workspaceList.filter(
         (workspace) => workspace.id !== params.workspaceId,
@@ -172,6 +174,111 @@ function deferred() {
   });
   return { promise, resolve };
 }
+
+test("proposal approval publishes the canvas and turn status together, even if status reload fails", async (t) => {
+  for (const failReload of [false, true])
+    await t.test(
+      failReload
+        ? "failed status reload and recovery"
+        : "delayed status reload",
+      async (t) => {
+        const { call, disk } = await setup(t);
+        const operation = {
+          op: "createShape",
+          nodeId: "00000000-0000-4000-8000-000000000010",
+          artifactId: "00000000-0000-4000-8000-000000000011",
+          kind: "rectangle",
+          x: 400,
+          y: 0,
+          width: 200,
+          height: 100,
+          color: "#123456",
+        };
+        const pending = {
+          id: "00000000-0000-4000-8000-000000000012",
+          status: "pending",
+          operations: [operation],
+        };
+        const applied = { ...pending, status: "applied" };
+        const updated = {
+          ...disk,
+          ...stageOperations(disk, [operation]),
+          canvas: { ...disk.canvas, revision: 2 },
+        };
+        let approved = false;
+        let delayReload = true;
+        const listing = deferred();
+        const release = deferred();
+        const snapshots = [];
+        const previewErrors = [];
+        const editor = new Editor(
+          async (...args) => {
+            const method = args[2];
+            if (method === "conversation.resolve") {
+              approved = true;
+              return { turn: applied };
+            }
+            if (method === "canvas.open" && approved)
+              return structuredClone(updated);
+            if (method === "conversation.list") {
+              if (approved && delayReload) {
+                listing.resolve();
+                await release.promise;
+                delayReload = false;
+                if (failReload) throw new Error("Conversation reload failed");
+              }
+              return { turns: [approved ? applied : pending], nextBefore: 0 };
+            }
+            return call(...args);
+          },
+          () => "",
+          (state) => {
+            snapshots.push(structuredClone(state));
+            if (state.document && state.turns[0]?.status === "pending") {
+              try {
+                stageOperations(state.document, state.turns[0].operations);
+              } catch (error) {
+                previewErrors.push(error.message);
+              }
+            }
+          },
+        );
+        t.after(() => {
+          release.resolve();
+          editor.dispose();
+        });
+        await editor.openWorkspace(workspaceId);
+        await editor.openCanvas(canvasId);
+        const resolving = editor.resolveConversation(pending.id, "apply");
+        await listing.promise;
+        assert.deepEqual(
+          previewErrors,
+          [],
+          "an applied creation must never be previewed a second time",
+        );
+        assert.equal(editor.state.document.nodes.length, disk.nodes.length);
+        release.resolve();
+        await resolving;
+        if (failReload) {
+          assert.match(editor.state.error, /Conversation reload failed/);
+          assert.equal(editor.state.document.nodes.length, disk.nodes.length);
+          await editor.reloadConversation();
+        }
+        assert.equal(editor.state.error, "");
+        assert.equal(editor.state.turns[0].status, "applied");
+        assert.equal(editor.state.document.nodes.length, updated.nodes.length);
+        assert.deepEqual(previewErrors, []);
+        assert.ok(
+          snapshots.every(
+            (state) =>
+              !state.document?.nodes.some(
+                (node) => node.id === operation.nodeId,
+              ) || state.turns[0]?.status === "applied",
+          ),
+        );
+      },
+    );
+});
 
 const drawingGeometry = { x: 120, y: 80, width: 60, height: 60 };
 const drawingContent = {
@@ -984,4 +1091,53 @@ test("typing autosaves after the debounce", async (t) => {
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(disk.artifacts[0].text, "Autosaved");
   assert.equal(editor.state.dirty, false);
+});
+
+test("a finish committed without an acknowledgement is found for adoption", async (t) => {
+  const { editor, call } = await setup(t);
+  const turnId = "00000000-0000-4000-8000-000000000020";
+  const operations = [{ op: "updateText", artifactId, text: "Proposed" }];
+  let stored = { id: turnId, status: "generating", reply: "", operations: [] };
+  editor.call = async (...args) => {
+    const [, , method, params] = args;
+    if (method === "conversation.list")
+      return { turns: [structuredClone(stored)], nextBefore: 0 };
+    if (method === "conversation.resolve") {
+      stored = { ...stored, status: "discarded" };
+      return { turn: structuredClone(stored) };
+    }
+    if (method === "conversation.finish") {
+      if (stored.status !== "generating")
+        throw new Error(
+          "This turn has already finished. Reload the conversation.",
+        );
+      stored = {
+        ...stored,
+        status: "pending",
+        reply: params.reply,
+        operations,
+      };
+      throw new TypeError("Connection lost after commit");
+    }
+    return call(...args);
+  };
+  assert.equal(await editor.finishedTurn(turnId), undefined);
+  const reply = {
+    workspaceId,
+    canvasId,
+    turnId,
+    reply: "Done",
+    operations,
+    status: "complete",
+    error: "",
+  };
+  assert.equal(await editor.finishConversation(reply), undefined);
+  assert.match(editor.state.error, /Connection lost/);
+  assert.equal((await editor.finishedTurn(turnId)).status, "pending");
+  assert.equal(editor.state.error, "");
+  // Stripping operations from the buffer cannot match the saved proposal.
+  await editor.finishConversation({ ...reply, operations: [] });
+  assert.match(editor.state.error, /already finished/);
+  await editor.resolveConversation(turnId, "discard");
+  assert.equal((await editor.finishedTurn(turnId)).status, "discarded");
 });

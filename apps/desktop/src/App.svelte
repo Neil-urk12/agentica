@@ -1,16 +1,27 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { LIMITS } from "@agentica/protocol";
+  import {
+    LIMITS,
+    type RuntimeParams,
+    type CanvasOperation,
+  } from "@agentica/protocol";
   import { callRuntime, desktopMode, pingRuntime } from "./lib/runtime";
   import { Editor, type DrawingSegment } from "./lib/editor";
   import { applyTheme, readTheme, type Theme } from "./lib/theme";
   import Composer from "./lib/components/Composer.svelte";
   import CanvasToolbar from "./lib/components/CanvasToolbar.svelte";
   import DrawingNode from "./lib/components/DrawingNode.svelte";
+  import TextNode from "./lib/components/TextNode.svelte";
+  import {
+    exchangePosition,
+    stageOperations,
+    textHeight,
+  } from "./lib/canvas-agent";
   import Icon from "./lib/components/Icon.svelte";
   import Settings from "./lib/components/Settings.svelte";
-  import { askOpenRouter, getOpenRouterApiKey } from "./lib/openrouter";
+  import { runCanvasAgent, canvasToolSupport } from "./lib/openrouter";
+  import { getProviderConfig, validateProvider } from "./lib/provider";
   import WorkspacePicker from "./lib/components/WorkspacePicker.svelte";
   import CanvasPicker from "./lib/components/CanvasPicker.svelte";
   import NodeDrawer from "./lib/components/NodeDrawer.svelte";
@@ -23,13 +34,14 @@
   import {
     Background,
     Controls,
+    MarkerType,
     SvelteFlow,
     type Edge,
     type Node,
   } from "@xyflow/svelte";
   import "@xyflow/svelte/dist/style.css";
 
-  const nodeTypes = { drawing: DrawingNode };
+  const nodeTypes = { drawing: DrawingNode, text: TextNode };
 
   const editor = new Editor(
     callRuntime,
@@ -67,6 +79,22 @@
   let toolbarOpen = $state(false);
   let generating = $state(false);
   let promptError = $state("");
+  let toolsNotice = $state("");
+  let conversationAbort: AbortController | undefined;
+  let generationTask: Promise<boolean> | undefined;
+  let pendingReply = $state.raw<RuntimeParams<"conversation.finish"> | null>(
+    null,
+  );
+  const contextIds = $derived(
+    nodes
+      .filter((n) => n.selected && !n.id.startsWith("preview-"))
+      .map((n) => n.id),
+  );
+  const activeTurn = $derived(
+    editorState.turns.find(
+      (t) => t.status === "pending" || t.status === "generating",
+    ),
+  );
   let canvasEl = $state<HTMLElement>();
   let drawSurface = $state<HTMLDivElement>();
   let gesture = $state.raw<Gesture | null>(null);
@@ -367,103 +395,283 @@
     document.getElementById("text-content")?.focus();
   }
 
-  async function handlePromptSubmit(prompt: string) {
-    if (generating || !editorState.document || !editorState.workspace)
+  function handlePromptSubmit(prompt: string) {
+    generationTask = generateReply(prompt);
+    return generationTask;
+  }
+
+  /**
+   * Drop the buffered reply once the runtime has finished its turn, such as
+   * after a lost acknowledgement. Returns false while the turn still needs it.
+   */
+  async function adoptFinishedTurn() {
+    const reply = pendingReply;
+    if (!reply) return true;
+    const turn = await editor.finishedTurn(reply.turnId);
+    if (!turn || pendingReply !== reply) return false;
+    pendingReply = null;
+    promptError = "";
+    // Another tab may have finished the turn differently; keep this reply copyable.
+    if (
+      turn.reply !== reply.reply ||
+      JSON.stringify(turn.operations) !== JSON.stringify(reply.operations)
+    )
+      recoveryCopy = JSON.stringify(reply, null, 2);
+    return true;
+  }
+
+  async function saveReply(textOnly = false) {
+    if (!pendingReply) return;
+    if (textOnly) {
+      // Reconcile first: a saved proposal resent without operations always conflicts.
+      if (await adoptFinishedTurn()) return;
+      if (!pendingReply) return;
+      if (editorState.error) {
+        promptError = editorState.error;
+        return;
+      }
+      pendingReply = { ...pendingReply, operations: [] };
+    }
+    const saved = await editor.finishConversation(pendingReply);
+    if (saved && !editorState.error) {
+      pendingReply = null;
+      return;
+    }
+    const error = editorState.error;
+    if (await adoptFinishedTurn()) return;
+    promptError =
+      error ||
+      editorState.error ||
+      "The reply could not be saved. Keep this canvas open and retry saving the response.";
+  }
+
+  async function generateReply(prompt: string) {
+    if (
+      generating ||
+      activeTurn ||
+      pendingReply ||
+      !editorState.document ||
+      !editorState.workspace
+    )
       return false;
     const origin = {
       workspaceId: editorState.workspace.workspace.id,
       canvasId: editorState.document.canvas.id,
     };
+    const nodeIds = [...contextIds];
+    let turnId: string | undefined;
     promptError = "";
     generating = true;
+    const controller = new AbortController();
+    conversationAbort = controller;
     try {
-      const responseText = await askOpenRouter(prompt);
-      if (
-        editorState.workspace?.workspace.id !== origin.workspaceId ||
-        editorState.document?.canvas.id !== origin.canvasId
-      ) {
-        throw new Error("The canvas changed while generating. Please retry.");
-      }
-
+      const provider = validateProvider(getProviderConfig());
+      const model = provider.model;
+      const tools =
+        provider.kind === "custom"
+          ? provider.tools
+          : await canvasToolSupport(model, controller.signal);
+      toolsNotice = tools
+        ? "Canvas edits will appear as proposals for review."
+        : "This model supports text replies only. Choose a tool-capable model in Settings to propose canvas edits.";
+      controller.signal.throwIfAborted();
       const rect = canvasEl?.getBoundingClientRect();
-      const nodeWidth = 340;
-      const lines = responseText.split("\n").length;
-      const estimatedHeight = Math.min(
-        LIMITS.maxSize,
-        Math.max(LIMITS.minSize, Math.min(480, Math.max(180, lines * 22 + 60))),
-      );
-
-      const position = rect
-        ? {
-            x: Math.round(
-              (rect.width / 2 - viewport.x) / viewport.zoom - nodeWidth / 2,
-            ),
-            y: Math.round(
-              (rect.height / 2 - viewport.y) / viewport.zoom -
-                estimatedHeight / 2,
-            ),
-          }
-        : undefined;
-
-      const created = await editor.addText(
-        position,
-        responseText,
-        { width: nodeWidth, height: estimatedHeight },
-        origin,
-      );
-
-      if (!created) {
+      const anchor = exchangePosition(editorState.document.nodes, nodeIds, {
+        x: ((rect?.width ?? 680) / 2 - viewport.x) / viewport.zoom - 170,
+        y: ((rect?.height ?? 600) / 2 - viewport.y) / viewport.zoom - 80,
+      });
+      const requestedId = crypto.randomUUID();
+      const start = await editor.startConversation({
+        ...origin,
+        turnId: requestedId,
+        prompt,
+        model,
+        nodeIds,
+        anchor,
+      });
+      if (!start)
         throw new Error(
-          editorState.error || "The response could not be saved. Please retry.",
+          editorState.error ||
+            "The prompt could not be saved. Retry after saving your edits.",
         );
-      }
-
-      selectedId = created.node.id;
+      turnId = start.turn.id;
+      controller.signal.throwIfAborted();
+      const response = await runCanvasAgent(start, {
+        signal: controller.signal,
+        tools,
+        provider,
+      });
+      controller.signal.throwIfAborted();
+      pendingReply = {
+        ...origin,
+        turnId,
+        ...response,
+        status: "complete",
+        error: "",
+      };
+      await saveReply();
       return true;
-    } catch (err) {
-      promptError =
-        err instanceof Error ? err.message : "Failed to generate LLM response.";
-      return false;
+    } catch (error) {
+      const cancelled = controller.signal.aborted;
+      const message = cancelled
+        ? "Generation cancelled. No proposed object changes were applied."
+        : error instanceof Error
+          ? error.message
+          : "Failed to generate a response.";
+      promptError = message;
+      if (turnId && !pendingReply) {
+        pendingReply = {
+          ...origin,
+          turnId,
+          reply: "",
+          operations: [],
+          status: cancelled ? "cancelled" : "failed",
+          error: message,
+        };
+        await saveReply();
+      }
+      return !!turnId;
     } finally {
       generating = false;
+      if (conversationAbort === controller) conversationAbort = undefined;
     }
+  }
+
+  async function interruptTurn() {
+    if (generating) {
+      conversationAbort?.abort();
+      return;
+    }
+    if (!activeTurn || !editorState.workspace || !editorState.document) return;
+    pendingReply = {
+      workspaceId: editorState.workspace.workspace.id,
+      canvasId: editorState.document.canvas.id,
+      turnId: activeTurn.id,
+      reply: "",
+      operations: [],
+      status: "interrupted",
+      error: "Generation was interrupted. Retry explicitly.",
+    };
+    await saveReply();
+  }
+
+  function selectObject(id: string) {
+    selectedId = id;
+    nodes = nodes.map((node) => ({ ...node, selected: node.id === id }));
   }
 
   $effect(() => {
     const document = editorState.document;
+    const currentTool = tool;
+    const editable = connected && !editorState.busy;
+    const turns = editorState.turns;
     untrack(() => {
-      nodes =
-        document?.nodes.map((node, index) => {
-          const artifact = document.artifacts.find(
-            (item) => item.id === node.artifactId,
-          );
-          const drawing = artifact?.type === "drawing";
-          return {
-            ...nodes.find((item) => item.id === node.id),
-            id: node.id,
-            type: drawing ? "drawing" : undefined,
-            position: { x: node.x, y: node.y },
-            width: node.width,
-            height: node.height,
-            data: drawing
+      const asNode = (
+        node: NonNullable<typeof document>["nodes"][number],
+        artifacts: NonNullable<typeof document>["artifacts"],
+        preview = false,
+      ): Node => {
+        const artifact = artifacts.find((a) => a.id === node.artifactId)!;
+        const turn = turns.find(
+          (t) => t.promptNodeId === node.id || t.replyNodeId === node.id,
+        );
+        return {
+          ...nodes.find((item) => item.id === node.id),
+          id: preview ? `preview-${node.id}` : node.id,
+          type: artifact.type === "drawing" ? "drawing" : "text",
+          position: { x: node.x, y: node.y },
+          width: node.width,
+          height: node.height,
+          ...(preview
+            ? {
+                selectable: false,
+                draggable: false,
+                connectable: false,
+                focusable: false,
+                selected: false,
+                zIndex: 1000,
+              }
+            : {}),
+          data: {
+            ...(artifact.type === "drawing"
               ? { drawing: artifact.drawing }
-              : {
-                  label:
-                    artifact?.type === "text" && artifact.text
-                      ? artifact.text
-                      : artifact?.type === "text" &&
-                          artifact.purpose === "instruction"
-                        ? "Instruction note"
-                        : `Text ${index + 1}`,
-                },
-          };
-        }) ?? [];
+              : { text: artifact.text, purpose: artifact.purpose }),
+            preview,
+            editable: editable && !preview,
+            connectable: currentTool === "arrow" && !preview,
+            role: turn
+              ? turn.promptNodeId === node.id
+                ? "You"
+                : "Agent"
+              : undefined,
+            status:
+              turn?.promptNodeId === node.id && turn.status === "pending"
+                ? "complete"
+                : turn?.status,
+            error: turn?.error,
+            changes: turn?.operations.length,
+            onEdit: (text: string) => {
+              editor.editText(node.artifactId, text);
+              editor.placeNode(node.id, {
+                height: textHeight(text, node.width),
+              });
+            },
+            onResize: (width: number, height: number) =>
+              editor.placeNode(node.id, { width, height }),
+            onResolve: (action: "apply" | "discard") =>
+              turn && void editor.resolveConversation(turn.id, action),
+            onRetry: () => turn && void handlePromptSubmit(turn.prompt),
+          },
+        };
+      };
+      const rendered =
+        document?.nodes.map((node) => asNode(node, document.artifacts)) ?? [];
       edges =
         document?.edges.map((edge) => ({
           id: edge.id,
           source: edge.sourceNodeId,
           target: edge.targetNodeId,
+          markerEnd: { type: MarkerType.ArrowClosed },
         })) ?? [];
+      const pending = turns.find((t) => t.status === "pending");
+      if (document && pending) {
+        try {
+          const staged = stageOperations(document, pending.operations);
+          const touched = new Set(
+            pending.operations.flatMap((op: CanvasOperation) =>
+              op.op === "connect"
+                ? [op.sourceNodeId, op.targetNodeId]
+                : [op.nodeId],
+            ),
+          );
+          rendered.push(
+            ...staged.nodes
+              .filter((n) => touched.has(n.id))
+              .map((n) => asNode(n, staged.artifacts, true)),
+          );
+          edges.push(
+            ...staged.edges
+              .filter((e) =>
+                pending.operations.some(
+                  (op) => op.op === "connect" && op.edgeId === e.id,
+                ),
+              )
+              .map((e) => ({
+                id: `preview-${e.id}`,
+                source: `preview-${e.sourceNodeId}`,
+                target: `preview-${e.targetNodeId}`,
+                selectable: false,
+                focusable: false,
+                style: "stroke-dasharray: 6 4",
+                markerEnd: { type: MarkerType.ArrowClosed },
+              })),
+          );
+        } catch {
+          promptError =
+            "The proposal preview is stale. Discard it and regenerate from current content.";
+        }
+      }
+      nodes = rendered;
       viewport = document?.canvas.viewport ?? { x: 0, y: 0, zoom: 1 };
       if (document && selectionCanvasId !== document.canvas.id) {
         selectionCanvasId = document.canvas.id;
@@ -476,7 +684,7 @@
         }
       }
       if (!document?.nodes.some((node) => node.id === selectedId))
-        selectedId = document?.nodes[0]?.id ?? "";
+        selectedId = "";
       if (!document) selectionCanvasId = "";
     });
   });
@@ -552,6 +760,14 @@
 
   /** Persist pending edits before navigation; false means they are still unsaved. */
   async function settle() {
+    if (generating) {
+      conversationAbort?.abort();
+      await generationTask;
+    }
+    if (pendingReply) {
+      promptError = "Save or copy the response before leaving this canvas.";
+      return false;
+    }
     if (editorState.dirty && !editorState.error) await editor.save();
     return !editorState.dirty;
   }
@@ -570,7 +786,7 @@
   }
 
   function beforeUnload(event: BeforeUnloadEvent) {
-    if (!editorState.dirty && !editorState.saving) return;
+    if (!editorState.dirty && !editorState.saving && !pendingReply) return;
     event.preventDefault();
     event.returnValue = "";
   }
@@ -604,7 +820,7 @@
       void checkConnection(true);
       void getCurrentWindow()
         .onCloseRequested((event) => {
-          if (editorState.dirty || editorState.saving) {
+          if (editorState.dirty || editorState.saving || pendingReply) {
             event.preventDefault();
             closeNotice =
               "Keep this window open until changes are saved. Copy unsaved edits for recovery if saving fails.";
@@ -624,6 +840,7 @@
     }, 5000);
     return () => {
       alive = false;
+      conversationAbort?.abort();
       clearInterval(heartbeat);
       unlisten?.();
       editor.dispose();
@@ -807,6 +1024,15 @@
           >
             Retry save
           </button>
+          {#if !editorState.dirty}
+            <button
+              class="btn btn--soft"
+              type="button"
+              disabled={!connected || working}
+              onclick={() => void editor.reloadConversation()}
+              >Reload canvas</button
+            >
+          {/if}
           <button
             class="btn btn--ghost"
             type="button"
@@ -829,9 +1055,7 @@
       <div class="banner banner--error" role="alert">
         <Icon name="error" size={18} />
         <span>{promptError}</span>
-        {#if promptError
-          .toLowerCase()
-          .includes("settings") || !getOpenRouterApiKey()}
+        {#if promptError.toLowerCase().includes("settings")}
           <button
             class="btn btn--soft"
             type="button"
@@ -864,7 +1088,7 @@
           {selectedId}
           busy={working}
           width={drawerWidth}
-          onSelect={(id) => (selectedId = id)}
+          onSelect={selectObject}
           onClose={() => (drawerOpen = false)}
           onResize={resizeDrawer}
           onDelete={(id) => void editor.deleteNode(id)}
@@ -893,6 +1117,7 @@
             zoomOnScroll={!editorState.busy}
             connectionLineStyle="stroke: var(--accent); stroke-width: 2"
             onnodeclick={({ node }) => {
+              if (node.id.startsWith("preview-")) return;
               if (tool === "eraser") {
                 void editor.deleteNode(node.id);
                 return;
@@ -900,6 +1125,7 @@
               selectedId = node.id;
             }}
             onpaneclick={({ event }) => {
+              if (tool === "select") selectedId = "";
               if (tool !== "text" || !canEdit || !canvasEl) return;
               const rect = canvasEl.getBoundingClientRect();
               void editor.addText({
@@ -1012,7 +1238,7 @@
               onclick={() => void editor.addText()}
             >
               <Icon name="add_box" size={18} />
-              Add your first text node
+              Write on the canvas
             </button>
           </div>
         {/if}
@@ -1031,10 +1257,80 @@
         <Composer
           {toolbarOpen}
           loading={generating}
-          disabled={!connected || !editorState.document}
+          disabled={!connected ||
+            !editorState.document ||
+            !!activeTurn ||
+            !!pendingReply}
+          scopeLabel={contextIds.length
+            ? `Send ${contextIds.length} selected objects and recent conversation to the configured provider`
+            : "Send the current canvas and recent conversation to the configured provider"}
+          notice={toolsNotice}
+          onCancel={() => conversationAbort?.abort()}
           onToggleToolbar={() => (toolbarOpen = !toolbarOpen)}
           onSubmit={handlePromptSubmit}
         />
+        {#if editorState.document && activeTurn?.status === "pending" && !editorState.document.nodes.some((node) => node.id === activeTurn?.replyNodeId)}
+          <div
+            class="conversation-recovery review"
+            role="group"
+            aria-label="Review canvas changes"
+          >
+            <span>{activeTurn.operations.length} proposed changes</span>
+            <button
+              type="button"
+              class="btn btn--primary"
+              disabled={!canEdit}
+              onclick={() =>
+                activeTurn &&
+                void editor.resolveConversation(activeTurn.id, "apply")}
+              >Apply</button
+            >
+            <button
+              type="button"
+              class="btn btn--soft"
+              disabled={!canEdit}
+              onclick={() =>
+                activeTurn &&
+                void editor.resolveConversation(activeTurn.id, "discard")}
+              >Discard</button
+            >
+          </div>
+        {/if}
+        {#if pendingReply || (activeTurn?.status === "generating" && !generating)}
+          <div class="conversation-recovery" role="status">
+            {#if pendingReply}
+              <span>Response waiting to save</span>
+              <button
+                type="button"
+                class="btn btn--soft"
+                onclick={() => void saveReply()}>Retry response save</button
+              >
+              <button
+                type="button"
+                class="btn btn--soft"
+                onclick={() =>
+                  (recoveryCopy = JSON.stringify(pendingReply, null, 2))}
+                >Copy response</button
+              >
+              {#if pendingReply.operations.length}
+                <button
+                  type="button"
+                  class="btn btn--soft"
+                  onclick={() => void saveReply(true)}>Save text only</button
+                >
+              {/if}
+            {:else}
+              <span
+                >This turn was interrupted or is running in another tab.</span
+              >
+              <button
+                type="button"
+                class="btn btn--soft"
+                onclick={() => void interruptTurn()}>Mark interrupted</button
+              >
+            {/if}
+          </div>
+        {/if}
       </main>
 
       {#if inspectorOpen && editorState.document}

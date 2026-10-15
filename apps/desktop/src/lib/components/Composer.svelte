@@ -9,6 +9,9 @@
     disabled?: boolean;
     onToggleToolbar: () => void;
     onSubmit?: (prompt: string) => boolean | Promise<boolean>;
+    scopeLabel?: string;
+    notice?: string;
+    onCancel?: () => void;
   }
 
   let {
@@ -18,6 +21,9 @@
     disabled = false,
     onToggleToolbar,
     onSubmit,
+    scopeLabel = "",
+    notice = "",
+    onCancel,
   }: Props = $props();
 
   let promptText = $state("");
@@ -40,6 +46,9 @@
 </script>
 
 <div class="composer" role="group" aria-label="Canvas prompt">
+  <div class="composer-context" role="status">
+    {scopeLabel}{notice ? ` · ${notice}` : ""}
+  </div>
   <button
     class="composer__lead"
     class:composer__lead--active={toolbarOpen}
@@ -61,10 +70,12 @@
     onkeydown={onKeydown}
     {disabled}
     maxlength={LIMITS.text}
-    {placeholder}
-  ></textarea>
+    {placeholder}></textarea>
 
   <div class="composer__tools">
+    {#if loading}<button type="button" class="btn btn--soft" onclick={onCancel}
+        >Cancel</button
+      >{/if}
     <button
       class="composer__send"
       type="button"
@@ -83,6 +94,18 @@
 </div>
 
 <style>
+  .composer-context {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0;
+    right: 0;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--ink-soft);
+    background: var(--surface);
+    border-radius: 8px;
+    padding: 6px 10px;
+  }
   .composer__send:disabled {
     opacity: 0.45;
     cursor: not-allowed;

@@ -5,13 +5,77 @@ unreleased; this initial record includes committed history and current
 working-tree changes. Dates identify development updates, not published releases.
 
 Add completed changes under `Unreleased`; at release time, move them under the
-released version and date. Keep detailed plans in [ROADMAP.md](ROADMAP.md),
-requirements and implementation status in [PROJECT.md](PROJECT.md), and
-validation evidence in the [development docs](docs/development/README.md).
+released version and date. Keep validation evidence in the
+[development docs](docs/development/README.md).
 
 ## Unreleased
 
 ### 2026-10-15
+
+#### Recover replies whose save acknowledgement was lost
+
+- Reconcile a buffered reply with the runtime before **Save text only** removes
+  its operations, and after any failed save. A turn the runtime already finished
+  clears the buffer and shows its saved proposal for review. Previously, an
+  operation-free retry of a saved proposal always conflicted, which left prompts,
+  navigation and desktop window closing blocked even after discarding.
+- If another session finished the turn differently, the local reply stays
+  available to copy.
+
+#### Recover proposals after deleting conversation nodes
+
+- Show Apply/Discard controls outside the canvas nodes when a pending reply has
+  been deleted. Conversation records survive node deletion, so these controls
+  remain available after reopening, even if the prompt was also removed.
+- Cover both resolution actions after deletion and reopening in the rendered app,
+  including restoring the composer and sending another prompt.
+
+#### Keep proposal previews consistent after approval
+
+- Publish the refreshed canvas and conversation status together after applying a
+  proposal. Previously, applied objects could be previewed again while the turn
+  still appeared pending, leaving a false stale-preview warning. If refreshing
+  the status fails, retain the previous canvas view until recovery succeeds.
+
+#### Custom OpenAI-compatible providers
+
+- Accept a full Chat Completions URL as well as a base URL, avoiding a duplicated
+  `/chat/completions` path when an endpoint is pasted from provider documentation.
+- Use Tauri's native HTTP client for custom desktop requests so providers without
+  browser CORS support work. Scope native access to Chat Completions paths over
+  HTTPS or localhost HTTP, preserve cancellation, and disable redirects.
+- Add provider selection, base URL, API key, model ID, and a canvas-tools toggle
+  in Settings. Preserve OpenRouter configuration separately and snapshot the
+  selected provider for each turn. Custom requests use Chat Completions without
+  OpenRouter-specific headers or routing fields; unauthenticated local endpoints
+  are supported. Allow HTTPS and localhost HTTP provider connections in both
+  hosts' content security policies; browser mode requires provider CORS support.
+
+#### Recover rejected canvas tool arguments
+
+- Return field-specific validation errors to the model so it can correct a
+  rejected canvas edit within the existing turn budget. Previously, one invalid
+  argument ended the turn with a generic error. Preserve valid staged changes,
+  keep rejected edits out of the proposal, and count rejected calls toward the
+  tool-call limit.
+
+#### Canvas conversation and reviewed proposals
+
+- Render editable text directly on the canvas, including persistent prompts and
+  replies. Keep one conversation per canvas and place exchanges near selected
+  content without rearranging existing work.
+- Extend OpenRouter with bounded, capability-checked canvas tools. Send selected
+  objects or the current canvas and recent exchanges; keep text-only models useful
+  without granting file, shell, or other host capabilities.
+- Stage text, labeled geometric shapes, placements, and connectors as visible
+  proposals. Apply the saved proposal in one runtime transaction with scope and
+  revision checks; make repeated Apply/Discard safe after a lost acknowledgement.
+- Storage version 4 adds conversation history and pending proposals. Reopening
+  preserves proposals and marks interrupted generation without restarting it.
+  Surface generation/save failures and offer cancellation and response recovery.
+- Cover model exchanges with mocks, share proposal/recovery fixtures between the
+  desktop transport and HTTP, and exercise review and inline editing in the
+  rendered browser app without paid provider calls.
 
 #### M1 contracts and manual instruction notes
 

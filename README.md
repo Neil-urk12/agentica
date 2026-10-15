@@ -8,7 +8,45 @@ backend for the same UI in a local browser. Both modes support validated health
 checks and visible connection failures. The shared runtime persists workspaces,
 canvases, and text artifacts in SQLite with one writer per workspace; the UI
 creates and reopens them, edits text and node placement, persists pan/zoom, and
-autosaves changes through the runtime commands. Agent integration is planned.
+autosaves changes through the runtime commands. OpenRouter conversations place
+editable prompts and replies directly on the canvas. Tool-capable models can
+propose text, shape, placement, and connection changes for review.
+
+## Canvas conversation
+
+Open Settings to choose OpenRouter or a custom OpenAI-compatible provider. Custom
+providers accept a base URL (for example `https://api.example.com/v1` or
+`http://localhost:1234/v1`), API key, and model ID. Leave the key blank for endpoints
+that need no authentication. Enable canvas tools only for models that support
+function calling; disable them for text-only replies. OpenRouter checks its model
+catalog automatically. Each provider keeps separate settings and keys locally.
+The desktop app sends custom requests through its native HTTP client, so providers
+do not need browser CORS support. Browser mode sends requests directly and requires
+CORS from the app's origin. Custom URLs support HTTPS, or HTTP at `localhost` and `127.0.0.1`.
+The app appends `/chat/completions` to the base URL; pasting the full Chat
+Completions URL is also supported.
+
+Select objects to focus
+the next request, or clear the selection to use the current canvas. The composer
+shows what will be sent: object text and geometry plus up to eight recent
+exchanges. Text-only models can reply but cannot propose object changes.
+
+Prompts and replies remain editable canvas text: double-click or focus the text
+and press Enter to edit it. Escape or Ctrl/Cmd+Enter ends editing. Text and
+geometric shapes can be moved and resized with selection controls.
+
+Proposed changes use dashed outlines and a **Proposed** label. Choose **Apply**
+beside the reply to commit the whole proposal, or **Discard** to keep the reply
+without changing existing objects. Pending proposals survive reopening; changed
+targets cause a conflict rather than overwriting manual edits. Only one generation
+or unresolved proposal can be active on a canvas. Cancel stops generation, and
+interrupted requests require an explicit retry.
+
+The first tool set supports text, labeled rectangles and ellipses, placement,
+and connectors. It does not generate images or execute code. Context and changes
+must fit the existing size limits; oversized requests fail visibly without
+truncation. If saving a generated response fails, keep the canvas open to retry
+or copy the response for recovery. Basic manual editing needs no AI account.
 
 ## Getting started
 
@@ -219,7 +257,6 @@ See the [contribution guide](CONTRIBUTING.md).
 The product draws on [Dim0](https://github.com/vcmf/dim0) for editable artifact
 interactions, [ccanvas](https://github.com/DevoidSloth/ccanvas) for spatial
 coding-agent workflows, and [tldraw](https://github.com/tldraw/tldraw) for canvas
-interaction patterns. See [the reference mapping and attribution rules](PROJECT.md#15-primary-references-prior-art-and-differentiation)
-in the specification.
+interaction patterns. Review each upstream license before incorporating code or assets.
 
 Licensed under [MIT](LICENSE).

@@ -3,6 +3,7 @@ import {
   type Drawing,
   type RuntimeResult,
   type RuntimeParams,
+  type ConversationTurn,
 } from "@agentica/protocol";
 import type { callRuntime } from "./runtime";
 
@@ -32,6 +33,7 @@ export interface EditorState {
   saving: boolean;
   dirty: boolean;
   error: string;
+  turns: ConversationTurn[];
 }
 
 // One buffer and save queue for either transport; acknowledgements never replace drafts.
@@ -44,6 +46,7 @@ export class Editor {
     saving: false,
     dirty: false,
     error: "",
+    turns: [],
   };
   private call: typeof callRuntime;
   private key: () => string;
@@ -125,9 +128,11 @@ export class Editor {
     });
   }
 
-  private load(document: CanvasDocument) {
-    if (document.canvas.id !== this.state.document?.canvas.id)
+  private load(document: CanvasDocument, turns?: ConversationTurn[]) {
+    if (document.canvas.id !== this.state.document?.canvas.id) {
       this.nodeIds.clear();
+      this.state = { ...this.state, turns: [] };
+    }
     this.savedArtifacts = new Map(
       document.artifacts.map((artifact) => [artifact.id, content(artifact)]),
     );
@@ -135,7 +140,7 @@ export class Editor {
     this.attemptedDrawing = null;
     this.savedLayout = JSON.stringify(this.layout(document));
     this.attemptedLayout = "";
-    this.publish({ document });
+    this.publish({ document, ...(turns ? { turns } : {}) });
   }
 
   private async operation(run: () => Promise<void>) {
@@ -439,6 +444,7 @@ export class Editor {
           canvasId,
         }),
       );
+      await this.refreshConversation();
     });
   }
 
@@ -459,6 +465,118 @@ export class Editor {
           canvasId: canvas.id,
         }),
       );
+      await this.refreshConversation();
+    });
+  }
+
+  async refreshConversation() {
+    const canvasId = this.state.document?.canvas.id;
+    const workspaceId = this.state.workspace?.workspace.id;
+    if (!canvasId || !workspaceId) return;
+    const result = await this.call(this.key(), false, "conversation.list", {
+      workspaceId,
+      canvasId,
+      before: 0,
+    });
+    if (
+      this.state.document?.canvas.id === canvasId &&
+      this.state.workspace?.workspace.id === workspaceId
+    )
+      this.publish({ turns: result.turns });
+  }
+
+  private async reloadConversationCanvas() {
+    const workspaceId = this.state.workspace!.workspace.id;
+    const canvasId = this.state.document!.canvas.id;
+    const document = await this.call(this.key(), false, "canvas.open", {
+      workspaceId,
+      canvasId,
+    });
+    const { turns } = await this.call(this.key(), false, "conversation.list", {
+      workspaceId,
+      canvasId,
+      before: 0,
+    });
+    // Applied objects must never be rendered with an older pending proposal.
+    this.load(document, turns);
+  }
+
+  async reloadConversation() {
+    await this.enqueue(async () => {
+      if (this.state.dirty || !this.state.document || this.disposed) return;
+      await this.mutation(() => this.reloadConversationCanvas());
+    });
+  }
+
+  async startConversation(params: RuntimeParams<"conversation.start">) {
+    let result: RuntimeResult<"conversation.start"> | undefined;
+    await this.enqueue(async () => {
+      await this.settleSave();
+      if (this.state.dirty || this.disposed) return;
+      await this.mutation(async () => {
+        result = await this.call(
+          this.key(),
+          false,
+          "conversation.start",
+          params,
+        );
+        await this.reloadConversationCanvas();
+      });
+    });
+    return result;
+  }
+
+  async finishConversation(params: RuntimeParams<"conversation.finish">) {
+    let result: RuntimeResult<"conversation.finish"> | undefined;
+    await this.enqueue(async () => {
+      await this.settleSave();
+      if (this.state.dirty || this.disposed) return;
+      await this.mutation(async () => {
+        result = await this.call(
+          this.key(),
+          false,
+          "conversation.finish",
+          params,
+        );
+        await this.reloadConversationCanvas();
+      });
+    });
+    return result;
+  }
+
+  /**
+   * Reload the canvas and return the turn if the runtime already finished it.
+   * A finish whose acknowledgement was lost is committed, so its buffered reply
+   * must be adopted rather than resent or altered.
+   */
+  async finishedTurn(turnId: string) {
+    let finished: ConversationTurn | undefined;
+    await this.enqueue(async () => {
+      await this.settleSave();
+      if (this.state.dirty || !this.state.document || this.disposed) return;
+      await this.mutation(async () => {
+        await this.reloadConversationCanvas();
+        finished = this.state.turns.find(
+          (turn) => turn.id === turnId && turn.status !== "generating",
+        );
+      });
+    });
+    return finished;
+  }
+
+  async resolveConversation(turnId: string, action: "apply" | "discard") {
+    await this.enqueue(async () => {
+      await this.settleSave();
+      if (this.state.dirty || this.disposed) return;
+      await this.mutation(async () => {
+        await this.call(this.key(), false, "conversation.resolve", {
+          workspaceId: this.state.workspace!.workspace.id,
+          canvasId: this.state.document!.canvas.id,
+          turnId,
+          action,
+        });
+        await this.reloadConversationCanvas();
+      });
     });
   }
 

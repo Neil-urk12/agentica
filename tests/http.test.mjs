@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { request } from "node:http";
+import { createServer, request } from "node:http";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
@@ -553,7 +553,7 @@ function assertMatches(expected, actual, label) {
   }
 }
 
-test("the shared workspace fixture round-trips over authenticated HTTP", async () => {
+test("the shared workspace and conversation fixtures round-trip over authenticated HTTP", async () => {
   const fixture = JSON.parse(
     readFileSync(
       new URL("./fixtures/workspace-roundtrip.json", import.meta.url),
@@ -561,6 +561,14 @@ test("the shared workspace fixture round-trips over authenticated HTTP", async (
     ),
   );
   let backend = await startBackend();
+  fixture.steps.push(
+    ...JSON.parse(
+      readFileSync(
+        new URL("./fixtures/conversation-roundtrip.json", import.meta.url),
+        "utf8",
+      ),
+    ).steps,
+  );
   key = backend.connectionKey;
   const saved = {};
   try {
@@ -1108,6 +1116,546 @@ test("drawing connections and keyboard instruction notes reopen without Codex", 
   } finally {
     editor.dispose();
     await browser?.close();
+    await stopBackend(backend.child);
+  }
+});
+
+test("canvas conversation previews, keyboard edits, review and cancellation work in the rendered app", async () => {
+  const backend = await startBackend();
+  key = backend.connectionKey;
+  let browser;
+  let customServer;
+  const rpc = async (method, params) => {
+    const reply = await send(port, {
+      body: JSON.stringify({
+        protocolVersion: 1,
+        id: crypto.randomUUID(),
+        method,
+        params,
+      }),
+    });
+    const response = RuntimeResponseSchema.parse(JSON.parse(reply.text));
+    assert.equal(response.error, undefined, JSON.stringify(response));
+    return ResultSchemas[method].parse(response.result);
+  };
+  try {
+    const workspace = await rpc("workspace.create", {
+      name: "Canvas conversation UI",
+    });
+    const workspaceId = workspace.workspace.id;
+    const { canvas } = await rpc("canvas.create", {
+      workspaceId,
+      title: "Conversation UI",
+    });
+    const ref = { workspaceId, canvasId: canvas.id };
+    browser = await launchBrowser();
+    await browser.send(
+      "Page.addScriptToEvaluateOnNewDocument",
+      {
+        source: `
+      localStorage.setItem('agentica.openrouterApiKey', 'test-only');
+      localStorage.setItem('agentica.openrouterModel', 'openrouter/free');
+      window.__providerRequests = [];
+      window.__runtimeRequests = [];
+      const realFetch = window.fetch.bind(window);
+      window.fetch = async (url, options) => {
+        if (!String(url).startsWith('https://openrouter.ai/')) {
+          const method = options?.body ? JSON.parse(options.body).method : undefined;
+          if (method) window.__runtimeRequests.push(method);
+          if (method === 'canvas.open' && window.__failOpen) {
+            window.__failOpen -= 1;
+            throw new TypeError('Canvas reload lost');
+          }
+          const response = await realFetch(url, options);
+          if (method === 'conversation.finish' && window.__loseFinish) {
+            window.__loseFinish = false;
+            window.__failOpen = 1;
+            throw new TypeError('Finish acknowledgement lost');
+          }
+          return response;
+        }
+        const body = JSON.parse(options.body);
+        window.__providerRequests.push(body);
+        if (window.__slow) return new Promise((resolve, reject) => {
+          options.signal.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), {once: true});
+        });
+        if (body.messages.at(-1).role === 'user') {
+          const input = JSON.parse(body.messages.at(-1).content);
+          const operation = input.prompt.includes('Change')
+            ? {op:'updateText',nodeId:input.canvasContext.nodes[0].id,text:'Proposed replacement'}
+            : {op:'createShape',kind:'rectangle',color:'#123456',label:'Idea',...input.proposalAnchor,width:200,height:100};
+          return new Response(JSON.stringify({choices:[{message:{content:null,tool_calls:[{id:crypto.randomUUID(),type:'function',function:{name:'canvas_edit',arguments:JSON.stringify(operation)}}]}}]}), {headers:{'Content-Type':'application/json'}});
+        }
+        return new Response(JSON.stringify({choices:[{message:{content:'A diagram you can edit.'},finish_reason:'stop'}]}), {headers:{'Content-Type':'application/json'}});
+      };
+    `,
+      },
+      browser.sessionId,
+    );
+    await browser.send(
+      "Page.navigate",
+      { url: `http://127.0.0.1:${port}/` },
+      browser.sessionId,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('#connection-key')`,
+      "the connection form",
+    );
+    await evaluate(
+      browser,
+      `(async () => { const input = document.querySelector('#connection-key'); input.value = ${JSON.stringify(key)}; input.dispatchEvent(new Event('input', {bubbles:true})); await new Promise(requestAnimationFrame); document.querySelector('.connbar button[type=submit]').click(); })()`,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('.connbar--ok')`,
+      "connection",
+    );
+    const selectCard = async (label) => {
+      const expression = `[...document.querySelectorAll('.cards .card')].find(c => c.querySelector('strong')?.textContent === ${JSON.stringify(label)})`;
+      await waitFor(
+        browser,
+        `${expression} && !(${expression}).disabled`,
+        label,
+      );
+      await evaluate(
+        browser,
+        `(${expression}).focus(); (${expression}).scrollIntoView({block:'center'})`,
+      );
+      await clickAt(browser, await boxByText(browser, ".cards .card", label));
+    };
+    for (const label of ["Canvas conversation UI", "Conversation UI"])
+      await selectCard(label);
+    await waitFor(
+      browser,
+      `!!document.querySelector('#canvas-prompt') && !document.querySelector('dialog[open]')`,
+      "the composer",
+    );
+    const submit = async (prompt) => {
+      await evaluate(
+        browser,
+        `(async () => { const input = document.querySelector('#canvas-prompt'); input.value = ${JSON.stringify(prompt)}; input.dispatchEvent(new Event('input', {bubbles:true})); await new Promise(requestAnimationFrame); document.querySelector('.composer__send').click(); })()`,
+      );
+    };
+    await submit("Draw an idea");
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.drawing.preview').length === 1 && document.querySelectorAll('.review button').length === 2`,
+      "the diagram preview and review controls",
+    );
+    assert.equal(
+      await countOf(browser, ".svelte-flow__node-default"),
+      0,
+      "text is rendered directly, without default node cards",
+    );
+    const before = await rpc("canvas.open", ref);
+    assert.equal(
+      before.nodes.length,
+      2,
+      "only prompt and reply are saved before approval",
+    );
+    assert.deepEqual(
+      before.artifacts.map((a) => a.text),
+      ["Draw an idea", "A diagram you can edit."],
+    );
+    assert.equal(
+      await evaluate(browser, `window.__providerRequests.length`),
+      2,
+    );
+
+    const reopen = async () => {
+      await clickAt(
+        browser,
+        await boxOf(browser, '[aria-label="Canvas gallery"]'),
+      );
+      await waitFor(
+        browser,
+        `[...document.querySelectorAll('.cards .card')].some(c => c.textContent.includes('Conversation UI'))`,
+        "the canvas gallery",
+      );
+      await selectCard("Conversation UI");
+      await waitFor(
+        browser,
+        `!!document.querySelector('.svelte-flow') && !document.querySelector('dialog[open]')`,
+        "the reopened canvas",
+      );
+    };
+    await reopen();
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.drawing.preview').length === 1`,
+      "the restored pending proposal",
+    );
+    const review = async (action) => {
+      const expression = `[...document.querySelectorAll('.review button')].find(b => b.textContent.trim() === ${JSON.stringify(action)})`;
+      await waitFor(
+        browser,
+        `${expression} && !(${expression}).disabled`,
+        `the enabled ${action} control`,
+      );
+      await evaluate(browser, `(${expression}).focus()`);
+      assert.equal(
+        await evaluate(browser, `document.activeElement?.textContent.trim()`),
+        action,
+        "the review button keeps keyboard focus",
+      );
+      for (const type of ["keyDown", "keyUp"])
+        await browser.send(
+          "Input.dispatchKeyEvent",
+          {
+            type,
+            key: "Enter",
+            code: "Enter",
+            windowsVirtualKeyCode: 13,
+            ...(type === "keyDown" ? { text: "\r", unmodifiedText: "\r" } : {}),
+          },
+          browser.sessionId,
+        );
+    };
+    await review("Apply");
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.preview').length === 0 && document.querySelectorAll('.drawing').length === 1`,
+      "the applied shape",
+    );
+    const applied = await rpc("canvas.open", ref);
+    assert.equal(applied.nodes.length, 3);
+    assert.equal(applied.artifacts.at(-1).drawing.shapes[0].label, "Idea");
+    assert.equal(
+      await evaluate(
+        browser,
+        `document.body.innerText.includes('The proposal preview is stale')`,
+      ),
+      false,
+      "successful approval must not leave a stale-preview warning",
+    );
+    const replyNode = applied.nodes[1];
+    const selector = `[data-id="${replyNode.id}"] .body`;
+    await evaluate(
+      browser,
+      `document.querySelector(${JSON.stringify(selector)}).focus()`,
+    );
+    await browser.send(
+      "Input.dispatchKeyEvent",
+      {
+        type: "keyDown",
+        key: "Enter",
+        code: "Enter",
+        windowsVirtualKeyCode: 13,
+      },
+      browser.sessionId,
+    );
+    await waitFor(
+      browser,
+      `document.activeElement === document.querySelector('textarea[aria-label="Edit canvas text"]') && !!document.activeElement`,
+      "keyboard inline editing",
+    );
+    await evaluate(
+      browser,
+      `(() => { const input = document.querySelector('textarea[aria-label="Edit canvas text"]'); input.value = 'Human revision'; input.dispatchEvent(new Event('input', {bubbles:true})); input.blur(); })()`,
+    );
+    await waitFor(
+      browser,
+      `document.body.textContent.includes('All changes saved')`,
+      "the manual text save",
+    );
+    const edited = await rpc("canvas.open", ref);
+    assert.equal(
+      edited.artifacts.find((a) => a.id === replyNode.artifactId).text,
+      "Human revision",
+    );
+    await clickAt(browser, await boxOf(browser, selector));
+    await waitFor(
+      browser,
+      `document.querySelector('.composer-context').textContent.includes('1 selected')`,
+      "selected-object context",
+    );
+    await submit("Change this text");
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.canvas-text.preview').length === 1 && document.querySelectorAll('.review button').length === 2`,
+      "a targeted text preview",
+    );
+    assert.equal(
+      (await rpc("canvas.open", ref)).artifacts.find(
+        (a) => a.id === replyNode.artifactId,
+      ).text,
+      "Human revision",
+    );
+    await review("Discard");
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.preview').length === 0 && !document.querySelector('#canvas-prompt').disabled`,
+      "discarded proposal",
+    );
+    const discarded = await rpc("canvas.open", ref);
+    assert.equal(
+      discarded.artifacts.find((a) => a.id === replyNode.artifactId).text,
+      "Human revision",
+    );
+    await evaluate(browser, `window.__slow = true`);
+    await submit("Wait for cancellation");
+    await waitFor(
+      browser,
+      `window.__providerRequests.some(r => r.messages.at(-1).role === 'user' && r.messages.at(-1).content.includes('Wait for cancellation'))`,
+      "the in-flight provider request",
+    );
+    await evaluate(
+      browser,
+      `document.querySelector(${JSON.stringify(selector)}).focus()`,
+    );
+    await browser.send(
+      "Input.dispatchKeyEvent",
+      {
+        type: "keyDown",
+        key: "Enter",
+        code: "Enter",
+        windowsVirtualKeyCode: 13,
+      },
+      browser.sessionId,
+    );
+    await waitFor(
+      browser,
+      `document.activeElement === document.querySelector('textarea[aria-label="Edit canvas text"]') && !!document.activeElement`,
+      "editing during generation",
+    );
+    await evaluate(
+      browser,
+      `(() => { const input = document.querySelector('textarea[aria-label="Edit canvas text"]'); input.value = 'Human edit while generating'; input.dispatchEvent(new Event('input', {bubbles:true})); input.blur(); })()`,
+    );
+    await evaluate(
+      browser,
+      `[...document.querySelectorAll('.composer button')].find(b => b.textContent === 'Cancel').click()`,
+    );
+    await waitFor(
+      browser,
+      `!document.querySelector('#canvas-prompt').disabled`,
+      "cancelled generation",
+    );
+    const turns = await rpc("conversation.list", { ...ref, before: 0 });
+    assert.equal(turns.turns[0].status, "cancelled");
+    assert.equal(turns.turns[1].status, "discarded");
+    assert.equal(turns.turns[2].status, "applied");
+    assert.equal(
+      (await rpc("canvas.open", ref)).artifacts.find(
+        (a) => a.id === replyNode.artifactId,
+      ).text,
+      "Human edit while generating",
+    );
+    await evaluate(browser, `window.__slow = false`);
+    for (const action of ["Apply", "Discard"]) {
+      await submit(
+        `Draw an idea before deleting the reply and choosing ${action}`,
+      );
+      await waitFor(
+        browser,
+        `document.querySelectorAll('.drawing.preview').length === 1 && document.querySelectorAll('.review button').length === 2`,
+        `the pending proposal for ${action}`,
+      );
+      const {
+        turns: [pending],
+      } = await rpc("conversation.list", {
+        ...ref,
+        before: 0,
+      });
+      const deletedIds =
+        action === "Apply"
+          ? [pending.replyNodeId]
+          : [pending.replyNodeId, pending.promptNodeId];
+      for (const nodeId of deletedIds) {
+        const document = await rpc("canvas.open", ref);
+        const index = document.nodes.findIndex((node) => node.id === nodeId);
+        assert.notEqual(index, -1);
+        const deletion = `.drawer__row:nth-child(${index + 1}) .drawer__delete`;
+        await waitFor(
+          browser,
+          `document.querySelector(${JSON.stringify(deletion)})?.disabled === false`,
+          "the enabled node delete button",
+        );
+        await evaluate(
+          browser,
+          `document.querySelector(${JSON.stringify(deletion)}).click()`,
+        );
+        await waitFor(
+          browser,
+          `!document.querySelector('[data-id="${nodeId}"]')`,
+          "the deleted conversation node",
+        );
+      }
+      await waitFor(
+        browser,
+        `document.querySelectorAll('.conversation-recovery.review button').length === 2`,
+        "proposal controls after deleting the reply",
+      );
+      await reopen();
+      await waitFor(
+        browser,
+        `document.querySelectorAll('.conversation-recovery.review button').length === 2 && document.querySelector('#canvas-prompt').disabled`,
+        "proposal controls restored without the conversation nodes",
+      );
+      assert.equal(
+        (await rpc("conversation.list", { ...ref, before: 0 })).turns[0].status,
+        "pending",
+      );
+      await review(action);
+      await waitFor(
+        browser,
+        `document.querySelectorAll('.preview').length === 0 && !document.querySelector('#canvas-prompt').disabled && !document.querySelector('.conversation-recovery.review')`,
+        `${action} clears the proposal and restores the composer`,
+      );
+      assert.equal(
+        (await rpc("conversation.list", { ...ref, before: 0 })).turns[0].status,
+        action === "Apply" ? "applied" : "discarded",
+      );
+      assert.equal(
+        (await rpc("canvas.open", ref)).nodes.some(
+          (node) => node.id === pending.operations[0].nodeId,
+        ),
+        action === "Apply",
+      );
+    }
+    // The runtime saves the proposal, but its acknowledgement and the follow-up
+    // reload are lost, so the reply stays buffered until it is reconciled.
+    await evaluate(browser, `window.__loseFinish = true`);
+    await submit("Draw an idea whose save acknowledgement is lost");
+    const textOnly = `[...document.querySelectorAll('.conversation-recovery button')].find(b => b.textContent.trim() === 'Save text only')`;
+    await waitFor(
+      browser,
+      `!!(${textOnly}) && document.querySelector('#canvas-prompt').disabled`,
+      "the buffered reply after a lost acknowledgement",
+    );
+    const {
+      turns: [saved],
+    } = await rpc("conversation.list", { ...ref, before: 0 });
+    assert.equal(saved.status, "pending");
+    assert.equal(saved.operations.length, 1);
+    await evaluate(browser, `(${textOnly}).click()`);
+    await waitFor(
+      browser,
+      `!document.body.innerText.includes('Response waiting to save') && document.querySelectorAll('.drawing.preview').length === 1 && document.querySelectorAll('.review button').length === 2`,
+      "the saved proposal adopted for review",
+    );
+    assert.deepEqual(
+      (await rpc("conversation.list", { ...ref, before: 0 })).turns[0],
+      saved,
+      "reconciliation leaves the saved proposal unchanged",
+    );
+    await review("Discard");
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.preview').length === 0 && !document.querySelector('#canvas-prompt').disabled && !document.querySelector('.conversation-recovery')`,
+      "the composer after discarding the recovered proposal",
+    );
+    assert.equal(
+      (await rpc("conversation.list", { ...ref, before: 0 })).turns[0].status,
+      "discarded",
+    );
+    await reopen();
+    const customRequests = [];
+    customServer = createServer(async (req, res) => {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader(
+        "Access-Control-Allow-Headers",
+        "authorization, content-type",
+      );
+      res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+      if (req.method === "OPTIONS") {
+        res.writeHead(204).end();
+        return;
+      }
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      customRequests.push({
+        path: req.url,
+        headers: req.headers,
+        body: JSON.parse(body),
+      });
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify({
+          choices: [{ message: { content: "Reply from custom provider." } }],
+        }),
+      );
+    });
+    customServer.listen(0, "127.0.0.1");
+    await once(customServer, "listening");
+    const customBaseUrl = `http://127.0.0.1:${customServer.address().port}/v1/`;
+    await evaluate(
+      browser,
+      `document.querySelector('[aria-label="Settings"]').click()`,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('#ai-provider')`,
+      "provider settings",
+    );
+    await evaluate(
+      browser,
+      `(async () => {
+      const provider = document.querySelector('#ai-provider');
+      provider.value = 'custom'; provider.dispatchEvent(new Event('change', {bubbles:true}));
+      await new Promise(requestAnimationFrame);
+      for (const [selector, value] of [['#provider-base-url', ${JSON.stringify(customBaseUrl)}], ['#openrouter-api-key', 'custom-test-only'], ['#openrouter-model', 'local-model']]) {
+        const input = document.querySelector(selector); input.value = value; input.dispatchEvent(new Event('input', {bubbles:true}));
+      }
+      document.querySelector('#provider-tools').click();
+      document.querySelector('[aria-label="Close settings"]').click();
+    })()`,
+    );
+    await waitFor(
+      browser,
+      `!document.querySelector('dialog[open]')`,
+      "closed provider settings",
+    );
+    await submit("Use the custom endpoint");
+    await waitFor(
+      browser,
+      `document.body.innerText.includes('Reply from custom provider.') && !document.querySelector('#canvas-prompt').disabled`,
+      "custom provider reply through browser CORS and CSP",
+    );
+    assert.equal(customRequests.length, 1);
+    assert.equal(customRequests[0].path, "/v1/chat/completions");
+    assert.equal(
+      customRequests[0].headers.authorization,
+      "Bearer custom-test-only",
+    );
+    assert.equal(customRequests[0].headers["http-referer"], undefined);
+    assert.equal(customRequests[0].body.model, "local-model");
+    assert.equal(customRequests[0].body.tools, undefined);
+    assert.equal(customRequests[0].body.provider, undefined);
+    await evaluate(
+      browser,
+      `document.querySelector('[aria-label="Settings"]').click()`,
+    );
+    await waitFor(
+      browser,
+      `document.querySelector('#ai-provider')?.value === 'custom'`,
+      "persisted custom selection",
+    );
+    assert.equal(
+      await evaluate(
+        browser,
+        `document.querySelector('#provider-base-url').value`,
+      ),
+      customBaseUrl,
+    );
+    await evaluate(
+      browser,
+      `(() => { const provider = document.querySelector('#ai-provider'); provider.value = 'openrouter'; provider.dispatchEvent(new Event('change', {bubbles:true})); })()`,
+    );
+    await waitFor(
+      browser,
+      `document.querySelector('#openrouter-api-key')?.value === 'test-only'`,
+      "preserved OpenRouter credentials",
+    );
+  } catch (error) {
+    if (browser)
+      error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({text:document.body.innerText.slice(-2000),focus:document.activeElement?.tagName,review:document.querySelector('.review')?.outerHTML,requests:window.__runtimeRequests})")}`;
+    throw error;
+  } finally {
+    await browser?.close();
+    if (customServer)
+      await new Promise((resolve) => customServer.close(resolve));
     await stopBackend(backend.child);
   }
 });

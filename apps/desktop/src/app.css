@@ -1557,6 +1557,22 @@ label {
 
 /* ------------------------------------------------------------------ xyflow */
 
+.conversation-recovery {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 20;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  max-width: calc(100% - 32px);
+}
+
 .svelte-flow {
   --xy-background-color: transparent;
 }
@@ -1582,6 +1598,8 @@ label {
     var(--shadow-sm) !important;
 }
 
+.svelte-flow__node-text.selected,
+.svelte-flow__node-text.node--selected,
 .svelte-flow__node-drawing.selected,
 .svelte-flow__node-drawing.node--selected {
   border-radius: 8px;
