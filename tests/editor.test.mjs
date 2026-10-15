@@ -1,7 +1,30 @@
 import assert from "node:assert/strict";
+import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { test } from "node:test";
-import { MAX_FRAME_BYTES } from "@agentica/protocol";
+import { LIMITS, MAX_FRAME_BYTES } from "@agentica/protocol";
 import { Editor } from "../apps/desktop/src/lib/editor.ts";
+
+// The runtime's TypeScript parameter property needs transformation, not stripping.
+const runtimeUrl = new URL(
+  "../apps/desktop/src/lib/runtime.ts",
+  import.meta.url,
+);
+const hooks = registerHooks({
+  load(url, context, nextLoad) {
+    const result = nextLoad(url, context);
+    return url === runtimeUrl.href
+      ? {
+          ...result,
+          format: "module",
+          source: stripTypeScriptTypes(result.source.toString(), {
+            mode: "transform",
+          }),
+        }
+      : result;
+  },
+});
+const { callRuntime } = await import(runtimeUrl.href);
+hooks.deregister();
 
 const workspaceId = "00000000-0000-4000-8000-000000000001";
 const canvasId = "00000000-0000-4000-8000-000000000002";
@@ -54,7 +77,7 @@ async function setup(t, intercept = async () => {}) {
         canvases: structuredClone(canvasList),
       };
     if (method === "workspace.close") return {};
-    if (method === "node.createDrawing") {
+    if (method === "node.createDrawing" || method === "node.createText") {
       assert.equal(params.expectedRevision, disk.canvas.revision);
       sequence += 1;
       const node = {
@@ -67,10 +90,12 @@ async function setup(t, intercept = async () => {}) {
       };
       const artifact = {
         id: node.artifactId,
-        type: "drawing",
+        type: method === "node.createDrawing" ? "drawing" : "text",
         schemaVersion: 1,
         revision: 1,
-        drawing: params.drawing,
+        ...(method === "node.createDrawing"
+          ? { drawing: params.drawing }
+          : { text: params.text }),
       };
       disk.nodes = [...disk.nodes, node];
       disk.artifacts = [...disk.artifacts, artifact];
@@ -358,6 +383,102 @@ function frameBytes(method, params) {
     }),
   ).length;
 }
+
+test("text creation saves the complete response or reports failure", async (t) => {
+  const params = {
+    workspaceId,
+    canvasId,
+    expectedRevision: 1,
+    x: 40,
+    y: 40,
+    width: 240,
+    height: 160,
+    text: "",
+  };
+  const budget = MAX_FRAME_BYTES - frameBytes("node.createText", params);
+  const token = '中😀"\\\n\u0000\ud800';
+  const tokenBytes = Buffer.byteLength(JSON.stringify(token).slice(1, -1));
+  const boundary = token.repeat(Math.floor(budget / tokenBytes));
+  const padding = budget % tokenBytes;
+  assert.equal(
+    frameBytes("node.createText", {
+      ...params,
+      text: boundary + "a".repeat(padding),
+    }),
+    MAX_FRAME_BYTES,
+  );
+  const cases = [
+    { name: "empty text", text: "" },
+    { name: "multibyte text", text: "中文😀".repeat(500) },
+    { name: "text length limit", text: "a".repeat(LIMITS.text) },
+    { name: "below frame limit", text: boundary + "a".repeat(padding - 1) },
+    { name: "at frame limit", text: boundary + "a".repeat(padding) },
+    {
+      name: "above frame limit",
+      text: boundary + "a".repeat(padding + 1),
+      error: /larger than 16 KiB.*not sent/,
+    },
+    {
+      name: "6000 Chinese characters",
+      text: "中".repeat(6000),
+      error: /larger than 16 KiB.*not sent/,
+    },
+    {
+      name: "above text length limit",
+      text: "a".repeat(LIMITS.text + 1),
+      error: /invalid.*not sent/,
+    },
+  ];
+  for (const { name, text, error } of cases) {
+    await t.test(name, async (t) => {
+      const { editor, disk, calls, call } = await setup(t);
+      // Exercise the real transport validation before the simulated disk write.
+      t.mock.method(globalThis, "fetch", async (_url, options) => {
+        const request = JSON.parse(options.body);
+        const result = await call("", false, request.method, request.params);
+        return {
+          ok: true,
+          json: async () => ({ protocolVersion: 1, id: request.id, result }),
+        };
+      });
+      editor.call = async (...args) =>
+        args[2] === "node.createText" ? callRuntime(...args) : call(...args);
+
+      const created = await editor.addText(undefined, text);
+      if (error) {
+        assert.equal(
+          created,
+          undefined,
+          "oversized text must not report success",
+        );
+        assert.match(editor.state.error, error);
+        assert.equal(disk.nodes.length, 1);
+        assert.equal(disk.artifacts.length, 1);
+        assert.equal(disk.canvas.revision, 1);
+        assert.equal(
+          calls.filter(({ method }) => method === "node.createText").length,
+          0,
+        );
+        await editor.retrySave();
+        assert.equal(editor.state.error, "");
+        const retried = await editor.addText(undefined, "Short response");
+        assert.equal(retried.artifact.text, "Short response");
+      } else {
+        assert.equal(editor.state.error, "");
+        assert.equal(created.artifact.text, text);
+        assert.equal(disk.artifacts[1].text, text);
+        assert.equal(
+          frameBytes("node.createText", { ...params, text }) <= MAX_FRAME_BYTES,
+          true,
+        );
+        await editor.closeCanvas();
+        await editor.openCanvas(canvasId);
+        assert.equal(editor.state.document.artifacts[1].text, text);
+      }
+      assert.equal(editor.state.dirty, false);
+    });
+  }
+});
 
 function reassemble(drawings) {
   const combined = [];

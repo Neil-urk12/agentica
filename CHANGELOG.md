@@ -11,6 +11,16 @@ validation evidence in the [development docs](docs/development/README.md).
 
 ## Unreleased
 
+### 2026-10-15
+
+#### Complete generated text or visible save failure
+
+- Text creation passes the complete response to the existing runtime validation
+  instead of silently trimming it to fit a request. Oversized responses now
+  report a save failure and keep the Composer prompt; no partial text is saved.
+- Regression coverage checks multibyte text, JSON escaping, the text length limit,
+  and requests immediately below, at, and above the 16 KiB frame limit.
+
 ### 2026-10-14
 
 #### Drawing save recovery
