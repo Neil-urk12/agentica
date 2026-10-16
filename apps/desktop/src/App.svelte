@@ -74,6 +74,16 @@
   let strokeWidth = $state(DEFAULT_STROKE_WIDTH);
   let alive = true;
 
+  const SPLASH_HOLD = 800;
+  const SPLASH_FADE = 240;
+  let splashOpen = $state(wantsSplash());
+  let splashLeaving = $state(false);
+
+  /** The splash is decoration, so users who avoid motion never wait on it. */
+  function wantsSplash(): boolean {
+    return !matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
   const stage = $derived(
     !editorState.workspace
       ? "workspace"
@@ -600,6 +610,13 @@
 
   onMount(() => {
     let unlisten: (() => void) | undefined;
+    // Play the launch splash once, then hand the window over to the app.
+    const splashTimers = splashOpen
+      ? [
+          setTimeout(() => (splashLeaving = true), SPLASH_HOLD),
+          setTimeout(() => (splashOpen = false), SPLASH_HOLD + SPLASH_FADE),
+        ]
+      : [];
     if (desktopMode) {
       void checkConnection(true);
       void getCurrentWindow()
@@ -625,6 +642,7 @@
     return () => {
       alive = false;
       clearInterval(heartbeat);
+      for (const timer of splashTimers) clearTimeout(timer);
       unlisten?.();
       editor.dispose();
     };
@@ -683,7 +701,16 @@
 {/snippet}
 
 <div class="shell">
-  {#if stage === "workspace"}
+  {#if splashOpen}
+    <div
+      class="splash"
+      class:splash--leaving={splashLeaving}
+      aria-hidden="true"
+    >
+      <span class="splash__mark"><Icon name="blur_on" size={34} /></span>
+      <span class="splash__word">Agentica</span>
+    </div>
+  {:else if stage === "workspace"}
     <WorkspacePicker
       workspaces={editorState.workspaces}
       {connected}
@@ -716,7 +743,7 @@
       <div class="topbar__lead">
         <span class="brand">
           <span class="brand__mark"><Icon name="blur_on" size={20} /></span>
-          Agentica
+          <span class="brand__word">Agentica</span>
         </span>
         <nav class="crumbs" aria-label="Breadcrumb">
           <button

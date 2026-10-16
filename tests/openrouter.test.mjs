@@ -91,7 +91,9 @@ test("OpenRouter: askOpenRouter sends request and extracts response content", as
 
     const body = JSON.parse(capturedOptions.body);
     assert.equal(body.model, DEFAULT_MODEL);
-    assert.deepEqual(body.messages, [{ role: "user", content: "Tell me something" }]);
+    assert.deepEqual(body.messages, [
+      { role: "user", content: "Tell me something" },
+    ]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -115,10 +117,7 @@ test("OpenRouter: askOpenRouter handles API error responses", async () => {
       text: async () => "Invalid API Key",
     });
 
-    await assert.rejects(
-      () => askOpenRouter("Test error"),
-      /Invalid API Key/,
-    );
+    await assert.rejects(() => askOpenRouter("Test error"), /Invalid API Key/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -145,10 +144,7 @@ test("OpenRouter: askOpenRouter handles empty response error", async () => {
       }),
     });
 
-    await assert.rejects(
-      () => askOpenRouter("Test empty"),
-      /empty response/i,
-    );
+    await assert.rejects(() => askOpenRouter("Test empty"), /empty response/i);
   } finally {
     globalThis.fetch = originalFetch;
   }

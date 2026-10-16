@@ -61,8 +61,7 @@
     onkeydown={onKeydown}
     {disabled}
     maxlength={LIMITS.text}
-    {placeholder}
-  ></textarea>
+    {placeholder}></textarea>
 
   <div class="composer__tools">
     <button

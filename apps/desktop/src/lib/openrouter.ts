@@ -106,7 +106,7 @@ export async function askOpenRouter(
       if (errData?.error?.message) {
         detail = errData.error.message;
       }
-    } catch { }
+    } catch {}
     throw new Error(detail ? `${errorMessage}: ${detail}` : errorMessage);
   }
 

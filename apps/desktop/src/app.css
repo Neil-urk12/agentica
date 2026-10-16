@@ -324,6 +324,55 @@ label {
   overflow: hidden;
 }
 
+/* ------------------------------------------------------------ launch splash */
+
+/*
+ * Shows once at launch, over the app's own background, and fades out before the
+ * workspace picker mounts. It reuses the brand keyframes at a larger size.
+ */
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+  transition: opacity 240ms ease;
+}
+
+.splash--leaving {
+  opacity: 0;
+}
+
+.splash__mark {
+  display: grid;
+  place-items: center;
+  width: 4rem;
+  height: 4rem;
+  color: #fff;
+  border-radius: 20px;
+  background: linear-gradient(
+    150deg,
+    var(--accent) 0%,
+    var(--accent-strong) 100%
+  );
+  box-shadow: 0 18px 40px -18px rgba(245, 158, 11, 0.55);
+  transform-origin: center;
+  animation: brand-mark-in 700ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.splash__mark .material-icons {
+  animation: brand-glyph-in 700ms 90ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.splash__word {
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  animation: brand-word-in 480ms 220ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
 /* ------------------------------------------------------------ modal steps */
 
 .scrim {
@@ -423,6 +472,63 @@ label {
   margin-top: 1.25rem;
   padding-top: 1rem;
   border-top: 1px solid var(--line);
+}
+
+/*
+ * The startup pickers settle in behind the modal's own transition, each panel
+ * and row a beat after the one above it. The shared reduced-motion rule flattens
+ * every delay and duration, so nothing moves for users who ask for that.
+ */
+.modal__body .connbar {
+  animation: picker-item-in 260ms 40ms ease-out both;
+}
+
+.split > .panel {
+  animation: picker-item-in 280ms 80ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+.split > .panel:nth-child(2) {
+  animation-delay: 140ms;
+}
+
+.cards > li {
+  animation: picker-item-in 260ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  animation-delay: 180ms;
+}
+
+.cards > li:nth-child(2) {
+  animation-delay: 220ms;
+}
+
+.cards > li:nth-child(3) {
+  animation-delay: 260ms;
+}
+
+.cards > li:nth-child(4) {
+  animation-delay: 300ms;
+}
+
+.cards > li:nth-child(5) {
+  animation-delay: 340ms;
+}
+
+.cards > li:nth-child(n + 6) {
+  animation-delay: 380ms;
+}
+
+.modal__footer {
+  animation: picker-item-in 260ms 200ms ease-out both;
+}
+
+@keyframes picker-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ------------------------------------------------------- connection status */
@@ -773,6 +879,49 @@ label {
     var(--accent-strong) 100%
   );
   box-shadow: 0 10px 20px -12px rgba(245, 158, 11, 0.5);
+  transform-origin: center;
+  animation: brand-mark-in 620ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* The glyph unwinds into place just behind the mark itself. */
+.brand__mark .material-icons {
+  animation: brand-glyph-in 620ms 90ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.brand__word {
+  display: inline-block;
+  animation: brand-word-in 420ms 150ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+@keyframes brand-mark-in {
+  from {
+    opacity: 0;
+    transform: rotate(-16deg) scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(0deg) scale(1);
+  }
+}
+
+@keyframes brand-glyph-in {
+  from {
+    transform: rotate(-135deg) scale(0.5);
+  }
+  to {
+    transform: rotate(0deg) scale(1);
+  }
+}
+
+@keyframes brand-word-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .crumbs {
@@ -1674,6 +1823,8 @@ label {
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
     transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
   }
 }
