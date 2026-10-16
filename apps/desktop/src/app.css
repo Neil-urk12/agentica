@@ -77,6 +77,180 @@
   color-scheme: dark;
 }
 
+/*
+ * Design families. `classic` is the base palette above; every other family
+ * overrides the same surface variables for light and dark. Status colours
+ * (--ok/--warn/--bad) stay shared, and --accent* belongs to the accent blocks
+ * below so a design and an accent can be chosen independently.
+ */
+:root[data-design="slate"][data-theme="light"] {
+  --bg: #eceff5;
+  --bg-accent: #e0e5ee;
+  --glow-1: #ffffff;
+  --glow-2: #dde4ef;
+  --surface: #ffffff;
+  --surface-soft: #f4f6fa;
+  --ink: #1b2430;
+  --ink-soft: #46505f;
+  --muted: #78838f;
+  --line: #dee3eb;
+  --line-strong: #c9d1dc;
+  --surface-glass: rgba(255, 255, 255, 0.86);
+  --surface-edge: rgba(255, 255, 255, 0.6);
+  --scrim: rgba(19, 26, 36, 0.45);
+}
+
+:root[data-design="slate"][data-theme="dark"] {
+  --bg: #12161c;
+  --bg-accent: #191f27;
+  --glow-1: #1d242d;
+  --glow-2: #151a21;
+  --surface: #1c232c;
+  --surface-soft: #171d24;
+  --ink: #e6ebf1;
+  --ink-soft: #b8c2cd;
+  --muted: #7d8894;
+  --line: #29323d;
+  --line-strong: #3a4553;
+  --surface-glass: rgba(18, 22, 28, 0.86);
+  --surface-edge: rgba(255, 255, 255, 0.08);
+  --scrim: rgba(3, 6, 12, 0.65);
+}
+
+:root[data-design="sand"][data-theme="light"] {
+  --bg: #f7f1e6;
+  --bg-accent: #f0e7d6;
+  --glow-1: #fffdf8;
+  --glow-2: #f0e6d2;
+  --surface: #fffdf8;
+  --surface-soft: #faf5ea;
+  --ink: #2b2318;
+  --ink-soft: #574a3b;
+  --muted: #8b7c69;
+  --line: #e9dfcd;
+  --line-strong: #d9cab1;
+  --surface-glass: rgba(255, 253, 248, 0.88);
+  --surface-edge: rgba(255, 255, 255, 0.65);
+  --scrim: rgba(43, 35, 24, 0.45);
+}
+
+:root[data-design="sand"][data-theme="dark"] {
+  --bg: #1a1713;
+  --bg-accent: #221e18;
+  --glow-1: #262119;
+  --glow-2: #1c1915;
+  --surface: #272219;
+  --surface-soft: #201c16;
+  --ink: #ece4d8;
+  --ink-soft: #c2b7a6;
+  --muted: #948878;
+  --line: #362f26;
+  --line-strong: #4a4133;
+  --surface-glass: rgba(26, 23, 19, 0.87);
+  --surface-edge: rgba(255, 255, 255, 0.08);
+  --scrim: rgba(10, 8, 5, 0.66);
+}
+
+:root[data-design="graphite"][data-theme="light"] {
+  --bg: #f0f0f1;
+  --bg-accent: #e6e6e8;
+  --glow-1: #ffffff;
+  --glow-2: #e6e6e9;
+  --surface: #ffffff;
+  --surface-soft: #f6f6f7;
+  --ink: #1c1c1e;
+  --ink-soft: #48484c;
+  --muted: #7c7c82;
+  --line: #e3e3e6;
+  --line-strong: #cfcfd4;
+  --surface-glass: rgba(255, 255, 255, 0.88);
+  --surface-edge: rgba(255, 255, 255, 0.6);
+  --scrim: rgba(20, 20, 22, 0.45);
+}
+
+:root[data-design="graphite"][data-theme="dark"] {
+  --bg: #141416;
+  --bg-accent: #1b1b1e;
+  --glow-1: #212124;
+  --glow-2: #17171a;
+  --surface: #232326;
+  --surface-soft: #1b1b1e;
+  --ink: #e7e7e9;
+  --ink-soft: #c0c0c5;
+  --muted: #87878e;
+  --line: #2e2e33;
+  --line-strong: #414147;
+  --surface-glass: rgba(20, 20, 22, 0.87);
+  --surface-edge: rgba(255, 255, 255, 0.08);
+  --scrim: rgba(6, 6, 8, 0.66);
+}
+
+/*
+ * Accents. The light variants keep the base light convention (a brighter
+ * --accent-strong for gradients) and the dark variants the dark one (a deeper
+ * --accent-strong for text on --accent-soft). These values are mirrored by
+ * ACCENTS in src/lib/theme.ts for the settings swatches.
+ */
+:root[data-accent="indigo"][data-theme="light"] {
+  --accent: #7b7bf0;
+  --accent-strong: #9a9aff;
+  --accent-soft: rgba(123, 123, 240, 0.15);
+}
+
+:root[data-accent="indigo"][data-theme="dark"] {
+  --accent: #8b8bf5;
+  --accent-strong: #6f6fe8;
+  --accent-soft: rgba(139, 139, 245, 0.18);
+}
+
+:root[data-accent="amber"][data-theme="light"] {
+  --accent: #d97706;
+  --accent-strong: #f0a132;
+  --accent-soft: rgba(217, 119, 6, 0.15);
+}
+
+:root[data-accent="amber"][data-theme="dark"] {
+  --accent: #f59e0b;
+  --accent-strong: #d97706;
+  --accent-soft: rgba(245, 158, 11, 0.15);
+}
+
+:root[data-accent="emerald"][data-theme="light"] {
+  --accent: #0f9d76;
+  --accent-strong: #3fbf9a;
+  --accent-soft: rgba(15, 157, 118, 0.15);
+}
+
+:root[data-accent="emerald"][data-theme="dark"] {
+  --accent: #34d399;
+  --accent-strong: #10996f;
+  --accent-soft: rgba(52, 211, 153, 0.16);
+}
+
+:root[data-accent="rose"][data-theme="light"] {
+  --accent: #e05275;
+  --accent-strong: #f2809b;
+  --accent-soft: rgba(224, 82, 117, 0.15);
+}
+
+:root[data-accent="rose"][data-theme="dark"] {
+  --accent: #f8758a;
+  --accent-strong: #d33f4d;
+  --accent-soft: rgba(248, 117, 138, 0.16);
+}
+
+:root[data-accent="ocean"][data-theme="light"] {
+  --accent: #0d8fd9;
+  --accent-strong: #4bb4f0;
+  --accent-soft: rgba(13, 143, 217, 0.15);
+}
+
+:root[data-accent="ocean"][data-theme="dark"] {
+  --accent: #38bdf8;
+  --accent-strong: #0284c7;
+  --accent-soft: rgba(56, 189, 248, 0.17);
+}
+
 html,
 body,
 #app {

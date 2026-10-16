@@ -1,9 +1,20 @@
 import { mount } from "svelte";
 import "./app.css";
 import App from "./App.svelte";
-import { applyTheme, readTheme } from "./lib/theme";
+import {
+  applyAppearance,
+  readAccent,
+  readDesign,
+  readTheme,
+} from "./lib/theme";
 
-applyTheme(readTheme());
+// Applied before mount so the first paint already uses the stored appearance.
+const theme = readTheme();
+applyAppearance({
+  theme,
+  design: readDesign(),
+  accent: readAccent(theme),
+});
 
 const target = document.getElementById("app");
 

@@ -1,7 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { callRuntime } from "../runtime";
-  import type { Theme } from "../theme";
+  import {
+    ACCENTS,
+    DESIGNS,
+    type Accent,
+    type Appearance,
+    type Design,
+    type Theme,
+  } from "../theme";
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
   import {
@@ -16,11 +23,21 @@
     connectionKey: string;
     connected: boolean;
     theme: Theme;
-    onChange: (theme: Theme) => void;
+    design: Design;
+    accent: Accent;
+    onChange: (change: Partial<Appearance>) => void;
     onClose: () => void;
   }
 
-  let { theme, onChange, onClose, connectionKey, connected }: Props = $props();
+  let {
+    theme,
+    design,
+    accent,
+    onChange,
+    onClose,
+    connectionKey,
+    connected,
+  }: Props = $props();
   let codexStatus = $state(
     "Connect the backend to check Codex availability. Manual editing works without Codex.",
   );
@@ -45,6 +62,8 @@
   });
 
   const dark = $derived(theme === "dark");
+  const activeDesign = $derived(DESIGNS.find((item) => item.id === design));
+  const activeAccent = $derived(ACCENTS.find((item) => item.id === accent));
 
   let apiKey = $state(getOpenRouterApiKey());
   let model = $state(getOpenRouterModel());
@@ -194,11 +213,63 @@
         role="switch"
         aria-checked={dark}
         aria-label="Dark mode"
-        onclick={() => onChange(dark ? "light" : "dark")}
+        onclick={() => onChange({ theme: dark ? "light" : "dark" })}
       >
         <span class="switch__track"><span class="switch__thumb"></span></span>
         <span class="switch__label">{dark ? "Dark" : "Light"}</span>
       </button>
+    </section>
+
+    <section class="setting setting--stacked">
+      <span class="setting__icon"><Icon name="style" size={20} /></span>
+      <div class="setting__text">
+        <h2 id="design-theme-label">Design theme</h2>
+        <p>Pick a surface family and an accent color for the whole app.</p>
+        <div class="setting__body">
+          <div
+            class="choice-group"
+            role="group"
+            aria-labelledby="design-theme-label"
+          >
+            {#each DESIGNS as option (option.id)}
+              <button
+                class="choice"
+                class:choice--active={design === option.id}
+                type="button"
+                title={option.hint}
+                aria-pressed={design === option.id}
+                onclick={() => onChange({ design: option.id })}
+              >
+                {option.name}
+              </button>
+            {/each}
+          </div>
+          <p class="setting__hint">{activeDesign?.hint}</p>
+
+          <div class="swatch-row">
+            <span class="swatch-row__label" id="accent-label">Accent</span>
+            <div
+              class="swatch-group"
+              role="group"
+              aria-labelledby="accent-label"
+            >
+              {#each ACCENTS as option (option.id)}
+                <button
+                  class="accent-swatch"
+                  class:accent-swatch--active={accent === option.id}
+                  type="button"
+                  title={option.name}
+                  aria-label={option.name}
+                  aria-pressed={accent === option.id}
+                  style:background={option.swatch[theme]}
+                  onclick={() => onChange({ accent: option.id })}
+                ></button>
+              {/each}
+            </div>
+            <span class="swatch-row__value">{activeAccent?.name}</span>
+          </div>
+        </div>
+      </div>
     </section>
   </div>
 </Modal>
@@ -262,5 +333,82 @@
     align-items: center;
     gap: 0.25rem;
     font-weight: 500;
+  }
+
+  .choice-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .choice {
+    padding: 0.4rem 0.7rem;
+    font: inherit;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--ink-soft);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition:
+      border-color 0.16s ease,
+      background 0.16s ease,
+      color 0.16s ease;
+  }
+
+  .choice:hover {
+    border-color: var(--accent);
+  }
+
+  .choice--active {
+    color: var(--accent-strong);
+    background: var(--accent-soft);
+    border-color: var(--accent);
+  }
+
+  .swatch-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 0.55rem;
+  }
+
+  .swatch-row__label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--ink-soft);
+  }
+
+  .swatch-row__value {
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+
+  .swatch-group {
+    display: flex;
+    gap: 0.4rem;
+  }
+
+  .accent-swatch {
+    width: 1.5rem;
+    height: 1.5rem;
+    padding: 0;
+    border: 2px solid transparent;
+    border-radius: 50%;
+    cursor: pointer;
+    transition:
+      transform 0.12s ease,
+      box-shadow 0.16s ease;
+  }
+
+  .accent-swatch:hover {
+    transform: scale(1.08);
+  }
+
+  /* An inner ring keeps the selection readable on every accent colour. */
+  .accent-swatch--active {
+    border-color: var(--ink);
+    box-shadow: inset 0 0 0 2px var(--surface);
   }
 </style>

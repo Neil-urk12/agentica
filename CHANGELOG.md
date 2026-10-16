@@ -11,6 +11,19 @@ validation evidence in the [development docs](docs/development/README.md).
 
 ## Unreleased
 
+### 2026-10-16
+
+#### Appearance: design themes, accents, and motion
+
+- Add a design-theme picker to Settings with four surface families (Classic,
+  Slate, Sand, Graphite) and five accent colours (Indigo, Amber, Emerald, Rose,
+  Ocean). Each combines with light or dark, is remembered per device, and drives
+  the whole palette including the window colour and the logo gradient. A first
+  launch keeps the look each mode already had: indigo in light, amber in dark.
+- Play a one-time logo splash at launch, and stagger the workspace and canvas
+  pickers in behind the modal's own transition. Reduced-motion users get the
+  settled interface immediately, with the splash skipped entirely.
+
 ### 2026-10-15
 
 #### M1 contracts and manual instruction notes

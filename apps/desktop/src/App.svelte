@@ -4,7 +4,16 @@
   import { LIMITS } from "@agentica/protocol";
   import { callRuntime, desktopMode, pingRuntime } from "./lib/runtime";
   import { Editor, type DrawingSegment } from "./lib/editor";
-  import { applyTheme, readTheme, type Theme } from "./lib/theme";
+  import {
+    applyAppearance,
+    readAccent,
+    readDesign,
+    readTheme,
+    type Accent,
+    type Appearance,
+    type Design,
+    type Theme,
+  } from "./lib/theme";
   import Composer from "./lib/components/Composer.svelte";
   import CanvasToolbar from "./lib/components/CanvasToolbar.svelte";
   import DrawingNode from "./lib/components/DrawingNode.svelte";
@@ -60,7 +69,11 @@
   const DRAWER_MAX_WIDTH = 480;
   let drawerWidth = $state(readDrawerWidth());
   let settingsOpen = $state(false);
-  let theme = $state<Theme>(readTheme());
+  // The accent a first launch starts with depends on the stored mode.
+  const launchTheme = readTheme();
+  let theme = $state<Theme>(launchTheme);
+  let design = $state<Design>(readDesign());
+  let accent = $state<Accent>(readAccent(launchTheme));
   let recoveryCopy = $state("");
   let closeNotice = $state("");
   let tool = $state<Tool>("select");
@@ -526,7 +539,7 @@
   });
 
   $effect(() => {
-    applyTheme(theme);
+    applyAppearance({ theme, design, accent });
   });
 
   async function checkConnection(connect = false) {
@@ -1218,9 +1231,15 @@
   {#if settingsOpen}
     <Settings
       {theme}
+      {design}
+      {accent}
       {connectionKey}
       {connected}
-      onChange={(next) => (theme = next)}
+      onChange={(change: Partial<Appearance>) => {
+        if (change.theme) theme = change.theme;
+        if (change.design) design = change.design;
+        if (change.accent) accent = change.accent;
+      }}
       onClose={() => (settingsOpen = false)}
     />
   {/if}
