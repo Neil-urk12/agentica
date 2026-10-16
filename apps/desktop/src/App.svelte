@@ -1334,11 +1334,16 @@
       const affected = sessions.capabilities?.capabilities.supported
         ? (await sessions.list(workspaceId, canvasId)).filter(match)
         : [];
+      const removeAfterDrain = async () => {
+        // Stream reads and acknowledgements require the saved ownership metadata.
+        await sessions.drainScope(workspaceId, canvasId, match);
+        return remove();
+      };
       if (!affected.length) {
-        await remove();
+        await removeAfterDrain();
         return;
       }
-      removal = { label, sessions: affected, remove };
+      removal = { label, sessions: affected, remove: removeAfterDrain };
     } catch (error) {
       closeNotice = `Removal failed: ${String(error)}. Records were retained.`;
     }

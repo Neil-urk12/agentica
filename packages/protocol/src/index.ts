@@ -757,18 +757,24 @@ export const SessionEventSchema = z
     event: z.literal("session"),
     ...AttachmentRef,
     status: SessionStatusSchema,
-    output: z.strictObject({
-      historyGap: z.boolean(),
-      nextSequence: Sequence,
-      frames: z
-        .array(
-          z.strictObject({
-            sequence: Sequence.min(1),
-            bytes: TerminalBytes.min(1),
-          }),
-        )
-        .max(64),
-    }),
+    output: z
+      .strictObject({
+        historyGap: z.boolean(),
+        nextSequence: Sequence,
+        lastSequence: Sequence,
+        frames: z
+          .array(
+            z.strictObject({
+              sequence: Sequence.min(1),
+              bytes: TerminalBytes.min(1),
+            }),
+          )
+          .max(64),
+      })
+      .refine(
+        (page) => page.nextSequence <= page.lastSequence,
+        "Output cursor cannot exceed the final sequence",
+      ),
   })
   .refine(
     (event) =>

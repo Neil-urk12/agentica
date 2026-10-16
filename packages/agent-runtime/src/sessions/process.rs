@@ -73,7 +73,7 @@ fn spawn(
         spec.owner.clone(),
         session_id.to_owned(),
     );
-    thread::Builder::new()
+    let output = thread::Builder::new()
         .name("terminal-output".into())
         .spawn(move || {
             let mut buffer = [0; MAX_SESSION_FRAME_BYTES];
@@ -151,6 +151,8 @@ fn spawn(
         });
         match linux::cleanup(pid as i32, child.as_mut()) {
             Ok((code, signal)) => {
+                // Exit makes the final output cursor safe for renderer detachment.
+                let _ = output.join();
                 let _ = supervisor.with_session(&spec.owner, session_id, |session| {
                     session.status.state = ProcessState::Exited;
                     session.status.exit_code = code;

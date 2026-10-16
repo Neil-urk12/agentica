@@ -28,6 +28,10 @@ interface Entry {
   status: SessionStatus | null;
   attachment?: SessionAttachment;
   attaching?: Promise<void>;
+  drained?: Promise<void>;
+  drainedResolve?: () => void;
+  detaching?: Promise<void>;
+  replayed: boolean;
   terminal?: Terminal;
   fit?: FitAddon;
   element?: HTMLDivElement;
@@ -54,6 +58,7 @@ export class SessionManager {
   private signature = "";
   private disposed = false;
   private reconciling?: Promise<void>;
+  private subscribing = Promise.resolve();
   constructor(
     key: () => string,
     private changed: () => void,
@@ -119,6 +124,7 @@ export class SessionManager {
           render: Promise.resolve(),
           input: Promise.resolve(),
           pendingInput: 0,
+          replayed: false,
         });
     }
     const signature = `${workspaceId}/${document.canvas.id}/${document.sessionTiles?.map((tile) => tile.id).join(",")}`;
@@ -140,14 +146,12 @@ export class SessionManager {
             entry.owner.canvasId !== document.canvas.id
           )
             continue;
-          this.acceptStatus(
+          await this.acceptStatus(
             entry,
             sessions.find(
               (status) => status.owner.tileId === entry.owner.tileId,
             ) ?? null,
           );
-          if (entry.status && entry.status.state !== "failed")
-            await this.attach(entry);
         }
         // Inactive stopped renderers can be recreated from bounded backend replay.
         for (const [id, entry] of this.entries)
@@ -160,11 +164,19 @@ export class SessionManager {
                 (tile) => tile.id === entry.owner.tileId,
               ))
           ) {
-            void entry.attachment?.detach().catch(() => {});
-            entry.generation++;
+            if (entry.status?.state === "exited") await entry.drained;
+            await this.detach(entry);
             entry.terminal?.dispose();
             this.entries.delete(id);
           }
+        for (const entry of this.entries.values())
+          if (
+            entry.owner.workspaceId === workspaceId &&
+            entry.owner.canvasId === document.canvas.id &&
+            entry.status &&
+            entry.status.state !== "failed"
+          )
+            await this.attach(entry);
       } catch (error) {
         this.connected = false;
         for (const entry of this.entries.values())
@@ -184,18 +196,39 @@ export class SessionManager {
     }
   }
 
-  private acceptStatus(entry: Entry, status: SessionStatus | null) {
+  private async detach(entry: Entry) {
+    if (entry.detaching) return entry.detaching;
+    const attachment = entry.attachment;
+    const resolve = entry.drainedResolve;
+    entry.drainedResolve = undefined;
+    entry.attachment = undefined;
+    entry.connected = false;
+    entry.generation++;
+    if (entry.terminal) entry.terminal.options.disableStdin = true;
+    entry.detaching = (async () => {
+      try {
+        await attachment?.detach();
+      } finally {
+        resolve?.();
+      }
+    })();
+    try {
+      await entry.detaching;
+    } finally {
+      entry.detaching = undefined;
+    }
+  }
+
+  private async acceptStatus(entry: Entry, status: SessionStatus | null) {
     if (
       entry.status?.sessionId !== status?.sessionId ||
       entry.status?.backendId !== status?.backendId
     ) {
-      entry.generation++;
-      void entry.attachment?.detach().catch(() => {});
-      entry.attachment = undefined;
-      entry.connected = false;
+      await this.detach(entry).catch(() => {});
       entry.cursor = 0;
       entry.historyGap = false;
       entry.error = "";
+      entry.replayed = false;
       entry.terminal?.reset();
     }
     entry.status = status;
@@ -433,11 +466,7 @@ export class SessionManager {
       })
       .catch((error) => {
         if (entry.generation === generation) {
-          entry.generation++;
-          entry.connected = false;
-          entry.attachment = undefined;
-          if (entry.terminal) entry.terminal.options.disableStdin = true;
-          void attachment.detach().catch(() => {});
+          void this.detach(entry).catch(() => {});
         }
         entry.error = message(error);
         this.changed();
@@ -449,11 +478,29 @@ export class SessionManager {
 
   private async attach(entry: Entry) {
     if (entry.attaching) return entry.attaching;
-    if (entry.attachment || !entry.status) return;
+    if (entry.attachment || !entry.status || entry.replayed) return;
     const identity = entry.status.sessionId;
     const generation = entry.generation;
-    entry.attaching = (async () => {
+    entry.attaching = this.subscribing.then(async () => {
       try {
+        await Promise.all(
+          [...this.entries.values()].map(
+            (other) =>
+              other.detaching ??
+              (other.status?.state === "exited" ? other.drained : undefined),
+          ),
+        );
+        if (entry.generation !== generation || this.disposed) return;
+        if (
+          [...this.entries.values()].filter((other) => other.attachment)
+            .length >= SESSION_LIMITS.liveSessions
+        )
+          throw new Error(
+            "Too many terminal subscriptions. Wait for a session to finish.",
+          );
+        entry.drained = new Promise((resolve) => {
+          entry.drainedResolve = resolve;
+        });
         const attachment = await this.client.subscribe(
           entry.owner,
           identity,
@@ -464,6 +511,8 @@ export class SessionManager {
             entry.connected = false;
             entry.attachment = undefined;
             entry.generation++;
+            entry.drainedResolve?.();
+            entry.drainedResolve = undefined;
             if (entry.terminal) entry.terminal.options.disableStdin = true;
             entry.error = error.message;
             this.connected = false;
@@ -471,7 +520,9 @@ export class SessionManager {
           },
         );
         if (entry.generation !== generation || this.disposed) {
-          void attachment.detach().catch(() => {});
+          await attachment.detach().catch(() => {});
+          entry.drainedResolve?.();
+          entry.drainedResolve = undefined;
           return;
         }
         entry.attachment = attachment;
@@ -483,11 +534,14 @@ export class SessionManager {
         this.fit(entry);
         this.changed();
       } catch (error) {
+        entry.drainedResolve?.();
+        entry.drainedResolve = undefined;
         entry.error = message(error);
         entry.connected = false;
         this.changed();
       }
-    })();
+    });
+    this.subscribing = entry.attaching;
     try {
       await entry.attaching;
     } finally {
@@ -515,7 +569,12 @@ export class SessionManager {
         // A hidden renderer consumes bytes at the backend's last actual size.
         if (!entry.host) terminal.resize(event.status.cols, event.status.rows);
         const frames = event.output.frames;
-        if (!frames.length && !event.output.historyGap) return;
+        if (
+          !frames.length &&
+          !event.output.historyGap &&
+          event.status.state !== "exited"
+        )
+          return;
         const bytes = new Uint8Array(
           frames.reduce((total, frame) => total + frame.bytes.length, 0),
         );
@@ -535,10 +594,20 @@ export class SessionManager {
           attachmentId: event.attachmentId,
           sequence: entry.cursor,
         });
+        if (
+          entry.generation === generation &&
+          event.status.state === "exited" &&
+          entry.cursor === event.output.lastSequence
+        ) {
+          entry.replayed = true;
+          await this.detach(entry);
+          this.changed();
+        }
       })
-      .catch((error) => {
+      .catch(async (error) => {
         if (entry.generation === generation) {
           entry.error = message(error);
+          await this.detach(entry).catch(() => {});
           this.changed();
         }
       });
@@ -554,7 +623,7 @@ export class SessionManager {
       const current = (await this.client.request({ op: "status", owner }))
         .status;
       if (!restart && live(current)) {
-        this.acceptStatus(entry, current);
+        await this.acceptStatus(entry, current);
         await this.attach(entry);
         return;
       }
@@ -578,7 +647,7 @@ export class SessionManager {
               requestId: crypto.randomUUID(),
               ...dimensions,
             });
-      this.acceptStatus(entry, result.status);
+      await this.acceptStatus(entry, result.status);
       await this.attach(entry);
     } catch (error) {
       entry.error = message(error);
@@ -591,7 +660,7 @@ export class SessionManager {
     const entry = this.entries.get(key(owner));
     if (!entry?.status) return;
     try {
-      this.acceptStatus(
+      await this.acceptStatus(
         entry,
         (
           await this.client.request({
@@ -631,6 +700,22 @@ export class SessionManager {
     });
     return sessions.filter((status) => live(status));
   }
+  async drainScope(
+    workspaceId: string,
+    canvasId?: string,
+    match: (status: SessionStatus) => boolean = () => true,
+  ) {
+    for (const entry of this.entries.values()) {
+      if (
+        entry.owner.workspaceId !== workspaceId ||
+        (canvasId !== undefined && entry.owner.canvasId !== canvasId) ||
+        (entry.status && !match(entry.status))
+      )
+        continue;
+      await entry.attaching;
+      await entry.drained;
+    }
+  }
   async stopSessions(sessions: SessionStatus[]) {
     for (const status of sessions) {
       const result = await this.client.request({
@@ -639,7 +724,7 @@ export class SessionManager {
         sessionId: status.sessionId,
       });
       const entry = this.entries.get(key(status.owner));
-      if (entry) this.acceptStatus(entry, result.status);
+      if (entry) await this.acceptStatus(entry, result.status);
     }
     const deadline = Date.now() + 6000;
     for (;;) {
@@ -650,7 +735,7 @@ export class SessionManager {
           owner: confirmed.owner,
         });
         const entry = this.entries.get(key(confirmed.owner));
-        if (entry) this.acceptStatus(entry, status);
+        if (entry) await this.acceptStatus(entry, status);
         if (status && status.sessionId !== confirmed.sessionId && live(status))
           throw new Error(
             "A replacement session started. Review removal again.",
@@ -669,6 +754,7 @@ export class SessionManager {
   async dispose() {
     this.disposed = true;
     await this.client.close();
+    for (const entry of this.entries.values()) entry.drainedResolve?.();
     for (const entry of this.entries.values()) entry.terminal?.dispose();
     this.entries.clear();
   }

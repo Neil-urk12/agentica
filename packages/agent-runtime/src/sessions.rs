@@ -834,6 +834,63 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
+    fn exited_status_includes_all_final_output_pages() {
+        let root = tempfile::tempdir().unwrap();
+        let supervisor = Active(SessionSupervisor::new().unwrap());
+        let mut spec = shell(root.path());
+        spec.executable = "/bin/bash".into();
+        spec.argv = vec!["-c".into(), "printf '%065536dEND' 0".into()];
+        let status = supervisor
+            .0
+            .start(spec.clone(), "final-output", 24, 80)
+            .unwrap();
+        let exited = supervisor
+            .0
+            .wait_stopped(&spec.owner, &status.session_id)
+            .unwrap();
+        assert_eq!(exited.state, ProcessState::Exited);
+        let attachment = supervisor
+            .0
+            .attach(&spec.owner, &status.session_id, 0)
+            .unwrap();
+        let mut bytes = Vec::new();
+        let mut pages = 0;
+        let last = loop {
+            let page = supervisor
+                .0
+                .output(&spec.owner, &status.session_id, &attachment)
+                .unwrap();
+            assert!(!page.frames.is_empty());
+            pages += 1;
+            for frame in page.frames {
+                bytes.extend(frame.bytes);
+            }
+            supervisor
+                .0
+                .acknowledge(
+                    &spec.owner,
+                    &status.session_id,
+                    &attachment,
+                    page.next_sequence,
+                )
+                .unwrap();
+            if page.next_sequence == page.last_sequence {
+                break page.last_sequence;
+            }
+        };
+        assert!(pages > 1);
+        assert_eq!(bytes.len(), 65539);
+        assert!(bytes.ends_with(b"0END"));
+        let drained = supervisor
+            .0
+            .output(&spec.owner, &status.session_id, &attachment)
+            .unwrap();
+        assert!(drained.frames.is_empty());
+        assert_eq!(drained.last_sequence, last);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
     fn output_flood_keeps_canvas_save_and_stop_responsive() {
         let root = tempfile::tempdir().unwrap();
         let data = tempfile::tempdir().unwrap();

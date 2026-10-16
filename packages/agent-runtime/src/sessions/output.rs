@@ -13,6 +13,7 @@ pub struct OutputFrame {
 pub struct OutputPage {
     pub history_gap: bool,
     pub next_sequence: u64,
+    pub last_sequence: u64,
     pub frames: Vec<OutputFrame>,
 }
 
@@ -164,6 +165,7 @@ impl Output {
         Ok(OutputPage {
             history_gap,
             next_sequence: attachment.sent,
+            last_sequence: self.sequence,
             frames,
         })
     }
@@ -184,11 +186,14 @@ mod tests {
         assert!(output.attach(0).is_err());
         let first = output.page(&id).unwrap();
         assert!(first.history_gap);
+        assert_eq!(first.last_sequence, 100);
         assert_eq!(first.frames[0].sequence, 37);
         for _ in 1..16 {
             assert_eq!(output.page(&id).unwrap().frames.len(), 1);
         }
-        assert!(output.page(&id).unwrap().frames.is_empty());
+        let blocked = output.page(&id).unwrap();
+        assert!(blocked.frames.is_empty());
+        assert!(blocked.next_sequence < blocked.last_sequence);
         assert!(output.acknowledge(&id, 100).is_err());
         output.acknowledge(&id, 52).unwrap();
         assert_eq!(output.page(&id).unwrap().frames[0].sequence, 53);

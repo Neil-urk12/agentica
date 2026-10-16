@@ -10,7 +10,19 @@ released version and date. Keep validation evidence in the
 
 ## Unreleased
 
+### 2026-10-19
+
+- Wait for affected terminal output to drain before removing saved workspaces,
+  canvases, projects, or tiles. Stream reads and acknowledgements still need that
+  metadata after process exit; deleting it early could block later subscriptions.
+
 ### 2026-10-18
+
+#### Release exited terminal subscriptions
+
+- Drain and acknowledge the final PTY output before detaching exited sessions.
+  Reclaim completed subscriptions before attaching another tile, so retained
+  terminal history cannot exhaust the browser connection's eight slots.
 
 #### Add project groups with native shell and Codex tiles
 
