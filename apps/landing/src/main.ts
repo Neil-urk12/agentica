@@ -29,6 +29,62 @@ function detectPlatform(): PlatformId | null {
   return null;
 }
 
+/* ------------------------------------------------------------------ theme */
+
+const THEME_KEY = "agentica.landing.theme";
+type Theme = "light" | "dark";
+
+const root = document.documentElement;
+const themeToggles = Array.from(
+  document.querySelectorAll<HTMLButtonElement>("[data-theme-toggle]"),
+);
+const themeMeta = document.querySelector<HTMLMetaElement>("#theme-color");
+
+function storedTheme(): Theme | null {
+  try {
+    const value = localStorage.getItem(THEME_KEY);
+    return value === "dark" || value === "light" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function applyTheme(theme: Theme, persist: boolean) {
+  root.dataset.theme = theme;
+  const dark = theme === "dark";
+
+  for (const toggle of themeToggles) {
+    toggle.setAttribute("aria-pressed", String(dark));
+    const label = dark ? "Switch to light theme" : "Switch to dark theme";
+    toggle.setAttribute("aria-label", label);
+    toggle.title = label;
+  }
+
+  if (themeMeta) themeMeta.content = dark ? "#131217" : "#f2efe7";
+
+  if (persist) {
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // The chosen theme still applies for this page view.
+    }
+  }
+}
+
+applyTheme(root.dataset.theme === "dark" ? "dark" : "light", false);
+
+for (const toggle of themeToggles) {
+  toggle.addEventListener("click", () => {
+    applyTheme(root.dataset.theme === "dark" ? "light" : "dark", true);
+  });
+}
+
+const colorScheme = window.matchMedia("(prefers-color-scheme: dark)");
+colorScheme.addEventListener("change", (event) => {
+  if (storedTheme()) return;
+  applyTheme(event.matches ? "dark" : "light", false);
+});
+
 /* ------------------------------------------------------------- downloads */
 
 const platformButtons = Array.from(

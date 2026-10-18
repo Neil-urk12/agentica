@@ -192,6 +192,9 @@ released version and date. Keep validation evidence in the
   moved nodes, with keyboard nudging and reduced-motion support. Add
   `pnpm dev:landing` and `pnpm build:landing`; the existing recursive build and
   check commands cover the new package.
+- Add a persisted light/dark theme toggle. The site follows the system preference
+  until a visitor chooses a theme, applies it before first paint, and updates the
+  browser theme color with it.
 
 ### 2026-10-16
 
