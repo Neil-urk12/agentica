@@ -182,6 +182,17 @@ released version and date. Keep validation evidence in the
   Constraints reject unsupported presets and invalid revisions or geometry;
   workspace migration rollback and foreign-key checks have focused coverage.
 
+#### Landing page and desktop download entry point
+
+- Add `apps/landing`, a static Vite page that presents the canvas concept,
+  current capabilities, and an honest status ledger. Its download call to action
+  detects the visitor's platform, links to GitHub Releases, and offers copyable
+  source-build commands while installers remain pending.
+- The hero includes a draggable miniature canvas whose connector paths follow the
+  moved nodes, with keyboard nudging and reduced-motion support. Add
+  `pnpm dev:landing` and `pnpm build:landing`; the existing recursive build and
+  check commands cover the new package.
+
 ### 2026-10-16
 
 #### Make the canvas easier to read and review
