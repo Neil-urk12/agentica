@@ -53,7 +53,8 @@ or copy the response for recovery. Basic manual editing needs no AI account.
 Choose **Open project** to place an existing folder on the canvas as a project
 group. The desktop app shows a folder picker; browser mode asks for an absolute
 folder path on the backend computer. Opening a folder copies and creates nothing
-and runs no command. Each group header offers **Add terminal** (your login shell,
+and runs no command. Groups start collapsed on every canvas visit; the header
+chevron expands one. Each group header offers **Add terminal** (your login shell,
 or `/bin/sh` as a visible fallback) and **Add agent** (the installed Codex CLI with
 its own sign-in, prompts, and approvals). Tiles belong to their group, move with it,
 and start only when you choose **Start**. Sessions run with your user permissions;

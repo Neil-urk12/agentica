@@ -793,7 +793,7 @@ test("the UI save buffer recovers a real SQLite write failure and reopens after 
   }
 });
 
-test("drawing labels, connections and keyboard instruction notes reopen without Codex", async () => {
+test("drawing labels, connections and inspector text edits reopen without Codex", async () => {
   const backend = await startBackend();
   key = backend.connectionKey;
   let browser;
@@ -947,6 +947,20 @@ test("drawing labels, connections and keyboard instruction notes reopen without 
       browser,
       `[...document.querySelectorAll(".svelte-flow__node")].length === 5 && [...document.querySelectorAll(".svelte-flow__node")].every((node) => node.getBoundingClientRect().height > 0)`,
       "all five nodes to be measured",
+    );
+    assert.equal(
+      await evaluate(browser, `!!document.querySelector(".inspector")`),
+      false,
+      "the inspector starts closed",
+    );
+    await clickAt(
+      browser,
+      await boxOf(browser, '[aria-label="Toggle inspector"]'),
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector(".inspector")`,
+      "the inspector to open from its canvas control",
     );
     const composite = `[data-id="${compositeId}"]`;
     assert.equal(
@@ -1122,35 +1136,15 @@ test("drawing labels, connections and keyboard instruction notes reopen without 
       "the save indicator to settle",
     );
 
-    // Activate the ordinary button with a real keyboard event, then type into
-    // the existing inspector. The backend has an empty PATH (no Codex).
+    // Select the seeded text note and edit it through the inspector. The
+    // backend has an empty PATH (no Codex).
+    await clickAt(browser, await boxOf(browser, `[data-id="${textNodeId}"]`));
     await waitFor(
       browser,
-      `[...document.querySelectorAll("button")].some((button) => button.textContent.includes("Add instruction note") && !button.disabled)`,
-      "note creation to be enabled after the connection saves",
+      `document.querySelector("#text-node")?.value === ${JSON.stringify(textNodeId)} && !!document.querySelector("#text-content")`,
+      "the selected note in the inspector",
     );
-    await evaluate(
-      browser,
-      `([...document.querySelectorAll("button")].find((button) => button.textContent.includes("Add instruction note"))).focus()`,
-    );
-    assert.equal(
-      await evaluate(
-        browser,
-        `document.activeElement?.tagName === "BUTTON" && document.activeElement.textContent.includes("Add instruction note")`,
-      ),
-      true,
-      "the enabled instruction button receives keyboard focus",
-    );
-    await press("Enter", "Enter");
-    await waitFor(
-      browser,
-      `document.activeElement?.id === "text-content" && !!document.querySelector("#instruction-reference")`,
-      "the instruction editor to receive keyboard focus",
-    );
-    const instructionReference = await evaluate(
-      browser,
-      `document.querySelector("#instruction-reference").value`,
-    );
+    await evaluate(browser, `document.querySelector("#text-content").focus()`);
     await browser.send(
       "Input.insertText",
       { text: "Draft a release plan from these notes." },
@@ -1163,14 +1157,14 @@ test("drawing labels, connections and keyboard instruction notes reopen without 
     await waitFor(
       browser,
       `document.querySelector(".pill")?.textContent.includes("All changes saved") && document.querySelector("#node-x")?.value === "180"`,
-      "instruction content and placement to save",
+      "text content and placement to save",
     );
-    assert.match(
+    assert.equal(
       await evaluate(
         browser,
         `document.querySelector("label[for='text-content']").textContent`,
       ),
-      /Agent instructions/,
+      "Text content",
     );
 
     // Closing and reopening the canvas must bring the connections back.
@@ -1197,14 +1191,19 @@ test("drawing labels, connections and keyboard instruction notes reopen without 
       `document.querySelectorAll(".svelte-flow__edge").length === 3`,
       "the reopened connections to render",
     );
+    assert.equal(
+      await evaluate(browser, `!!document.querySelector(".inspector")`),
+      false,
+      "the inspector closes again when the canvas reopens",
+    );
+    await clickAt(
+      browser,
+      await boxOf(browser, '[aria-label="Toggle inspector"]'),
+    );
     await waitFor(
       browser,
-      `document.querySelector("#instruction-reference")?.value === ${JSON.stringify(instructionReference)}`,
-      "the selected instruction note to reopen with the same reference",
-    );
-    assert.equal(
-      await evaluate(browser, `document.querySelector("#text-content").value`),
-      "Draft a release plan from these notes.",
+      `document.querySelector("#text-node")?.value === ${JSON.stringify(textNodeId)} && document.querySelector("#text-content")?.value === "Draft a release plan from these notes."`,
+      "the selected note to reopen in the inspector",
     );
     assert.equal(
       await evaluate(browser, `document.querySelector("#node-x").value`),
