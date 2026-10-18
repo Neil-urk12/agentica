@@ -62,6 +62,9 @@ released version and date. Keep validation evidence in the
   deletions while owned sessions remain and never touches project files.
   Project and terminal data stay out of canvas conversation context.
 - Fix a stale rejected-folder error silently blocking later project actions.
+- Open canvases with each project group collapsed and the inspector closed. The
+  header chevron still expands a group and the canvas toggle still opens the
+  inspector. Remove the redundant topbar instruction-note shortcut.
 
 #### Prove Linux PTY integration boundaries
 

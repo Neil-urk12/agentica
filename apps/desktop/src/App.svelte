@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick, untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { invoke } from "@tauri-apps/api/core";
   import { open as pickDirectory } from "@tauri-apps/plugin-dialog";
@@ -124,8 +124,13 @@
       : "Start the backend and paste its connection key.",
   );
   let busy = $state(false);
-  let inspectorOpen = $state(true);
+  let inspectorOpen = $state(false);
   let drawerOpen = $state(true);
+  // Groups start collapsed whenever a canvas opens. Expanding is a view-only
+  // choice until the control persists it, so reopening never leaks a previous
+  // expanded layout.
+  let expandedGroups = $state.raw<Record<string, boolean>>({});
+  let groupViewCanvasId = "";
   const DRAWER_MIN_WIDTH = 180;
   const DRAWER_MAX_WIDTH = 480;
   let drawerWidth = $state(readDrawerWidth());
@@ -521,21 +526,6 @@
     gesture = null;
   }
 
-  async function addInstruction() {
-    const created = await editor.addText(
-      undefined,
-      "",
-      undefined,
-      undefined,
-      "instruction",
-    );
-    if (!created) return;
-    selectedId = created.node.id;
-    inspectorOpen = true;
-    await tick();
-    document.getElementById("text-content")?.focus();
-  }
-
   function handlePromptSubmit(prompt: string) {
     generationTask = generateReply(prompt);
     return generationTask;
@@ -923,6 +913,8 @@
     const editable = connected && !editorState.busy;
     const turns = editorState.turns;
     const revision = sessionRevision;
+    // Tracked so collapsing or expanding a group rerenders these nodes.
+    const groupView = expandedGroups;
     untrack(() => {
       const asNode = (
         node: NonNullable<typeof document>["nodes"][number],
@@ -982,8 +974,14 @@
       };
       const rendered: Node[] = [];
       if (document && editorState.workspace) {
+        if (groupViewCanvasId !== document.canvas.id) {
+          groupViewCanvasId = document.canvas.id;
+          expandedGroups = {};
+          inspectorOpen = false;
+        }
         const workspaceId = editorState.workspace.workspace.id;
         for (const group of document.projectGroups) {
+          const collapsed = groupView[group.id] !== true;
           const tiles = document.sessionTiles.filter(
             (t) => t.projectId === group.id,
           );
@@ -998,12 +996,12 @@
             type: "project",
             position: { x: group.x, y: group.y },
             width: group.width,
-            height: group.collapsed ? 96 : group.height,
+            height: collapsed ? 96 : group.height,
             dragHandle: ".project-drag",
             connectable: false,
             data: {
               kind: "project",
-              group,
+              group: { ...group, collapsed },
               editable,
               locatable: !running.length,
               attentionCount: sessions
@@ -1017,12 +1015,21 @@
                 240,
                 ...tiles.map((t) => t.y + t.height + 16),
               ),
-              onCollapse: () =>
-                editor.placeProject(group.id, { collapsed: !group.collapsed }),
-              onAddAgent: () =>
-                void editor.addSessionTile(group.id, "cli-agent"),
-              onAddTerminal: () =>
-                void editor.addSessionTile(group.id, "shell"),
+              onCollapse: () => {
+                expandedGroups = {
+                  ...expandedGroups,
+                  [group.id]: collapsed,
+                };
+                editor.placeProject(group.id, { collapsed: !collapsed });
+              },
+              onAddAgent: () => {
+                expandedGroups = { ...expandedGroups, [group.id]: true };
+                void editor.addSessionTile(group.id, "cli-agent");
+              },
+              onAddTerminal: () => {
+                expandedGroups = { ...expandedGroups, [group.id]: true };
+                void editor.addSessionTile(group.id, "shell");
+              },
               onLocate: () => void openProject(group.id),
               onRemove: () => void removeObject(group.id),
               onResize: (width: number, height: number) =>
@@ -1047,7 +1054,7 @@
             position: { x: tile.x, y: tile.y },
             width: tile.width,
             height: tile.height,
-            hidden: group.collapsed,
+            hidden: groupView[group.id] !== true,
             dragHandle: ".session-drag",
             extent: [
               [16, 96],
@@ -1132,7 +1139,13 @@
         }
       }
       if (!rendered.some((node) => node.id === selectedId)) selectedId = "";
-      if (!document) selectionCanvasId = "";
+      if (!document) {
+        selectionCanvasId = "";
+        groupViewCanvasId = "";
+        // This effect tracks `expandedGroups`; assigning a fresh object every
+        // run would retrigger it forever and freeze the UI.
+        if (Object.keys(expandedGroups).length) expandedGroups = {};
+      }
     });
   });
 
@@ -1715,15 +1728,6 @@
           onclick={() => (settingsOpen = true)}
         >
           <Icon name="settings" size={20} />
-        </button>
-        <button
-          class="btn btn--soft"
-          type="button"
-          disabled={!canEdit}
-          onclick={() => void addInstruction()}
-        >
-          <Icon name="add_box" size={18} />
-          Add instruction note
         </button>
         <button
           class="btn btn--primary"
