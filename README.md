@@ -291,7 +291,8 @@ pnpm dev:landing
 
 Open `http://127.0.0.1:1430` for the standalone marketing page. It detects the
 visitor's platform for the download call to action and links to GitHub Releases;
-the source-build commands are listed alongside. `pnpm build:landing` writes the
+the source-build commands are listed alongside. Its light/dark theme follows the
+system preference until a visitor picks one. `pnpm build:landing` writes the
 static site to `apps/landing/dist`. The page does not talk to the runtime and has
 no backend dependency.
 
