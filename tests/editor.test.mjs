@@ -152,6 +152,15 @@ async function setup(t, intercept = async () => {}) {
         ...node,
         ...params.nodes.find((item) => item.id === node.id),
       }));
+      for (const collection of ["projectGroups", "sessionTiles"])
+        if (params[collection])
+          disk[collection] = disk[collection].map((item) => {
+            const { expectedRevision, ...layout } = params[collection].find(
+              (p) => p.id === item.id,
+            );
+            assert.equal(expectedRevision, item.revision);
+            return { ...item, ...layout, revision: item.revision + 1 };
+          });
       return { revision: disk.canvas.revision };
     }
     throw new Error(`Unexpected method ${method}`);
@@ -174,6 +183,134 @@ function deferred() {
   });
   return { promise, resolve };
 }
+
+async function projectSetup(t, intercept) {
+  const fixture = await setup(t, intercept);
+  const group = (id, x) => ({
+    id,
+    root: "/tmp/example",
+    label: "example",
+    available: true,
+    x,
+    y: 10,
+    width: 800,
+    height: 700,
+    collapsed: false,
+    revision: 1,
+  });
+  fixture.disk.projectGroups = [
+    group("00000000-0000-4000-8000-000000000005", 30),
+    group("00000000-0000-4000-8000-000000000006", 900),
+  ];
+  fixture.disk.sessionTiles = [
+    {
+      id: "00000000-0000-4000-8000-000000000007",
+      projectId: fixture.disk.projectGroups[0].id,
+      kind: "shell",
+      preset: null,
+      x: 16,
+      y: 96,
+      width: 576,
+      height: 440,
+      revision: 1,
+    },
+  ];
+  await fixture.editor.openCanvas(canvasId);
+  return fixture;
+}
+
+test("a rejected project folder does not block a corrected retry", async (t) => {
+  const { editor, calls } = await projectSetup(t, async (method, params) => {
+    if (method === "project.open" && params.path === "/missing")
+      throw new Error("This directory is unavailable.");
+  });
+  assert.equal(await editor.openProject("/missing"), undefined);
+  assert.match(editor.state.error, /unavailable/);
+  assert.equal(editor.state.dirty, false);
+  // The fixture does not implement project.open, so the retry fails after reaching it.
+  await editor.openProject("/tmp/example");
+  assert.deepEqual(
+    calls
+      .filter((call) => call.method === "project.open")
+      .map((call) => call.params.path),
+    ["/missing", "/tmp/example"],
+  );
+});
+
+test("project layout keeps duplicate roots independent and children relative across save and reopen", async (t) => {
+  const { editor, disk, calls } = await projectSetup(t);
+  const [first, second] = disk.projectGroups;
+  const tile = disk.sessionTiles[0];
+  editor.placeProject(first.id, { x: 150, y: 240, collapsed: true });
+  editor.placeProject(first.id, { width: 20, height: 20 });
+  editor.placeSessionTile(tile.id, { x: 9999, y: -50 });
+  const draft = editor.state.document;
+  assert.equal(draft.projectGroups[0].width, 608);
+  assert.equal(draft.projectGroups[0].height, 552);
+  assert.equal(draft.sessionTiles[0].x, 16);
+  assert.equal(draft.sessionTiles[0].y, 96);
+  assert.equal(draft.sessionTiles[0].projectId, first.id);
+  assert.deepEqual(draft.projectGroups[1], second);
+  await editor.save();
+  await editor.openCanvas(canvasId);
+  assert.equal(editor.state.document.projectGroups[0].collapsed, true);
+  assert.equal(editor.state.document.projectGroups[0].x, 150);
+  assert.equal(editor.state.document.projectGroups[0].height, 552);
+  assert.equal(editor.state.document.sessionTiles[0].revision, 2);
+  assert.ok(calls.every((call) => !call.method.startsWith("session.")));
+});
+
+test("project save failures retain drafts and retry refuses unknown remote layout or association", async (t) => {
+  for (const change of ["none", "layout", "root"])
+    await t.test(change, async (t) => {
+      let fail = true;
+      const { editor, disk } = await projectSetup(t, async (method) => {
+        if (method === "canvas.save" && fail) {
+          fail = false;
+          throw new Error("lost transport");
+        }
+      });
+      const id = disk.projectGroups[0].id;
+      editor.placeProject(id, { x: 99 });
+      await editor.save();
+      assert.equal(editor.state.dirty, true);
+      assert.equal(editor.state.document.projectGroups[0].x, 99);
+      if (change === "layout") disk.projectGroups[0].x = 777;
+      if (change === "root") disk.projectGroups[0].root = "/other";
+      await editor.retrySave();
+      if (change === "none") {
+        assert.equal(editor.state.error, "");
+        assert.equal(disk.projectGroups[0].x, 99);
+      } else {
+        assert.match(editor.state.error, /changed elsewhere/);
+        assert.equal(editor.state.dirty, true);
+      }
+    });
+});
+
+test("project acknowledgement preserves newer collapse and placement during an in-flight save", async (t) => {
+  const gate = deferred();
+  const entered = deferred();
+  let block = true;
+  const { editor, disk } = await projectSetup(t, async (method) => {
+    if (method === "canvas.save" && block) {
+      block = false;
+      entered.resolve();
+      await gate.promise;
+    }
+  });
+  const id = disk.projectGroups[0].id;
+  editor.placeProject(id, { x: 100 });
+  const save = editor.save();
+  await entered.promise;
+  editor.placeProject(id, { x: 200, collapsed: true });
+  gate.resolve();
+  await save;
+  assert.equal(editor.state.error, "");
+  assert.equal(disk.projectGroups[0].x, 200);
+  assert.equal(disk.projectGroups[0].collapsed, true);
+  assert.equal(editor.state.dirty, false);
+});
 
 test("proposal approval publishes the canvas and turn status together, even if status reload fails", async (t) => {
   for (const failReload of [false, true])

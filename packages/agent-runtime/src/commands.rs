@@ -11,6 +11,8 @@ use crate::store::{delete_workspace, is_id, list_workspaces, new_id, RuntimeErro
 
 #[path = "conversation.rs"]
 mod conversation;
+#[path = "projects.rs"]
+mod projects;
 
 // Limits shared with packages/protocol/src/index.ts.
 const MAX_LABEL: usize = 120;
@@ -52,6 +54,11 @@ pub(crate) const METHODS: &[&str] = &[
     "artifact.saveText",
     "node.createDrawing",
     "node.delete",
+    "project.open",
+    "project.delete",
+    "project.deleteTile",
+    "project.locate",
+    "project.createTile",
 ];
 
 pub(crate) fn invalid(message: impl Into<String>) -> RuntimeError {
@@ -225,6 +232,10 @@ struct SaveCanvas {
     expected_revision: f64,
     viewport: Viewport,
     nodes: Vec<NodeLayout>,
+    #[serde(default)]
+    project_groups: Vec<projects::GroupLayout>,
+    #[serde(default)]
+    session_tiles: Vec<projects::TileLayout>,
 }
 
 #[derive(Deserialize)]
@@ -410,6 +421,15 @@ impl Runtime {
 
     pub(crate) fn call(&mut self, method: &str, params: Value) -> Result<Value, RuntimeError> {
         match method {
+            "project.open" | "project.locate" | "project.createTile" | "project.delete"
+            | "project.deleteTile" => {
+                let workspace_id = params
+                    .get("workspaceId")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| invalid("workspaceId is required."))?
+                    .to_owned();
+                self.transact(&workspace_id, |tx| projects::call(tx, method, params))
+            }
             "conversation.start"
             | "conversation.finish"
             | "conversation.resolve"
@@ -641,6 +661,7 @@ impl Runtime {
                             return Err(not_found("Node on this canvas"));
                         }
                     }
+                    projects::save_layout(tx, &params.canvas_id, &params.project_groups, &params.session_tiles)?;
                     Ok(json!({ "revision": bump(tx, &params.canvas_id, expected)? }))
                 })
             }
@@ -1043,5 +1064,9 @@ fn canvas_state(tx: &Transaction, canvas_id: &str) -> Result<Value, RuntimeError
         .iter()
         .map(|artifact_id| artifact(tx, artifact_id))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(json!({ "canvas": canvas, "nodes": nodes, "edges": edges, "artifacts": artifacts }))
+    let (groups, tiles) = projects::collections(tx, canvas_id)?;
+    Ok(
+        json!({ "canvas": canvas, "nodes": nodes, "edges": edges, "artifacts": artifacts,
+        "projectGroups": groups, "sessionTiles": tiles }),
+    )
 }

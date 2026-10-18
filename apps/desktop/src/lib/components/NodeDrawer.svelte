@@ -30,6 +30,9 @@
   }: Props = $props();
 
   const ICONS: Record<string, string> = {
+    project: "folder_open",
+    shell: "terminal",
+    "cli-agent": "smart_toy",
     instruction: "note_add",
     text: "text_fields",
     path: "gesture",
@@ -38,6 +41,9 @@
   };
 
   const KINDS: Record<string, string> = {
+    project: "Project",
+    shell: "Terminal",
+    "cli-agent": "Codex",
     instruction: "Instruction note",
     text: "Text",
     path: "Drawing",

@@ -11,7 +11,16 @@ struct Start {
     prompt: String,
     model: String,
     node_ids: Vec<String>,
+    #[serde(default)]
+    context_mode: Option<ContextMode>,
     anchor: Anchor,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ContextMode {
+    Canvas,
+    Selection,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -505,7 +514,11 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                 .as_array()
                 .unwrap()
                 .iter()
-                .filter(|n| p.node_ids.is_empty() || p.node_ids.iter().any(|id| n["id"] == *id))
+                .filter(|n| {
+                    (p.node_ids.is_empty()
+                        && !matches!(p.context_mode, Some(ContextMode::Selection)))
+                        || p.node_ids.iter().any(|id| n["id"] == *id)
+                })
                 .cloned()
                 .collect();
             if !p.node_ids.is_empty() && nodes.len() != p.node_ids.len() {

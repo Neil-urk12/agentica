@@ -10,6 +10,39 @@ released version and date. Keep validation evidence in the
 
 ## Unreleased
 
+### 2026-10-18
+
+#### Add project groups with native shell and Codex tiles
+
+- Open existing folders as movable, collapsible project groups (desktop folder
+  picker, or a backend path in browser mode). Groups hold explicitly owned shell
+  and Codex tiles with group-relative layout; folder opening and canvas restore
+  never launch commands, and missing folders offer **Locate folder**.
+- A backend-lifetime PTY supervisor runs outside the workspace database lock so
+  terminal output cannot stall saves. Sessions are bound to saved tile ownership,
+  launched directly as executable plus argv, limited by shared named budgets,
+  and stopped with process-session cleanup. Desktop streams over Tauri channels;
+  the detached backend uses an origin-checked WebSocket authenticated by the
+  first message rather than a URL key.
+- One controller per session, no input replay, and explicit history gaps keep
+  reconnection honest. Redraw is a PTY resize round-trip because Ctrl+L was
+  shown not to repaint a pending native approval dialog.
+- Live-session removal requires **Stop and remove**; the backend refuses
+  deletions while owned sessions remain and never touches project files.
+  Project and terminal data stay out of canvas conversation context.
+- Fix a stale rejected-folder error silently blocking later project actions.
+
+#### Prove Linux PTY integration boundaries
+
+- Add an isolated Rust PTY spike for interactive byte I/O, dimensions,
+  foreground interruption, full-screen rendering, and ordinary job cleanup.
+  Validate process-session cleanup and child subreaping before integrating
+  native project tools into the application.
+- Add transactional storage version 5 for project groups and stopped session
+  presets, keeping expanded geometry and explicit canvas/group membership.
+  Constraints reject unsupported presets and invalid revisions or geometry;
+  workspace migration rollback and foreign-key checks have focused coverage.
+
 ### 2026-10-16
 
 #### Make the canvas easier to read and review

@@ -48,6 +48,44 @@ must fit the existing size limits; oversized requests fail visibly without
 truncation. If saving a generated response fails, keep the canvas open to retry
 or copy the response for recovery. Basic manual editing needs no AI account.
 
+## Project groups and native sessions
+
+Choose **Open project** to place an existing folder on the canvas as a project
+group. The desktop app shows a folder picker; browser mode asks for an absolute
+folder path on the backend computer. Opening a folder copies and creates nothing
+and runs no command. Each group header offers **Add terminal** (your login shell,
+or `/bin/sh` as a visible fallback) and **Add agent** (the installed Codex CLI with
+its own sign-in, prompts, and approvals). Tiles belong to their group, move with it,
+and start only when you choose **Start**. Sessions run with your user permissions;
+the project folder sets the working directory and is not a sandbox.
+
+Codex must be installed as `codex` on the PATH of the backend process (or the
+desktop app). Agentica passes no prompt, approval, or sandbox flags and never
+answers native prompts for you.
+
+- **Focus terminal** sends keys, Ctrl+C, Tab, and Escape to the program.
+  **Ctrl+Shift+Escape** returns focus to the tile controls; **Ctrl+Shift+C** copies
+  the selection. Paste needs an explicit paste action, and multi-line pastes ask
+  for confirmation. Links open only with Ctrl/Cmd+click in browser mode.
+- Moving, resizing, collapsing a group, switching canvases, or refreshing the
+  browser does not stop a session; returning reattaches without replaying input.
+  If earlier output was dropped, the tile says so. **Redraw** asks the program to
+  repaint its current screen; it does not recover lost history.
+- Removing a tile, group, canvas, or workspace with live sessions asks you to
+  **Stop and remove** or **Cancel**. Removal never deletes project files.
+- Process ownership: closing the desktop window stops and reaps its sessions.
+  In browser mode the backend owns them; closing a tab only detaches, and
+  stopping the backend (Ctrl+C) stops them. After a restart, tiles reappear
+  stopped. Deliberately daemonized processes and abrupt backend crashes are
+  outside this cleanup.
+- If a project folder moves, Start is disabled and **Locate folder** rebinds the
+  group once its sessions are stopped.
+
+Native sessions are supported on Linux only, verified with zsh 5.9 and
+`codex-cli 0.163.0` in desktop and browser modes. On other systems project groups remain
+visible but Start explains why it is unavailable. Project paths, session
+settings, and terminal output are never added to canvas conversation context.
+
 ## Getting started
 
 Run all commands from the repository root.

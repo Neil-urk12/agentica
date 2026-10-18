@@ -8,7 +8,168 @@ import {
   AgentStartSchema,
   RunEventPageSchema,
   MAX_EVENT_PAGE_BYTES,
+  ResultSchemas,
+  RuntimeRequestSchema,
+  SessionRequestSchema,
 } from "@agentica/protocol";
+
+test("session controls enforce ownership shape and payload, cursor and dimension bounds", () => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const owner = { workspaceId: id, canvasId: id, tileId: id };
+  const reference = { owner, sessionId: id, attachmentId: id };
+  const request = (command) => ({ id: "session", command });
+  assert.equal(
+    SessionRequestSchema.safeParse(
+      request({ op: "input", ...reference, bytes: [0, 255] }),
+    ).success,
+    true,
+  );
+  for (const command of [
+    { op: "input", ...reference, bytes: [-1] },
+    { op: "input", ...reference, bytes: [256] },
+    { op: "input", ...reference, bytes: Array(16385).fill(1) },
+    { op: "resize", ...reference, rows: 0, cols: 80 },
+    { op: "resize", ...reference, rows: 24, cols: 401 },
+    { op: "acknowledge", ...reference, sequence: -1 },
+    {
+      op: "subscribe",
+      owner,
+      sessionId: id,
+      after: Number.MAX_SAFE_INTEGER + 1,
+    },
+    {
+      op: "start",
+      owner,
+      requestId: "launch",
+      rows: 24,
+      cols: 80,
+      command: "evil",
+    },
+    {
+      op: "start",
+      owner: { ...owner, tileId: "foreign" },
+      requestId: "launch",
+      rows: 24,
+      cols: 80,
+    },
+  ])
+    assert.equal(
+      SessionRequestSchema.safeParse(request(command)).success,
+      false,
+    );
+});
+
+test("project collections validate explicit membership, geometry and saved presets", () => {
+  const canvasId = "00000000-0000-4000-8000-000000000001";
+  const projectId = "00000000-0000-4000-8000-000000000002";
+  const tileId = "00000000-0000-4000-8000-000000000003";
+  const document = {
+    canvas: {
+      id: canvasId,
+      title: "Canvas",
+      revision: 1,
+      viewport: { x: 0, y: 0, zoom: 1 },
+    },
+    nodes: [],
+    edges: [],
+    artifacts: [],
+    projectGroups: [
+      {
+        id: projectId,
+        canvasId,
+        root: "/tmp/project",
+        label: "Project",
+        x: 0,
+        y: 0,
+        width: 800,
+        height: 600,
+        collapsed: false,
+        revision: 1,
+        available: true,
+      },
+    ],
+    sessionTiles: [
+      {
+        id: tileId,
+        projectId,
+        canvasId,
+        kind: "cli-agent",
+        preset: "codex",
+        x: 16,
+        y: 96,
+        width: 400,
+        height: 300,
+        revision: 1,
+      },
+    ],
+  };
+  const schema = ResultSchemas["canvas.open"];
+  assert.equal(schema.safeParse(document).success, true);
+  for (const mutate of [
+    (doc) => {
+      doc.projectGroups[0].canvasId = tileId;
+    },
+    (doc) => {
+      doc.sessionTiles[0].canvasId = tileId;
+    },
+    (doc) => {
+      doc.sessionTiles[0].projectId = canvasId;
+    },
+    (doc) => {
+      doc.sessionTiles[0].width = 800;
+    },
+    (doc) => {
+      doc.sessionTiles[0].y = 0;
+    },
+    (doc) => {
+      doc.sessionTiles[0].preset = "other";
+    },
+    (doc) => {
+      doc.sessionTiles[0].preset = null;
+    },
+    (doc) => {
+      doc.projectGroups.push(doc.projectGroups[0]);
+    },
+    (doc) => {
+      doc.sessionTiles[0].id = projectId;
+    },
+  ]) {
+    const invalid = structuredClone(document);
+    mutate(invalid);
+    assert.equal(schema.safeParse(invalid).success, false);
+  }
+  const request = {
+    protocolVersion: 1,
+    id: "tile",
+    method: "project.createTile",
+    params: {
+      workspaceId: canvasId,
+      canvasId,
+      projectId,
+      expectedRevision: 1,
+      kind: "cli-agent",
+      preset: "codex",
+      x: 16,
+      y: 96,
+      width: 400,
+      height: 300,
+    },
+  };
+  assert.equal(RuntimeRequestSchema.safeParse(request).success, true);
+  for (const extra of [
+    { command: "evil" },
+    { cwd: "/other" },
+    { preset: "other" },
+    { kind: "shell", preset: "codex" },
+  ])
+    assert.equal(
+      RuntimeRequestSchema.safeParse({
+        ...request,
+        params: { ...request.params, ...extra },
+      }).success,
+      false,
+    );
+});
 
 test("normalized run events enforce correlation, bounds, and cancellation ordering", () => {
   const fixtures = JSON.parse(

@@ -14,7 +14,10 @@ use hyper_util::{
 use subtle::ConstantTimeEq;
 use tokio::{net::TcpListener, sync::Mutex, time::Instant};
 
+use crate::sessions::{wire::MAX_SESSION_CONNECTIONS, SessionService};
 use crate::{Runtime, MAX_FRAME_BYTES};
+#[path = "session_ws.rs"]
+mod session_ws;
 
 pub const FRONTEND_ORIGIN: &str = "http://127.0.0.1:1420";
 // Vite serves the same development frontend whether it is opened as 127.0.0.1
@@ -32,6 +35,8 @@ struct HttpState {
     credential: Vec<u8>,
     // Browser tabs share this runtime; it is the workspace writer.
     runtime: Arc<Mutex<Runtime>>,
+    sessions: Arc<SessionService>,
+    session_connections: Arc<tokio::sync::Semaphore>,
 }
 
 // Reject duplicate security headers instead of trusting whichever value is first.
@@ -81,7 +86,7 @@ async fn dispatch(State(state): State<Arc<HttpState>>, request: Request) -> Resp
         HeaderValue::from_static("no-referrer"),
     );
     headers.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(
-                    "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+                    "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws://127.0.0.1:1421 https: http://localhost:* http://127.0.0.1:*; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
     ));
     if let Some(origin) = cors_origin {
         headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
@@ -203,7 +208,20 @@ async fn dispatch_local(state: Arc<HttpState>, request: Request) -> Response {
             }
         };
     // A started blocking mutation cannot be cancelled; await its committed outcome.
-    match tokio::task::spawn_blocking(move || runtime.handle_request(&bytes)).await {
+    let sessions = state.sessions.clone();
+    match tokio::task::spawn_blocking(move || {
+        let request: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
+        let method = request["method"].as_str().unwrap_or("");
+        let params = &request["params"];
+        match sessions.guard_metadata(method, params) {
+            Ok(_guard) => {
+                let response = runtime.handle_request(&bytes);
+                if response.get("error").is_none() { let _ = sessions.forget_removed(method, params); }
+                response
+            }
+            Err(error) => serde_json::json!({"protocolVersion": 1, "id": request["id"], "error": {"code": error.code, "message": error.message}}),
+        }
+    }).await {
         Ok(reply) => Json(reply).into_response(),
         Err(_) => reject(StatusCode::INTERNAL_SERVER_ERROR, "Backend runtime failed."),
     }
@@ -215,16 +233,31 @@ pub async fn serve(
     connection_key: &str,
     runtime: Runtime,
 ) -> io::Result<()> {
+    let sessions = Arc::new(SessionService::new(
+        runtime.data_root().map(std::path::Path::to_owned),
+    ));
+    serve_with_sessions(listener, connection_key, runtime, sessions).await
+}
+
+pub async fn serve_with_sessions(
+    listener: TcpListener,
+    connection_key: &str,
+    runtime: Runtime,
+    sessions: Arc<SessionService>,
+) -> io::Result<()> {
     if !listener.local_addr()?.ip().is_loopback() {
         return Err(io::Error::other("The backend must bind to loopback."));
     }
     let app = Router::new()
+        .route("/sessions", session_ws::route())
         .fallback(dispatch)
         .with_state(Arc::new(HttpState {
             host: format!("127.0.0.1:{}", listener.local_addr()?.port()),
             origin: format!("http://127.0.0.1:{}", listener.local_addr()?.port()),
             credential: format!("Bearer {connection_key}").into_bytes(),
             runtime: Arc::new(Mutex::new(runtime)),
+            sessions,
+            session_connections: Arc::new(tokio::sync::Semaphore::new(MAX_SESSION_CONNECTIONS)),
         }));
     loop {
         let (stream, _) = listener.accept().await?;
@@ -236,7 +269,10 @@ pub async fn serve(
                 .header_read_timeout(REQUEST_TIMEOUT)
                 .max_buf_size(MAX_FRAME_BYTES);
             // Peer disconnects and malformed HTTP are ordinary connection errors.
-            let _ = http.serve_connection(TokioIo::new(stream), service).await;
+            let _ = http
+                .serve_connection(TokioIo::new(stream), service)
+                .with_upgrades()
+                .await;
         });
     }
 }

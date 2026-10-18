@@ -14,7 +14,7 @@ export const LIMITS = {
 } as const;
 
 const RequestId = z.string().min(1).max(128);
-// Lowercase UUID identities; clients never send paths.
+// Lowercase UUID identities; only explicit project operations accept paths.
 export const IdSchema = z
   .string()
   .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
@@ -29,6 +29,71 @@ const Size = z.number().min(LIMITS.minSize).max(LIMITS.maxSize);
 const Geometry = { x: Coordinate, y: Coordinate, width: Size, height: Size };
 const WorkspaceRef = { workspaceId: IdSchema };
 const CanvasRef = { ...WorkspaceRef, canvasId: IdSchema };
+
+export const PROJECT_HEADER = 96;
+export const PROJECT_PADDING = 16;
+const ProjectGeometry = {
+  ...Geometry,
+  width: Size.min(320),
+  height: Size.min(240),
+};
+const TileGeometry = {
+  x: z.number().min(16).max(4000),
+  y: z.number().min(96).max(4000),
+  width: Size.min(240),
+  height: Size.min(160),
+};
+const ProjectPath = z
+  .string()
+  .min(1)
+  .refine(
+    (path) =>
+      new TextEncoder().encode(path).length <= 4096 &&
+      !path.includes("\0") &&
+      (path.startsWith("/") ||
+        /^[a-zA-Z]:[\\/]/.test(path) ||
+        path.startsWith("\\\\")),
+    "Use an absolute backend directory path",
+  );
+export const ProjectGroupSchema = z.strictObject({
+  id: IdSchema,
+  canvasId: IdSchema,
+  root: ProjectPath,
+  label: Label,
+  ...ProjectGeometry,
+  collapsed: z.boolean(),
+  revision: Revision,
+  available: z.boolean(),
+});
+export const SessionTileSchema = z
+  .strictObject({
+    id: IdSchema,
+    canvasId: IdSchema,
+    projectId: IdSchema,
+    ...TileGeometry,
+    revision: Revision,
+    kind: z.enum(["shell", "cli-agent"]),
+    preset: z.enum(["codex"]).nullable(),
+  })
+  .refine(
+    (tile) =>
+      tile.kind === "shell" ? tile.preset === null : tile.preset === "codex",
+    "Invalid launch preset",
+  );
+export type ProjectGroup = z.infer<typeof ProjectGroupSchema>;
+export type SessionTile = z.infer<typeof SessionTileSchema>;
+const GroupLayout = z.strictObject({
+  id: IdSchema,
+  expectedRevision: Revision,
+  ...ProjectGeometry,
+  collapsed: z.boolean(),
+});
+const TileLayout = z.strictObject({
+  id: IdSchema,
+  projectId: IdSchema,
+  expectedRevision: Revision,
+  ...TileGeometry,
+});
 
 export const TextPurposeSchema = z.enum(["note", "instruction"]);
 const ArtifactRef = { artifactId: IdSchema, expectedRevision: Revision };
@@ -215,6 +280,7 @@ const ParamSchemas = {
     prompt: Text.refine((s) => s.trim().length > 0),
     model: Label,
     nodeIds: UniqueIds,
+    contextMode: z.enum(["canvas", "selection"]).optional(),
     anchor: Anchor,
   }),
   "conversation.finish": z.strictObject({
@@ -249,10 +315,62 @@ const ParamSchemas = {
   "canvas.create": z.strictObject({ ...WorkspaceRef, title: Label }),
   "canvas.open": z.strictObject(CanvasRef),
   "canvas.delete": z.strictObject(CanvasRef),
+  "project.delete": z.strictObject({
+    ...CanvasRef,
+    expectedRevision: Revision,
+    projectId: IdSchema,
+  }),
+  "project.deleteTile": z.strictObject({
+    ...CanvasRef,
+    expectedRevision: Revision,
+    tileId: IdSchema,
+  }),
+  "project.open": z.strictObject({
+    ...CanvasRef,
+    expectedRevision: Revision,
+    path: ProjectPath,
+    ...ProjectGeometry,
+  }),
+  "project.locate": z.strictObject({
+    ...CanvasRef,
+    expectedRevision: Revision,
+    projectId: IdSchema,
+    path: ProjectPath,
+  }),
+  "project.createTile": z
+    .strictObject({
+      ...CanvasRef,
+      expectedRevision: Revision,
+      projectId: IdSchema,
+      ...TileGeometry,
+      kind: z.enum(["shell", "cli-agent"]),
+      preset: z.literal("codex").nullable().optional(),
+      growProject: z.boolean().optional(),
+    })
+    .refine(
+      (tile) =>
+        tile.kind === "shell" ? tile.preset == null : tile.preset === "codex",
+      "Invalid launch preset",
+    ),
   "canvas.save": z.strictObject({
     ...CanvasRef,
     expectedRevision: Revision,
     viewport: ViewportSchema,
+    projectGroups: z
+      .array(GroupLayout)
+      .refine(
+        (groups) =>
+          new Set(groups.map((group) => group.id)).size === groups.length,
+        "Project IDs must be unique",
+      )
+      .optional(),
+    sessionTiles: z
+      .array(TileLayout)
+      .refine(
+        (tiles) => new Set(tiles.map((tile) => tile.id)).size === tiles.length,
+        "Tile IDs must be unique",
+      )
+      .optional(),
     nodes: z
       .array(z.strictObject({ id: IdSchema, ...Geometry }))
       .refine(
@@ -406,21 +524,66 @@ export const ResultSchemas = {
   "workspace.close": z.strictObject({}),
   "workspace.delete": z.strictObject({ workspaces: WorkspaceSummaries }),
   "canvas.create": z.strictObject({ canvas: CanvasSummary }),
-  "canvas.open": z.strictObject({
-    canvas: z.strictObject({
-      id: IdSchema,
-      title: z.string(),
-      revision: Revision,
-      viewport: z.strictObject({
-        x: z.number(),
-        y: z.number(),
-        zoom: z.number(),
-      }),
-    }),
-    nodes: z.array(NodeSchema),
-    edges: z.array(EdgeSchema),
-    artifacts: z.array(ArtifactSchema),
+  "project.delete": z.strictObject({ revision: Revision }),
+  "project.deleteTile": z.strictObject({ revision: Revision }),
+  "project.open": z.strictObject({ revision: Revision, projectId: IdSchema }),
+  "project.locate": z.strictObject({ revision: Revision }),
+  "project.createTile": z.strictObject({
+    revision: Revision,
+    tileId: IdSchema,
   }),
+  "canvas.open": z
+    .strictObject({
+      canvas: z.strictObject({
+        id: IdSchema,
+        title: z.string(),
+        revision: Revision,
+        viewport: z.strictObject({
+          x: z.number(),
+          y: z.number(),
+          zoom: z.number(),
+        }),
+      }),
+      nodes: z.array(NodeSchema),
+      edges: z.array(EdgeSchema),
+      artifacts: z.array(ArtifactSchema),
+      projectGroups: z.array(ProjectGroupSchema).default([]),
+      sessionTiles: z.array(SessionTileSchema).default([]),
+    })
+    .superRefine((document, ctx) => {
+      const groups = new Map(
+        document.projectGroups.map((group) => [group.id, group]),
+      );
+      const ids = [
+        ...document.nodes,
+        ...document.projectGroups,
+        ...document.sessionTiles,
+      ].map((item) => item.id);
+      if (new Set(ids).size !== ids.length)
+        ctx.addIssue({
+          code: "custom",
+          message: "Canvas object IDs must be unique",
+        });
+      for (const group of document.projectGroups)
+        if (group.canvasId !== document.canvas.id)
+          ctx.addIssue({
+            code: "custom",
+            message: "Project belongs to another canvas",
+          });
+      for (const tile of document.sessionTiles) {
+        const group = groups.get(tile.projectId);
+        if (
+          !group ||
+          tile.canvasId !== document.canvas.id ||
+          tile.x + tile.width > group.width - PROJECT_PADDING ||
+          tile.y + tile.height > group.height - PROJECT_PADDING
+        )
+          ctx.addIssue({
+            code: "custom",
+            message: "Tile is outside its saved project",
+          });
+      }
+    }),
   "canvas.delete": z.strictObject({ canvases: z.array(CanvasSummary) }),
   "canvas.save": z.strictObject({ revision: Revision }),
   "node.createText": z.strictObject({
@@ -457,6 +620,171 @@ export const ErrorCodeSchema = z.enum([
   "SCOPE_DENIED",
   "BACKPRESSURE",
   "INVALID_EVENT_ORDER",
+]);
+
+export const SESSION_LIMITS = {
+  liveSessions: 8,
+  frameBytes: 16 * 1024,
+  unacknowledgedBytes: 256 * 1024,
+  retainedBytes: 1024 * 1024,
+  scrollback: 2000,
+  wireBytes: 96 * 1024,
+} as const;
+export const SessionOwnerSchema = z.strictObject({
+  ...CanvasRef,
+  tileId: IdSchema,
+});
+export type SessionOwner = z.infer<typeof SessionOwnerSchema>;
+const SessionRef = { owner: SessionOwnerSchema, sessionId: IdSchema };
+const AttachmentRef = { ...SessionRef, attachmentId: IdSchema };
+const TerminalDimensions = {
+  rows: z.number().int().min(2).max(200),
+  cols: z.number().int().min(2).max(400),
+};
+const Sequence = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const TerminalBytes = z
+  .array(z.number().int().min(0).max(255))
+  .max(SESSION_LIMITS.frameBytes);
+export const SessionCommandSchema = z.discriminatedUnion("op", [
+  z.strictObject({ op: z.literal("capabilities") }),
+  z.strictObject({
+    op: z.literal("list"),
+    ...WorkspaceRef,
+    canvasId: IdSchema.optional(),
+  }),
+  z.strictObject({ op: z.literal("status"), owner: SessionOwnerSchema }),
+  z.strictObject({
+    op: z.literal("start"),
+    owner: SessionOwnerSchema,
+    requestId: RequestId,
+    ...TerminalDimensions,
+  }),
+  z.strictObject({
+    op: z.literal("subscribe"),
+    ...SessionRef,
+    after: Sequence,
+  }),
+  z.strictObject({
+    op: z.literal("input"),
+    ...AttachmentRef,
+    bytes: TerminalBytes.min(1),
+  }),
+  z.strictObject({
+    op: z.literal("resize"),
+    ...AttachmentRef,
+    ...TerminalDimensions,
+    redraw: z.boolean().optional(),
+  }),
+  z.strictObject({
+    op: z.literal("acknowledge"),
+    ...AttachmentRef,
+    sequence: Sequence,
+  }),
+  z.strictObject({ op: z.literal("detach"), ...AttachmentRef }),
+  z.strictObject({ op: z.literal("stop"), ...SessionRef }),
+  z.strictObject({
+    op: z.literal("restart"),
+    ...SessionRef,
+    requestId: RequestId,
+    ...TerminalDimensions,
+  }),
+]);
+export type SessionCommand = z.infer<typeof SessionCommandSchema>;
+export const SessionRequestSchema = z.strictObject({
+  id: RequestId,
+  command: SessionCommandSchema,
+});
+export const SessionStatusSchema = z.strictObject({
+  backendId: IdSchema,
+  sessionId: IdSchema,
+  owner: SessionOwnerSchema,
+  state: z.enum([
+    "stopped",
+    "starting",
+    "running",
+    "stopping",
+    "exited",
+    "failed",
+  ]),
+  exitCode: z.number().int().nonnegative().nullable(),
+  exitSignal: z.string().nullable(),
+  error: z.string().nullable(),
+  executable: z.string().nullable(),
+  shellFallback: z.boolean(),
+  projectId: IdSchema.nullable(),
+  ...TerminalDimensions,
+});
+export type SessionStatus = z.infer<typeof SessionStatusSchema>;
+const ExecutableCapability = z.strictObject({
+  path: z.string().nullable(),
+  reason: z.string().nullable(),
+  fallback: z.boolean(),
+});
+const StatusResult = z.strictObject({ status: SessionStatusSchema });
+const EmptySessionResult = z.strictObject({});
+export const SessionResultSchemas = {
+  capabilities: z.strictObject({
+    capabilities: z.strictObject({
+      platform: z.string(),
+      supported: z.boolean(),
+      shell: ExecutableCapability,
+      codex: ExecutableCapability,
+    }),
+    limits: z.strictObject({
+      liveSessions: z.literal(8),
+      frameBytes: z.literal(16384),
+      unacknowledgedBytes: z.literal(262144),
+      retainedBytes: z.literal(1048576),
+      scrollback: z.literal(2000),
+    }),
+  }),
+  list: z.strictObject({ sessions: z.array(SessionStatusSchema) }),
+  status: z.strictObject({ status: SessionStatusSchema.nullable() }),
+  start: StatusResult,
+  restart: StatusResult,
+  stop: StatusResult,
+  subscribe: z.strictObject({ attachmentId: IdSchema }),
+  input: EmptySessionResult,
+  resize: EmptySessionResult,
+  acknowledge: EmptySessionResult,
+  detach: EmptySessionResult,
+} as const;
+export type SessionResult<C extends SessionCommand["op"]> = z.infer<
+  (typeof SessionResultSchemas)[C]
+>;
+export const SessionEventSchema = z
+  .strictObject({
+    event: z.literal("session"),
+    ...AttachmentRef,
+    status: SessionStatusSchema,
+    output: z.strictObject({
+      historyGap: z.boolean(),
+      nextSequence: Sequence,
+      frames: z
+        .array(
+          z.strictObject({
+            sequence: Sequence.min(1),
+            bytes: TerminalBytes.min(1),
+          }),
+        )
+        .max(64),
+    }),
+  })
+  .refine(
+    (event) =>
+      event.sessionId === event.status.sessionId &&
+      event.owner.tileId === event.status.owner.tileId &&
+      event.owner.canvasId === event.status.owner.canvasId &&
+      event.owner.workspaceId === event.status.owner.workspaceId,
+    "Event and process ownership must match",
+  );
+export type SessionEvent = z.infer<typeof SessionEventSchema>;
+export const SessionReplySchema = z.union([
+  z.strictObject({ id: RequestId, result: z.unknown() }),
+  z.strictObject({
+    id: RequestId,
+    error: z.strictObject({ code: ErrorCodeSchema, message: z.string() }),
+  }),
 ]);
 
 export const RunEventSchema = z.strictObject({

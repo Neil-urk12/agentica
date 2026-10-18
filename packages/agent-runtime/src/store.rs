@@ -19,6 +19,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("schema_v2.sql"),
     include_str!("schema_v3.sql"),
     include_str!("schema_v4.sql"),
+    include_str!("schema_v5.sql"),
 ];
 pub const STORAGE_VERSION: i64 = MIGRATIONS.len() as i64;
 
@@ -28,6 +29,13 @@ pub struct RuntimeError {
     pub code: &'static str,
     pub message: String,
 }
+
+impl std::fmt::Display for RuntimeError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+impl std::error::Error for RuntimeError {}
 
 impl RuntimeError {
     pub(crate) fn new(code: &'static str, message: impl Into<String>) -> Self {
@@ -575,6 +583,68 @@ mod tests {
     }
 
     #[test]
+    fn project_migration_is_atomic_and_enforces_membership_and_presets() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut conn = connect(&temp.path().join("db"), true).unwrap();
+        let tx = conn.transaction().unwrap();
+        migrate(&tx, 0, &MIGRATIONS[..4]).unwrap();
+        tx.execute_batch(
+            "INSERT INTO workspace(id, name) VALUES ('w', 'Existing');
+            INSERT INTO canvas VALUES ('c', 'Canvas', 3, 14, -20, 0.75);",
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        let tx = conn.transaction().unwrap();
+        let mut broken = MIGRATIONS.to_vec();
+        broken.push("CREATE TABLE broken (;");
+        assert!(migrate(&tx, 4, &broken).is_err());
+        drop(tx);
+        assert_eq!(header(&conn).unwrap(), (APPLICATION_ID, 4));
+        assert_eq!(
+            conn.query_row(
+                "SELECT count(*) FROM sqlite_schema WHERE name = 'project_group'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        let tx = conn.transaction().unwrap();
+        migrate(&tx, 4, MIGRATIONS).unwrap();
+        tx.execute_batch(
+            "INSERT INTO project_group (id, canvas_id, root, label, x, y, width, height)
+            VALUES ('g', 'c', '/tmp/project', 'Project', 10, 20, 800, 600);
+            INSERT INTO session_tile (id, canvas_id, project_id, kind, preset, x, y, width, height)
+            VALUES ('t', 'c', 'g', 'cli-agent', 'codex', 16, 96, 400, 300);",
+        )
+        .unwrap();
+        for sql in [
+            "UPDATE session_tile SET canvas_id = 'other'",
+            "UPDATE session_tile SET project_id = 'missing'",
+            "UPDATE session_tile SET preset = 'unsupported'",
+            "UPDATE session_tile SET preset = NULL",
+            "UPDATE session_tile SET kind = 'shell'",
+            "UPDATE session_tile SET revision = 0",
+            "UPDATE session_tile SET x = -1",
+            "UPDATE project_group SET height = 0",
+            "UPDATE project_group SET collapsed = 2",
+        ] {
+            assert!(tx.execute(sql, []).is_err(), "{sql}");
+        }
+        tx.commit().unwrap();
+        assert_eq!(header(&conn).unwrap(), (APPLICATION_ID, STORAGE_VERSION));
+        let viewport: (f64, f64, f64) = conn
+            .query_row(
+                "SELECT viewport_x, viewport_y, viewport_zoom FROM canvas",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(viewport, (14.0, -20.0, 0.75));
+    }
+
+    #[test]
     fn legacy_workspaces_upgrade_without_data_loss() {
         let _serial = serial();
         for old_version in [1, 2] {
@@ -667,6 +737,221 @@ mod tests {
             )
             .unwrap();
         }
+    }
+
+    #[test]
+    fn project_upgrade_preserves_all_legacy_content_geometry_and_viewport() {
+        fn snapshot(conn: &Connection) -> Vec<Vec<Vec<rusqlite::types::Value>>> {
+            [
+                "workspace",
+                "canvas",
+                "text_content",
+                "drawing_content",
+                "artifact",
+                "canvas_node",
+                "canvas_edge",
+                "conversation_turn",
+            ]
+            .iter()
+            .map(|table| {
+                let mut statement = conn
+                    .prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))
+                    .unwrap();
+                let columns = statement.column_count();
+                statement
+                    .query_map([], |row| {
+                        (0..columns).map(|column| row.get(column)).collect()
+                    })
+                    .unwrap()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap()
+            })
+            .collect()
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let id = new_id().unwrap();
+        let dir = workspaces_dir(Some(temp.path())).unwrap().join(&id);
+        fs::create_dir(&dir).unwrap();
+        let mut conn = connect(&dir.join(DATABASE_FILE), true).unwrap();
+        let tx = conn.transaction().unwrap();
+        migrate(&tx, 0, &MIGRATIONS[..4]).unwrap();
+        tx.execute(
+            "INSERT INTO workspace (id, name) VALUES (?1, 'Legacy')",
+            [&id],
+        )
+        .unwrap();
+        tx.execute_batch(r##"
+            INSERT INTO canvas VALUES ('c', 'Saved canvas', 17, -123, 456, 0.75);
+            INSERT INTO text_content (id, body, purpose) VALUES ('t', 'Saved instruction', 'instruction');
+            INSERT INTO drawing_content VALUES ('d', '{"shapes":[{"kind":"rectangle","x":0,"y":0,"width":80,"height":60,"color":"#123456"}]}');
+            INSERT INTO artifact VALUES ('a', 'text', 1, 4, 'sqlite', 't');
+            INSERT INTO artifact VALUES ('ad', 'drawing', 1, 3, 'sqlite', 'd');
+            INSERT INTO canvas_node VALUES ('n', 'c', 'artifact', 'a', -22, 51, 340, 180);
+            INSERT INTO canvas_node VALUES ('nd', 'c', 'artifact', 'ad', 333, 222, 160, 120);
+            INSERT INTO canvas_edge VALUES ('e', 'c', 'relationship', 'n', 'nd');
+            INSERT INTO conversation_turn (id, canvas_id, model, prompt, reply, prompt_node_id, reply_node_id, anchor, context, status)
+                VALUES ('turn', 'c', 'saved-model', 'Prompt', 'Reply', 'n', 'nd', '{"x":1,"y":2}', '{"nodes":[]}', 'complete');
+        "##).unwrap();
+        tx.commit().unwrap();
+        let before = snapshot(&conn);
+        drop(conn);
+        let upgraded = Workspace::open(Some(temp.path()), &id).unwrap();
+        assert_eq!(snapshot(&upgraded.conn), before);
+        assert_eq!(header(&upgraded.conn).unwrap(), (APPLICATION_ID, 5));
+        assert_eq!(
+            upgraded
+                .conn
+                .query_row("SELECT count(*) FROM project_group", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            upgraded
+                .conn
+                .query_row("SELECT count(*) FROM session_tile", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn upgraded_content_reopens_and_saves_alongside_new_project_groups() {
+        use serde_json::{json, Value};
+        let call = |runtime: &mut crate::Runtime, method: &str, params: Value| -> Value {
+            let response = runtime.handle_request(
+                &serde_json::to_vec(&json!({"protocolVersion": 1, "id": "upgrade",
+                    "method": method, "params": params}))
+                .unwrap(),
+            );
+            assert!(response["error"].is_null(), "{method}: {response}");
+            response["result"].clone()
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let [id, canvas, text, artifact, node, drawing, drawn, drawing_node, edge, turn] =
+            std::array::from_fn(|_| new_id().unwrap());
+        let dir = workspaces_dir(Some(temp.path())).unwrap().join(&id);
+        fs::create_dir(&dir).unwrap();
+        let mut conn = connect(&dir.join(DATABASE_FILE), true).unwrap();
+        let tx = conn.transaction().unwrap();
+        migrate(&tx, 0, &MIGRATIONS[..4]).unwrap();
+        tx.execute(
+            "INSERT INTO workspace (id, name) VALUES (?1, 'Legacy')",
+            [&id],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO canvas VALUES (?1, 'Saved', 7, -123, 456, 0.75)",
+            [&canvas],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO text_content (id, body, purpose) VALUES (?1, 'Saved note', 'note')",
+            [&text],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO drawing_content VALUES (?1, '{\"shapes\":[]}')",
+            [&drawing],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO artifact VALUES (?1, 'text', 1, 2, 'sqlite', ?2)",
+            [&artifact, &text],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO artifact VALUES (?1, 'drawing', 1, 1, 'sqlite', ?2)",
+            [&drawn, &drawing],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO canvas_node VALUES (?1, ?2, 'artifact', ?3, -22, 51, 340, 180)",
+            [&node, &canvas, &artifact],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO canvas_node VALUES (?1, ?2, 'artifact', ?3, 333, 222, 160, 120)",
+            [&drawing_node, &canvas, &drawn],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO canvas_edge VALUES (?1, ?2, 'relationship', ?3, ?4)",
+            [&edge, &canvas, &node, &drawing_node],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO conversation_turn (id, canvas_id, model, prompt, reply, prompt_node_id,
+                reply_node_id, anchor, context, status)
+             VALUES (?1, ?2, 'saved-model', 'Prompt', 'Reply', ?3, ?4, '{\"x\":1,\"y\":2}',
+                '{\"nodes\":[]}', 'complete')",
+            [&turn, &canvas, &node, &drawing_node],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        drop(conn);
+
+        let mut runtime = crate::Runtime::new(Some(temp.path().to_owned()));
+        call(&mut runtime, "workspace.open", json!({"workspaceId": id}));
+        let reference = json!({"workspaceId": id, "canvasId": canvas});
+        let opened = call(&mut runtime, "canvas.open", reference.clone());
+        assert_eq!(opened["canvas"]["revision"], 7);
+        assert_eq!(
+            opened["canvas"]["viewport"],
+            json!({"x": -123.0, "y": 456.0, "zoom": 0.75})
+        );
+        assert_eq!(opened["nodes"].as_array().unwrap().len(), 2);
+        assert_eq!(opened["nodes"][0]["x"], -22.0);
+        assert_eq!(opened["edges"][0]["id"], json!(edge));
+        assert_eq!(opened["artifacts"][0]["text"], "Saved note");
+        assert_eq!(opened["projectGroups"], json!([]));
+        let turns = call(
+            &mut runtime,
+            "conversation.list",
+            json!({"workspaceId": id, "canvasId": canvas, "before": 0}),
+        );
+        assert_eq!(turns["turns"][0]["reply"], "Reply");
+
+        // Existing objects stay editable and saveable next to a new project.
+        let group = call(
+            &mut runtime,
+            "project.open",
+            json!({"workspaceId": id,
+            "canvasId": canvas, "expectedRevision": 7, "path": project.path(),
+            "x": 600, "y": 0, "width": 800, "height": 600}),
+        )["projectId"]
+            .clone();
+        call(
+            &mut runtime,
+            "artifact.saveText",
+            json!({"workspaceId": id, "artifactId": artifact, "expectedRevision": 2,
+                "text": "Edited note"}),
+        );
+        call(
+            &mut runtime,
+            "canvas.save",
+            json!({"workspaceId": id, "canvasId": canvas,
+            "expectedRevision": 8, "viewport": {"x": 5, "y": 6, "zoom": 1.25},
+            "nodes": [{"id": node, "x": 10, "y": 20, "width": 340, "height": 180}],
+            "projectGroups": [{"id": group, "expectedRevision": 1, "x": 640, "y": 40,
+                "width": 800, "height": 600, "collapsed": true}],
+            "sessionTiles": []}),
+        );
+        call(&mut runtime, "workspace.close", json!({"workspaceId": id}));
+        call(&mut runtime, "workspace.open", json!({"workspaceId": id}));
+        let reopened = call(&mut runtime, "canvas.open", reference);
+        assert_eq!(
+            reopened["canvas"]["viewport"],
+            json!({"x": 5.0, "y": 6.0, "zoom": 1.25})
+        );
+        assert_eq!(reopened["nodes"][0]["x"], 10.0);
+        assert_eq!(reopened["nodes"][1]["x"], 333.0);
+        assert_eq!(reopened["artifacts"][0]["text"], "Edited note");
+        assert_eq!(reopened["projectGroups"][0]["x"], 640.0);
+        assert_eq!(reopened["projectGroups"][0]["collapsed"], true);
+        assert_eq!(reopened["edges"].as_array().unwrap().len(), 1);
     }
 
     #[test]

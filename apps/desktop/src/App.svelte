@@ -1,9 +1,17 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { invoke } from "@tauri-apps/api/core";
+  import { open as pickDirectory } from "@tauri-apps/plugin-dialog";
+  import { SessionManager } from "./lib/sessions";
+  import ProjectNode from "./lib/components/ProjectNode.svelte";
+  import SessionNode from "./lib/components/SessionNode.svelte";
+  import Modal from "./lib/components/Modal.svelte";
+  import "@xterm/xterm/css/xterm.css";
   import {
     LIMITS,
     type RuntimeParams,
+    type SessionStatus,
     type CanvasOperation,
   } from "@agentica/protocol";
   import { callRuntime, desktopMode, pingRuntime } from "./lib/runtime";
@@ -59,7 +67,12 @@
   } from "@xyflow/svelte";
   import "@xyflow/svelte/dist/style.css";
 
-  const nodeTypes = { drawing: DrawingNode, text: TextNode };
+  const nodeTypes = {
+    drawing: DrawingNode,
+    text: TextNode,
+    project: ProjectNode,
+    session: SessionNode,
+  };
 
   const editor = new Editor(
     callRuntime,
@@ -75,6 +88,25 @@
   let selectedId = $state("");
   let selectionCanvasId = "";
   let connectionKey = $state("");
+  let sessionRevision = $state(0);
+  const sessions = new SessionManager(
+    () => connectionKey.trim(),
+    () => {
+      sessionRevision++;
+    },
+  );
+  let projectDialog = $state<{ projectId?: string } | null>(null);
+  let projectPath = $state("");
+  let projectError = $state("");
+  let pickingProject = $state(false);
+  let removal = $state.raw<{
+    label: string;
+    sessions: SessionStatus[];
+    remove: () => Promise<unknown>;
+  } | null>(null);
+  let removalBusy = $state(false);
+  let removalError = $state("");
+  let closing = false;
   let status = $state<"disconnected" | "connecting" | "connected" | "failed">(
     "disconnected",
   );
@@ -116,9 +148,18 @@
   let reviewError = $state("");
   let resolving = $state(false);
   let fitNotice = $state("");
+  const hasSelection = $derived(
+    nodes.some((n) => n.selected && !n.id.startsWith("preview-")),
+  );
   const contextIds = $derived(
     nodes
-      .filter((n) => n.selected && !n.id.startsWith("preview-"))
+      .filter(
+        (n) =>
+          n.selected &&
+          !n.id.startsWith("preview-") &&
+          n.type !== "project" &&
+          n.type !== "session",
+      )
       .map((n) => n.id),
   );
   const activeTurn = $derived(
@@ -203,7 +244,7 @@
   const nodeItems = $derived.by(() => {
     const document = editorState.document;
     if (!document) return [];
-    return document.nodes.map((node, index) => {
+    const items = document.nodes.map((node, index) => {
       const artifact = document.artifacts.find(
         (item) => item.id === node.artifactId,
       );
@@ -231,6 +272,19 @@
                 : "Drawing";
       return { id: node.id, kind, label: `${name} ${index + 1}` };
     });
+    return [
+      ...items,
+      ...document.projectGroups.map((g) => ({
+        id: g.id,
+        kind: "project",
+        label: g.label,
+      })),
+      ...document.sessionTiles.map((t) => ({
+        id: t.id,
+        kind: t.kind,
+        label: `${t.kind === "shell" ? "Terminal" : "Codex"} · ${document.projectGroups.find((g) => g.id === t.projectId)?.label ?? "Project"}`,
+      })),
+    ];
   });
   // Drawings may start while autosave is pending: the commit waits for it.
   const canDraw = $derived(connected && !editorState.busy);
@@ -538,6 +592,9 @@
       canvasId: editorState.document.canvas.id,
     };
     const nodeIds = [...contextIds];
+    const contextMode = hasSelection
+      ? ("selection" as const)
+      : ("canvas" as const);
     let turnId: string | undefined;
     promptError = "";
     generating = true;
@@ -572,6 +629,7 @@
         prompt,
         model,
         nodeIds,
+        contextMode,
         anchor,
       });
       if (!start)
@@ -722,12 +780,14 @@
   function fitCanvas() {
     const area = usable();
     const target = unionBox(
-      nodes.map((node) => ({
-        x: node.position.x,
-        y: node.position.y,
-        width: node.width ?? CARD.width,
-        height: node.height ?? CARD.minHeight,
-      })),
+      nodes
+        .filter((node) => !node.parentId && !node.hidden)
+        .map((node) => ({
+          x: node.position.x,
+          y: node.position.y,
+          width: node.width ?? CARD.width,
+          height: node.height ?? CARD.minHeight,
+        })),
     );
     if (!area) return;
     setView(
@@ -739,8 +799,28 @@
 
   function focusSelection() {
     const area = usable();
-    if (!area || !selected) return;
-    setView(fitViewport(selected, area, Math.max(1, viewport.zoom)));
+    const node = nodes.find((n) => n.id === selectedId);
+    if (!area || !node) return;
+    const parent = node.parentId
+      ? nodes.find((n) => n.id === node.parentId)
+      : undefined;
+    const target = node.hidden && parent ? parent : node;
+    setView(
+      fitViewport(
+        {
+          x:
+            target.position.x +
+            (target === node ? (parent?.position.x ?? 0) : 0),
+          y:
+            target.position.y +
+            (target === node ? (parent?.position.y ?? 0) : 0),
+          width: target.width ?? CARD.width,
+          height: target.height ?? CARD.minHeight,
+        },
+        area,
+        Math.max(1, viewport.zoom),
+      ),
+    );
   }
 
   function showChanges() {
@@ -830,6 +910,7 @@
     const currentTool = tool;
     const editable = connected && !editorState.busy;
     const turns = editorState.turns;
+    const revision = sessionRevision;
     untrack(() => {
       const asNode = (
         node: NonNullable<typeof document>["nodes"][number],
@@ -887,8 +968,98 @@
           },
         };
       };
-      const rendered =
-        document?.nodes.map((node) => asNode(node, document.artifacts)) ?? [];
+      const rendered: Node[] = [];
+      if (document && editorState.workspace) {
+        const workspaceId = editorState.workspace.workspace.id;
+        for (const group of document.projectGroups) {
+          const tiles = document.sessionTiles.filter(
+            (t) => t.projectId === group.id,
+          );
+          const running = sessions.summary(
+            workspaceId,
+            document.canvas.id,
+            group.id,
+          );
+          rendered.push({
+            ...nodes.find((n) => n.id === group.id),
+            id: group.id,
+            type: "project",
+            position: { x: group.x, y: group.y },
+            width: group.width,
+            height: group.collapsed ? 96 : group.height,
+            dragHandle: ".project-drag",
+            connectable: false,
+            data: {
+              kind: "project",
+              group,
+              editable,
+              locatable: !running.length,
+              summary: running.length
+                ? `${running.length} live · ${running.map((s) => s.state).join(", ")}`
+                : `${tiles.length} stopped ${tiles.length === 1 ? "tile" : "tiles"}`,
+              minWidth: Math.max(320, ...tiles.map((t) => t.x + t.width + 16)),
+              minHeight: Math.max(
+                240,
+                ...tiles.map((t) => t.y + t.height + 16),
+              ),
+              onCollapse: () =>
+                editor.placeProject(group.id, { collapsed: !group.collapsed }),
+              onAddAgent: () =>
+                void editor.addSessionTile(group.id, "cli-agent"),
+              onAddTerminal: () =>
+                void editor.addSessionTile(group.id, "shell"),
+              onLocate: () => void openProject(group.id),
+              onRemove: () => void removeObject(group.id),
+              onResize: (width: number, height: number) =>
+                editor.placeProject(group.id, { width, height }),
+            },
+          });
+        }
+        for (const tile of document.sessionTiles) {
+          const group = document.projectGroups.find(
+            (g) => g.id === tile.projectId,
+          )!;
+          const owner = {
+            workspaceId,
+            canvasId: document.canvas.id,
+            tileId: tile.id,
+          };
+          rendered.push({
+            ...nodes.find((n) => n.id === tile.id),
+            id: tile.id,
+            type: "session",
+            parentId: group.id,
+            position: { x: tile.x, y: tile.y },
+            width: tile.width,
+            height: tile.height,
+            hidden: group.collapsed,
+            dragHandle: ".session-drag",
+            extent: [
+              [16, 96],
+              [group.width - 16, group.height - 16],
+            ],
+            connectable: false,
+            data: {
+              kind: "session",
+              tile,
+              group,
+              owner,
+              manager: sessions,
+              revision,
+              editable,
+              onRemove: () => void removeObject(tile.id),
+              onRefresh: () =>
+                void sessions.reconcile(workspaceId, document, true),
+              onResize: (width: number, height: number) =>
+                editor.placeSessionTile(tile.id, { width, height }),
+            },
+          });
+        }
+      }
+      rendered.push(
+        ...(document?.nodes.map((node) => asNode(node, document.artifacts)) ??
+          []),
+      );
       edges =
         document?.edges.map((edge) => ({
           id: edge.id,
@@ -935,7 +1106,6 @@
         }
       }
       nodes = rendered;
-      viewport = document?.canvas.viewport ?? { x: 0, y: 0, zoom: 1 };
       if (document && selectionCanvasId !== document.canvas.id) {
         selectionCanvasId = document.canvas.id;
         try {
@@ -946,15 +1116,22 @@
           selectedId = "";
         }
       }
-      if (!document?.nodes.some((node) => node.id === selectedId))
-        selectedId = "";
+      if (!rendered.some((node) => node.id === selectedId)) selectedId = "";
       if (!document) selectionCanvasId = "";
     });
   });
 
   $effect(() => {
     const document = editorState.document;
-    if (!document?.nodes.some((node) => node.id === selectedId)) return;
+    if (
+      !document ||
+      ![
+        ...document.nodes,
+        ...document.projectGroups,
+        ...document.sessionTiles,
+      ].some((node) => node.id === selectedId)
+    )
+      return;
     try {
       localStorage.setItem(
         `agentica.selection.${document.canvas.id}`,
@@ -966,9 +1143,26 @@
   });
 
   $effect(() => {
-    const placements = nodes.map(({ id, position }) => ({ id, position }));
+    viewport = editorState.document?.canvas.viewport ?? { x: 0, y: 0, zoom: 1 };
+  });
+  $effect(() => {
+    const document = editorState.document;
+    const workspaceId = editorState.workspace?.workspace.id;
+    if (connected && document && workspaceId)
+      void sessions.reconcile(workspaceId, document);
+  });
+  $effect(() => {
+    const placements = nodes.map(({ id, position, type }) => ({
+      id,
+      position,
+      type,
+    }));
     untrack(() => {
-      for (const { id, position } of placements) editor.placeNode(id, position);
+      for (const { id, position, type } of placements) {
+        if (type === "project") editor.placeProject(id, position);
+        else if (type === "session") editor.placeSessionTile(id, position);
+        else editor.placeNode(id, position);
+      }
     });
   });
 
@@ -1012,6 +1206,19 @@
         status = "connected";
         message = "Backend connected";
         if (connect) await editor.listWorkspaces();
+        if (!sessions.connected) {
+          try {
+            await sessions.connect();
+            if (editorState.workspace && editorState.document)
+              await sessions.reconcile(
+                editorState.workspace.workspace.id,
+                editorState.document,
+                true,
+              );
+          } catch {
+            /* Manual canvas editing remains available. */
+          }
+        }
       }
     } catch (error) {
       if (alive) {
@@ -1065,8 +1272,127 @@
 
   const TYPING_TAGS = ["INPUT", "TEXTAREA", "SELECT"];
 
+  async function openProject(projectId?: string) {
+    projectError = "";
+    projectPath = "";
+    if (!desktopMode) {
+      projectDialog = { projectId };
+      return;
+    }
+    pickingProject = true;
+    try {
+      const path = await pickDirectory({
+        directory: true,
+        multiple: false,
+        title: projectId ? "Locate project folder" : "Open project",
+      });
+      if (typeof path === "string") {
+        if (projectId) await editor.locateProject(projectId, path);
+        else await editor.openProject(path);
+      }
+    } catch (error) {
+      projectError = String(error);
+      projectDialog = { projectId };
+    } finally {
+      pickingProject = false;
+    }
+  }
+  async function submitProject() {
+    if (!projectDialog || !projectPath.trim()) return;
+    const path = projectPath.trim();
+    if (!/^(\/|[a-zA-Z]:[\\/]|\\\\)/.test(path)) {
+      projectError =
+        "Enter an absolute folder path on the backend computer, such as /home/you/project.";
+      return;
+    }
+    projectError = "";
+    pickingProject = true;
+    try {
+      const result = projectDialog.projectId
+        ? await editor.locateProject(
+            projectDialog.projectId,
+            projectPath.trim(),
+          )
+        : await editor.openProject(projectPath.trim());
+      if (result) projectDialog = null;
+      else
+        projectError = editorState.error || "The project could not be opened.";
+    } finally {
+      pickingProject = false;
+    }
+  }
+  async function requestRemoval(
+    workspaceId: string,
+    canvasId: string | undefined,
+    label: string,
+    remove: () => Promise<unknown>,
+    match: (status: SessionStatus) => boolean = () => true,
+  ) {
+    removalError = "";
+    try {
+      if (!sessions.capabilities) await sessions.connect();
+      const affected = sessions.capabilities?.capabilities.supported
+        ? (await sessions.list(workspaceId, canvasId)).filter(match)
+        : [];
+      if (!affected.length) {
+        await remove();
+        return;
+      }
+      removal = { label, sessions: affected, remove };
+    } catch (error) {
+      closeNotice = `Removal failed: ${String(error)}. Records were retained.`;
+    }
+  }
+  async function confirmRemoval() {
+    if (!removal || removalBusy) return;
+    removalBusy = true;
+    try {
+      await sessions.stopSessions(removal.sessions);
+      await removal.remove();
+      if (editorState.error) throw new Error(editorState.error);
+      removal = null;
+    } catch (error) {
+      removalError = String(error);
+    } finally {
+      removalBusy = false;
+    }
+  }
+  async function removeObject(id: string) {
+    const document = editorState.document;
+    const workspaceId = editorState.workspace?.workspace.id;
+    if (!document || !workspaceId) return;
+    const group = document.projectGroups.find((g) => g.id === id);
+    const tile = document.sessionTiles.find((t) => t.id === id);
+    if (group)
+      await requestRemoval(
+        workspaceId,
+        document.canvas.id,
+        group.label,
+        () => editor.deleteProject(id),
+        (s) => s.projectId === id,
+      );
+    else if (tile)
+      await requestRemoval(
+        workspaceId,
+        document.canvas.id,
+        tile.kind === "shell" ? "Terminal" : "Codex",
+        () => editor.deleteSessionTile(id),
+        (s) => s.owner.tileId === id,
+      );
+    else await editor.deleteNode(id);
+  }
+
   function onKeydown(event: KeyboardEvent) {
-    if (settingsOpen || reader) return;
+    if (
+      settingsOpen ||
+      reader ||
+      projectDialog ||
+      removal ||
+      (event.target as HTMLElement | null)?.closest(
+        "[data-terminal],[data-terminal-controls]",
+      )
+    )
+      return;
     if (event.key === "Escape") {
       if (stage === "canvas") void backToWorkspaces();
       return;
@@ -1088,14 +1414,34 @@
 
   onMount(() => {
     let unlisten: (() => void) | undefined;
+    const compact = window.matchMedia("(max-width: 820px)");
+    const hidePanels = () => {
+      if (compact.matches) {
+        drawerOpen = false;
+        inspectorOpen = false;
+      }
+    };
+    hidePanels();
+    compact.addEventListener("change", hidePanels);
     if (desktopMode) {
       void checkConnection(true);
       void getCurrentWindow()
-        .onCloseRequested((event) => {
+        .onCloseRequested(async (event) => {
+          event.preventDefault();
+          if (closing) return;
           if (editorState.dirty || editorState.saving || pendingReply) {
             event.preventDefault();
             closeNotice =
               "Keep this window open until changes are saved. Copy unsaved edits for recovery if saving fails.";
+            return;
+          }
+          closing = true;
+          try {
+            await invoke("session_shutdown");
+            await getCurrentWindow().destroy();
+          } catch (error) {
+            closeNotice = `Session cleanup failed: ${String(error)}. Controls were retained; retry closing after Stop.`;
+            closing = false;
           }
         })
         .then((cleanup) => {
@@ -1116,9 +1462,83 @@
       clearInterval(heartbeat);
       unlisten?.();
       editor.dispose();
+      void sessions.dispose();
+      compact.removeEventListener("change", hidePanels);
     };
   });
 </script>
+
+{#if projectDialog}
+  <Modal
+    title={projectDialog.projectId ? "Locate folder" : "Open project"}
+    icon="folder_open"
+    subtitle="Enter an absolute directory path on the backend computer."
+    onClose={() => {
+      if (!pickingProject) projectDialog = null;
+    }}
+  >
+    <form
+      onsubmit={(event) => {
+        event.preventDefault();
+        void submitProject();
+      }}
+    >
+      <label for="project-path">Backend directory</label>
+      <input
+        id="project-path"
+        class="field"
+        bind:value={projectPath}
+        placeholder="/home/you/project"
+        required
+        disabled={pickingProject}
+      />
+      {#if projectError}<p role="alert">{projectError}</p>{/if}
+      <div class="project-dialog-actions">
+        <button
+          class="btn btn--soft"
+          type="button"
+          disabled={pickingProject}
+          onclick={() => (projectDialog = null)}>Cancel</button
+        ><button
+          class="btn btn--primary"
+          type="submit"
+          disabled={pickingProject || !projectPath.trim()}>Open folder</button
+        >
+      </div>
+    </form>
+  </Modal>
+{/if}
+{#if removal}
+  <Modal
+    title={`Remove ${removal.label}?`}
+    subtitle="These native processes must stop before their saved tiles can be removed."
+    icon="warning"
+    onClose={() => {
+      if (!removalBusy) removal = null;
+    }}
+  >
+    <ul>
+      {#each removal.sessions as session}<li>
+          {session.executable ?? "Native session"} · {session.state}
+        </li>{/each}
+    </ul>
+    {#if removalError}<p role="alert">{removalError}</p>{/if}
+    <div class="project-dialog-actions">
+      <button
+        class="btn btn--soft"
+        type="button"
+        disabled={removalBusy}
+        onclick={() => (removal = null)}>Cancel</button
+      ><button
+        class="btn btn--primary"
+        type="button"
+        disabled={removalBusy}
+        onclick={() => void confirmRemoval()}
+        >{removalBusy ? "Stopping…" : "Stop and remove"}</button
+      >
+    </div>
+  </Modal>
+{/if}
 
 <svelte:window onbeforeunload={beforeUnload} onkeydown={onKeydown} />
 
@@ -1182,7 +1602,13 @@
       onRefresh={() => void editor.listWorkspaces()}
       onCreate={(name) => void editor.createWorkspace(name)}
       onOpen={(id) => void editor.openWorkspace(id)}
-      onDelete={(id) => void editor.deleteWorkspace(id)}
+      onDelete={(id) =>
+        void requestRemoval(
+          id,
+          undefined,
+          editorState.workspaces.find((w) => w.id === id)?.name ?? "Workspace",
+          () => editor.deleteWorkspace(id),
+        )}
       onOpenSettings={() => (settingsOpen = true)}
     />
   {:else if stage === "canvas"}
@@ -1195,7 +1621,14 @@
       error={editorState.error}
       onCreate={(title) => void editor.createCanvas(title)}
       onOpen={(id) => void editor.openCanvas(id)}
-      onDelete={(id) => void editor.deleteCanvas(id)}
+      onDelete={(id) =>
+        void requestRemoval(
+          editorState.workspace!.workspace.id,
+          id,
+          editorState.workspace?.canvases.find((c) => c.id === id)?.title ??
+            "Canvas",
+          () => editor.deleteCanvas(id),
+        )}
       onBack={() => void backToWorkspaces()}
       onOpenSettings={() => (settingsOpen = true)}
     />
@@ -1228,6 +1661,13 @@
       </div>
 
       <div class="topbar__actions">
+        <button
+          class="btn btn--soft"
+          type="button"
+          disabled={!canEdit || pickingProject}
+          onclick={() => void openProject()}
+          ><Icon name="folder_open" size={18} />Open project</button
+        >
         <span
           class="pill"
           class:pill--ok={!editorState.dirty && !editorState.error}
@@ -1363,7 +1803,7 @@
           onSelect={selectObject}
           onClose={() => (drawerOpen = false)}
           onResize={resizeDrawer}
-          onDelete={(id) => void editor.deleteNode(id)}
+          onDelete={(id) => void removeObject(id)}
         />
       {/if}
 
@@ -1391,7 +1831,7 @@
             onnodeclick={({ node }) => {
               if (node.id.startsWith("preview-")) return;
               if (tool === "eraser") {
-                void editor.deleteNode(node.id);
+                void removeObject(node.id);
                 return;
               }
               selectedId = node.id;
@@ -1498,7 +1938,7 @@
             {/if}
           </div>
         {/if}
-        {#if editorState.document && editorState.document.nodes.length === 0}
+        {#if editorState.document && editorState.document.nodes.length === 0 && editorState.document.projectGroups.length === 0}
           <div class="canvas__empty">
             <Icon name="note_add" size={34} />
             <p>This canvas is empty</p>
@@ -1517,7 +1957,7 @@
         {#if editorState.document}
           <CanvasNavigation
             zoom={viewport.zoom}
-            canFocus={!!selected}
+            canFocus={!!selectedId}
             disabled={editorState.busy}
             onZoom={zoomBy}
             onReset={() => zoomBy(1 / viewport.zoom)}
@@ -1593,15 +2033,19 @@
               !editorState.document ||
               !!activeTurn ||
               !!pendingReply}
-            scope={contextIds.length
-              ? `${contextIds.length} selected ${contextIds.length === 1 ? "object" : "objects"} · recent conversation`
+            scope={hasSelection
+              ? contextIds.length
+                ? `${contextIds.length} selected ${contextIds.length === 1 ? "object" : "objects"} · recent conversation`
+                : "No canvas content selected · recent conversation"
               : "Current canvas · recent conversation"}
             provider={providerLabel}
             details={[
-              "Your prompt.",
-              contextIds.length
-                ? `The ${contextIds.length} selected ${contextIds.length === 1 ? "object" : "objects"}: position, size, text or drawing, and connections between them.`
-                : "Every object on this canvas, including conversation cards and notes: position, size, text or drawing, and connections.",
+              "Your prompt. Project folders, session tiles and terminal output are excluded.",
+              hasSelection
+                ? contextIds.length
+                  ? `The ${contextIds.length} selected ${contextIds.length === 1 ? "object" : "objects"}: position, size, text or drawing, and connections between them.`
+                  : "No selected notes or drawings. Native sessions are excluded."
+                : "Canvas notes, drawings and conversation cards: position, size, text or drawing, and connections.",
               "Up to 8 earlier prompts and replies from this canvas, with their outcomes.",
               "Select objects before sending to limit what is shared.",
             ]}

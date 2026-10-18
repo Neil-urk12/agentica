@@ -1,13 +1,14 @@
 mod commands;
 pub mod contracts;
 pub mod http;
+pub mod sessions;
 mod store;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 pub use commands::Runtime;
-pub use store::{default_data_root, STORAGE_VERSION};
+pub use store::{default_data_root, RuntimeError, STORAGE_VERSION};
 
 pub const MAX_FRAME_BYTES: usize = 16 * 1024;
 

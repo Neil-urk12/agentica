@@ -1,8 +1,9 @@
-use std::{io, process::ExitCode};
+use std::{io, process::ExitCode, sync::Arc};
 
 use agentica_runtime::{
     default_data_root,
-    http::{serve, BACKEND_PORT, FRONTEND_ORIGIN},
+    http::{serve_with_sessions, BACKEND_PORT, FRONTEND_ORIGIN},
+    sessions::SessionService,
     Runtime,
 };
 use tokio::net::TcpListener;
@@ -39,10 +40,18 @@ async fn run() -> io::Result<()> {
     println!(
         "Agentica backend: http://127.0.0.1:{BACKEND_PORT}\nFrontend: {frontend}\nData directory: {data}\nConnection key: {connection_key}\nKeep this terminal running. Each restart creates a new key."
     );
-    tokio::select! {
-        result = serve(listener, &connection_key, runtime) => result,
+    let sessions = Arc::new(SessionService::new(
+        runtime.data_root().map(std::path::Path::to_owned),
+    ));
+    let result = tokio::select! {
+        result = serve_with_sessions(listener, &connection_key, runtime, sessions.clone()) => result,
         result = shutdown_signal() => result,
-    }
+    };
+    tokio::task::spawn_blocking(move || sessions.shutdown())
+        .await
+        .map_err(|error| io::Error::other(error.to_string()))?
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    result
 }
 
 #[tokio::main]

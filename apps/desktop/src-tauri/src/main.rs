@@ -1,9 +1,45 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use agentica_runtime::{default_data_root, DesktopBackend, Runtime};
-use std::sync::{Arc, Mutex};
+use agentica_runtime::{
+    default_data_root,
+    sessions::{
+        wire::{SessionCommand, SessionEvent, SessionRequest, MAX_CONNECTION_SUBSCRIPTIONS},
+        SessionOwner, SessionService,
+    },
+    DesktopBackend, Runtime,
+};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc, Mutex,
+    },
+    time::{Duration, Instant},
+};
+use tauri::Manager;
 
-type BackendState = Arc<Mutex<DesktopBackend>>;
+type Lease = (String, SessionOwner, String);
+struct BackendState {
+    runtime: Arc<Mutex<DesktopBackend>>,
+    sessions: Arc<SessionService>,
+    attachments: Arc<Mutex<HashMap<String, Lease>>>,
+}
+
+/// Input, resize, acknowledgement, and detach must name an attachment this
+/// window created for the same saved owner and session identity.
+fn owns_attachment(
+    attachments: &HashMap<String, Lease>,
+    label: &str,
+    owner: &SessionOwner,
+    session: &str,
+    attachment: &str,
+) -> bool {
+    attachments
+        .get(attachment)
+        .is_some_and(|(saved_label, saved_owner, saved_session)| {
+            saved_label == label && saved_owner == owner && saved_session == session
+        })
+}
 
 #[tauri::command]
 async fn runtime_request(
@@ -11,24 +47,319 @@ async fn runtime_request(
     connect: bool,
     state: tauri::State<'_, BackendState>,
 ) -> Result<serde_json::Value, String> {
-    let backend = Arc::clone(state.inner());
+    let backend = state.runtime.clone();
+    let sessions = state.sessions.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        backend
+        let method = request["method"].as_str().unwrap_or("");
+        let params = &request["params"];
+        let _guard = sessions
+            .guard_metadata(method, params)
+            .map_err(|error| error.to_string())?;
+        let response = backend
             .lock()
             .map_err(|_| "Backend state is unavailable.".to_owned())?
-            .request(&request, connect)
+            .request(&request, connect)?;
+        if response.get("error").is_none() {
+            sessions
+                .forget_removed(method, params)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(response)
     })
     .await
     .map_err(|error| format!("Backend task failed: {error}"))?
 }
 
+#[tauri::command]
+async fn session_request(
+    request: serde_json::Value,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, BackendState>,
+) -> Result<serde_json::Value, String> {
+    if window.label() != "main" {
+        return Err("Session access is limited to the local main window.".into());
+    }
+    let request =
+        SessionRequest::parse(&serde_json::to_vec(&request).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+    if matches!(request.command, SessionCommand::Subscribe { .. }) {
+        return Err("Use the session streaming channel to subscribe.".into());
+    }
+    if let Some((owner, session, attachment)) = request.command.attachment() {
+        let attachments = state
+            .attachments
+            .lock()
+            .map_err(|_| "Attachment state is unavailable.")?;
+        if !owns_attachment(&attachments, window.label(), owner, session, attachment) {
+            return Err("This attachment does not belong to this window.".into());
+        }
+    }
+    let sessions = state.sessions.clone();
+    let attachments = state.attachments.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let detached = match &request.command {
+            SessionCommand::Detach { attachment_id, .. } => Some(attachment_id.clone()),
+            _ => None,
+        };
+        let response = sessions
+            .execute(request.command)
+            .map_err(|error| error.to_string());
+        if let Some(id) = detached {
+            if let Ok(mut attachments) = attachments.lock() {
+                attachments.remove(&id);
+            }
+        }
+        response
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn session_subscribe(
+    request: serde_json::Value,
+    on_event: tauri::ipc::Channel<SessionEvent>,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, BackendState>,
+) -> Result<serde_json::Value, String> {
+    if window.label() != "main" {
+        return Err("Session access is limited to the local main window.".into());
+    }
+    let request =
+        SessionRequest::parse(&serde_json::to_vec(&request).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+    let SessionCommand::Subscribe {
+        owner,
+        session_id,
+        after,
+    } = request.command
+    else {
+        return Err("A subscription command is required.".into());
+    };
+    let sessions = state.sessions.clone();
+    let attachments = state.attachments.clone();
+    let label = window.label().to_owned();
+    let (result, id) = tauri::async_runtime::spawn_blocking({
+        let (sessions, attachments, owner, session_id) = (
+            sessions.clone(),
+            attachments.clone(),
+            owner.clone(),
+            session_id.clone(),
+        );
+        move || {
+            let mut leases = attachments
+                .lock()
+                .map_err(|_| "Attachment state is unavailable.")?;
+            if leases.len() >= MAX_CONNECTION_SUBSCRIPTIONS {
+                return Err("Too many terminal subscriptions.".to_owned());
+            }
+            let result = sessions
+                .execute(SessionCommand::Subscribe {
+                    owner: owner.clone(),
+                    session_id: session_id.clone(),
+                    after,
+                })
+                .map_err(|error| error.to_string())?;
+            let id = result["attachmentId"]
+                .as_str()
+                .ok_or("Missing attachment identity.")?
+                .to_owned();
+            leases.insert(id.clone(), (label, owner, session_id));
+            Ok((result, id))
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    tauri::async_runtime::spawn(async move {
+        let mut last = String::new();
+        let mut heartbeat = Instant::now();
+        loop {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let (service, own, session, attachment) = (
+                sessions.clone(),
+                owner.clone(),
+                session_id.clone(),
+                id.clone(),
+            );
+            let event = tauri::async_runtime::spawn_blocking(move || {
+                service.event(&own, &session, &attachment)
+            })
+            .await;
+            let Ok(Ok(event)) = event else {
+                break;
+            };
+            let status = serde_json::to_string(&event.status).unwrap_or_default();
+            if event.output.frames.is_empty()
+                && !event.output.history_gap
+                && status == last
+                && heartbeat.elapsed() < Duration::from_secs(1)
+            {
+                continue;
+            }
+            if on_event.send(event).is_err() {
+                break;
+            }
+            last = status;
+            heartbeat = Instant::now();
+        }
+        sessions.release(&owner, &session_id, &id);
+        if let Ok(mut attachments) = attachments.lock() {
+            attachments.remove(&id);
+        };
+    });
+    Ok(result)
+}
+
+#[tauri::command]
+async fn session_shutdown(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, BackendState>,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Session access is limited to the local main window.".into());
+    }
+    let service = state.sessions.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service.shutdown().map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let root = default_data_root();
+    let sessions = Arc::new(SessionService::new(root.clone()));
+    let exiting = Arc::new(AtomicU8::new(0));
     tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
-        .manage(Arc::new(Mutex::new(DesktopBackend::new(Runtime::new(
-            default_data_root(),
-        )))))
-        .invoke_handler(tauri::generate_handler![runtime_request])
-        .run(tauri::generate_context!())?;
+        .plugin(tauri_plugin_dialog::init())
+        .manage(BackendState {
+            runtime: Arc::new(Mutex::new(DesktopBackend::new(Runtime::new(root)))),
+            sessions: sessions.clone(),
+            attachments: Arc::new(Mutex::new(HashMap::new())),
+        })
+        .invoke_handler(tauri::generate_handler![
+            runtime_request,
+            session_request,
+            session_subscribe,
+            session_shutdown
+        ])
+        .build(tauri::generate_context!())?
+        .run(move |app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                if exiting.load(Ordering::SeqCst) == 2 {
+                    return;
+                }
+                api.prevent_exit();
+                if exiting
+                    .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    let (sessions, exiting, app) = (sessions.clone(), exiting.clone(), app.clone());
+                    tauri::async_runtime::spawn_blocking(move || {
+                        if sessions.shutdown().is_ok() {
+                            exiting.store(2, Ordering::SeqCst);
+                            app.exit(0);
+                        } else {
+                            exiting.store(0, Ordering::SeqCst);
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                            }
+                        }
+                    });
+                }
+            }
+        });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentica_runtime::sessions::wire::SessionRequest;
+
+    fn owner(tile: &str) -> SessionOwner {
+        SessionOwner {
+            workspace_id: "00000000-0000-4000-8000-000000000001".into(),
+            canvas_id: "00000000-0000-4000-8000-000000000002".into(),
+            tile_id: tile.into(),
+        }
+    }
+
+    #[test]
+    fn attachments_are_scoped_to_window_owner_and_session() {
+        let tile = "00000000-0000-4000-8000-000000000003";
+        let session = "00000000-0000-4000-8000-000000000004";
+        let attachment = "00000000-0000-4000-8000-000000000005";
+        let attachments = HashMap::from([(
+            attachment.to_owned(),
+            ("main".to_owned(), owner(tile), session.to_owned()),
+        )]);
+        assert!(owns_attachment(
+            &attachments,
+            "main",
+            &owner(tile),
+            session,
+            attachment
+        ));
+        // Another window, tile, replaced session, or unknown attachment.
+        assert!(!owns_attachment(
+            &attachments,
+            "other",
+            &owner(tile),
+            session,
+            attachment
+        ));
+        assert!(!owns_attachment(
+            &attachments,
+            "main",
+            &owner("00000000-0000-4000-8000-000000000006"),
+            session,
+            attachment
+        ));
+        assert!(!owns_attachment(
+            &attachments,
+            "main",
+            &owner(tile),
+            "00000000-0000-4000-8000-000000000007",
+            attachment
+        ));
+        assert!(!owns_attachment(
+            &attachments,
+            "main",
+            &owner(tile),
+            session,
+            "00000000-0000-4000-8000-000000000008"
+        ));
+    }
+
+    #[test]
+    fn desktop_ipc_payloads_use_the_shared_bounded_parser() {
+        let tile = owner("00000000-0000-4000-8000-000000000003");
+        let request = |command: serde_json::Value| {
+            SessionRequest::parse(
+                &serde_json::to_vec(&serde_json::json!({"id": "ipc", "command": command})).unwrap(),
+            )
+        };
+        let reference = serde_json::json!({"owner": tile,
+            "sessionId": "00000000-0000-4000-8000-000000000004",
+            "attachmentId": "00000000-0000-4000-8000-000000000005"});
+        let with = |extra: serde_json::Value| {
+            let mut command = reference.clone();
+            command
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            command
+        };
+        assert!(request(with(serde_json::json!({"op": "input", "bytes": [3]}))).is_ok());
+        for invalid in [
+            with(serde_json::json!({"op": "input", "bytes": vec![0_u8; 16385]})),
+            with(serde_json::json!({"op": "resize", "rows": 0, "cols": 80})),
+            with(serde_json::json!({"op": "acknowledge", "sequence": -1})),
+            with(serde_json::json!({"op": "input", "bytes": [3], "extra": true})),
+        ] {
+            assert!(request(invalid).is_err());
+        }
+    }
 }

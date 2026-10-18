@@ -4,6 +4,10 @@ import {
   type RuntimeResult,
   type RuntimeParams,
   type ConversationTurn,
+  PROJECT_HEADER,
+  PROJECT_PADDING,
+  type ProjectGroup,
+  type SessionTile,
 } from "@agentica/protocol";
 import type { callRuntime } from "./runtime";
 
@@ -61,6 +65,7 @@ export class Editor {
   private nodeIds = new Map<string, string>();
   private savedLayout = "";
   private attemptedLayout = "";
+  private savedProjectMetadata = "";
   private timer: ReturnType<typeof setTimeout> | undefined;
   private mutations: Promise<void> = Promise.resolve();
   private savingTask: Promise<void> | null = null;
@@ -99,6 +104,34 @@ export class Editor {
           height,
         }))
         .sort((left, right) => left.id.localeCompare(right.id)),
+      ...((document.projectGroups ?? []).length
+        ? {
+            projectGroups: document.projectGroups
+              .map(({ id, x, y, width, height, collapsed }) => ({
+                id,
+                x,
+                y,
+                width,
+                height,
+                collapsed,
+              }))
+              .sort((a, b) => a.id.localeCompare(b.id)),
+          }
+        : {}),
+      ...((document.sessionTiles ?? []).length
+        ? {
+            sessionTiles: document.sessionTiles
+              .map(({ id, projectId, x, y, width, height }) => ({
+                id,
+                projectId,
+                x,
+                y,
+                width,
+                height,
+              }))
+              .sort((a, b) => a.id.localeCompare(b.id)),
+          }
+        : {}),
     };
   }
 
@@ -139,8 +172,227 @@ export class Editor {
     this.attemptedArtifacts.clear();
     this.attemptedDrawing = null;
     this.savedLayout = JSON.stringify(this.layout(document));
+    this.savedProjectMetadata = this.projectMetadata(document);
     this.attemptedLayout = "";
     this.publish({ document, ...(turns ? { turns } : {}) });
+  }
+
+  private projectMetadata(document: CanvasDocument) {
+    return JSON.stringify({
+      groups: (document.projectGroups ?? [])
+        .map(({ id, root, label }) => ({ id, root, label }))
+        .sort((a, b) => a.id.localeCompare(b.id)),
+      tiles: (document.sessionTiles ?? [])
+        .map(({ id, projectId, kind, preset }) => ({
+          id,
+          projectId,
+          kind,
+          preset,
+        }))
+        .sort((a, b) => a.id.localeCompare(b.id)),
+    });
+  }
+
+  private async projectMutation<T>(
+    run: (reference: {
+      workspaceId: string;
+      canvasId: string;
+      expectedRevision: number;
+    }) => Promise<T>,
+  ): Promise<T | undefined> {
+    let result: T | undefined;
+    await this.enqueue(async () => {
+      await this.settleSave();
+      const document = this.state.document;
+      const workspaceId = this.state.workspace?.workspace.id;
+      // A failed save must be recovered first; an earlier rejected mutation
+      // (for example an invalid folder path) must not block a corrected retry.
+      if (
+        !document ||
+        !workspaceId ||
+        (this.state.dirty && this.state.error) ||
+        this.disposed
+      )
+        return;
+      await this.mutation(async () => {
+        result = await run({
+          workspaceId,
+          canvasId: document.canvas.id,
+          expectedRevision: document.canvas.revision,
+        });
+        this.load(
+          await this.call(this.key(), false, "canvas.open", {
+            workspaceId,
+            canvasId: document.canvas.id,
+          }),
+        );
+      });
+    });
+    return result;
+  }
+
+  async openProject(path: string, position?: { x: number; y: number }) {
+    const document = this.state.document;
+    if (!document) return;
+    const view = document.canvas.viewport;
+    let x = position?.x ?? (40 - view.x) / view.zoom;
+    const y = position?.y ?? (40 - view.y) / view.zoom;
+    for (let attempt = 0; attempt <= document.projectGroups.length; attempt++) {
+      const overlap = document.projectGroups.find(
+        (group) =>
+          group.x < x + 680 + 32 &&
+          group.x + group.width + 32 > x &&
+          group.y < y + 600 + 32 &&
+          group.y + (group.collapsed ? PROJECT_HEADER : group.height) + 32 > y,
+      );
+      if (!overlap) break;
+      x = overlap.x + overlap.width + 48;
+    }
+    return this.projectMutation((reference) =>
+      this.call(this.key(), false, "project.open", {
+        ...reference,
+        path,
+        x,
+        y,
+        width: 680,
+        height: 600,
+      }),
+    );
+  }
+
+  async deleteProject(projectId: string) {
+    return this.projectMutation((reference) =>
+      this.call(this.key(), false, "project.delete", {
+        ...reference,
+        projectId,
+      }),
+    );
+  }
+  async deleteSessionTile(tileId: string) {
+    return this.projectMutation((reference) =>
+      this.call(this.key(), false, "project.deleteTile", {
+        ...reference,
+        tileId,
+      }),
+    );
+  }
+
+  async locateProject(projectId: string, path: string) {
+    return this.projectMutation((reference) =>
+      this.call(this.key(), false, "project.locate", {
+        ...reference,
+        projectId,
+        path,
+      }),
+    );
+  }
+
+  async addSessionTile(projectId: string, kind: "shell" | "cli-agent") {
+    const document = this.state.document;
+    if (!document) return;
+    const tiles = (document.sessionTiles ?? []).filter(
+      (tile) => tile.projectId === projectId,
+    );
+    const y = Math.max(
+      PROJECT_HEADER,
+      ...tiles.map((tile) => tile.y + tile.height + PROJECT_PADDING),
+    );
+    return this.projectMutation((reference) =>
+      this.call(this.key(), false, "project.createTile", {
+        ...reference,
+        projectId,
+        kind,
+        ...(kind === "cli-agent" ? { preset: "codex" as const } : {}),
+        x: PROJECT_PADDING,
+        y,
+        width: 576,
+        height: 440,
+        growProject: true,
+      }),
+    );
+  }
+
+  placeProject(
+    id: string,
+    geometry: Partial<
+      Pick<ProjectGroup, "x" | "y" | "width" | "height" | "collapsed">
+    >,
+  ) {
+    const document = this.state.document;
+    const group = document?.projectGroups?.find((group) => group.id === id);
+    if (!document || !group || this.state.busy) return;
+    const tiles = document.sessionTiles.filter((tile) => tile.projectId === id);
+    const minimumWidth = Math.max(
+      320,
+      ...tiles.map((tile) => tile.x + tile.width + PROJECT_PADDING),
+    );
+    const minimumHeight = Math.max(
+      240,
+      ...tiles.map((tile) => tile.y + tile.height + PROJECT_PADDING),
+    );
+    const next = {
+      ...group,
+      ...geometry,
+      width: Math.max(
+        minimumWidth,
+        Math.min(4000, geometry.width ?? group.width),
+      ),
+      height: Math.max(
+        minimumHeight,
+        Math.min(4000, geometry.height ?? group.height),
+      ),
+    };
+    if (JSON.stringify(next) === JSON.stringify(group)) return;
+    this.edit({
+      ...document,
+      projectGroups: document.projectGroups.map((group) =>
+        group.id === id ? next : group,
+      ),
+    });
+  }
+
+  placeSessionTile(
+    id: string,
+    geometry: Partial<Pick<SessionTile, "x" | "y" | "width" | "height">>,
+  ) {
+    const document = this.state.document;
+    const tile = document?.sessionTiles?.find((tile) => tile.id === id);
+    const group = document?.projectGroups?.find(
+      (group) => group.id === tile?.projectId,
+    );
+    if (!document || !tile || !group || this.state.busy) return;
+    const width = Math.max(
+      240,
+      Math.min(group.width - 2 * PROJECT_PADDING, geometry.width ?? tile.width),
+    );
+    const height = Math.max(
+      160,
+      Math.min(
+        group.height - PROJECT_HEADER - PROJECT_PADDING,
+        geometry.height ?? tile.height,
+      ),
+    );
+    const next = {
+      ...tile,
+      ...geometry,
+      width,
+      height,
+      x: Math.max(
+        PROJECT_PADDING,
+        Math.min(group.width - width - PROJECT_PADDING, geometry.x ?? tile.x),
+      ),
+      y: Math.max(
+        PROJECT_HEADER,
+        Math.min(group.height - height - PROJECT_PADDING, geometry.y ?? tile.y),
+      ),
+    };
+    if (JSON.stringify(next) === JSON.stringify(tile)) return;
+    this.edit({
+      ...document,
+      sessionTiles: document.sessionTiles.map((tile) =>
+        tile.id === id ? next : tile,
+      ),
+    });
   }
 
   private async operation(run: () => Promise<void>) {
@@ -815,11 +1067,32 @@ export class Editor {
         const serialized = JSON.stringify(snapshot);
         if (serialized !== this.savedLayout) {
           this.attemptedLayout = serialized;
+          const { projectGroups, sessionTiles, ...baseLayout } = snapshot;
           const result = await this.call(this.key(), false, "canvas.save", {
             workspaceId,
             canvasId: current.canvas.id,
             expectedRevision: current.canvas.revision,
-            ...snapshot,
+            ...baseLayout,
+            ...(projectGroups
+              ? {
+                  projectGroups: projectGroups.map((group) => ({
+                    ...group,
+                    expectedRevision: current.projectGroups.find(
+                      (item) => item.id === group.id,
+                    )!.revision,
+                  })),
+                }
+              : {}),
+            ...(sessionTiles
+              ? {
+                  sessionTiles: sessionTiles.map((tile) => ({
+                    ...tile,
+                    expectedRevision: current.sessionTiles.find(
+                      (item) => item.id === tile.id,
+                    )!.revision,
+                  })),
+                }
+              : {}),
           });
           this.savedLayout = serialized;
           this.attemptedLayout = "";
@@ -828,6 +1101,28 @@ export class Editor {
             document: {
               ...latest,
               canvas: { ...latest.canvas, revision: result.revision },
+              ...((current.projectGroups ?? []).length
+                ? {
+                    projectGroups: latest.projectGroups.map((group) => ({
+                      ...group,
+                      revision:
+                        current.projectGroups.find(
+                          (item) => item.id === group.id,
+                        )!.revision + 1,
+                    })),
+                  }
+                : {}),
+              ...((current.sessionTiles ?? []).length
+                ? {
+                    sessionTiles: latest.sessionTiles.map((tile) => ({
+                      ...tile,
+                      revision:
+                        current.sessionTiles.find(
+                          (item) => item.id === tile.id,
+                        )!.revision + 1,
+                    })),
+                  }
+                : {}),
             },
           });
         }
@@ -856,6 +1151,10 @@ export class Editor {
         workspaceId,
         canvasId: document.canvas.id,
       });
+      if (this.projectMetadata(remote) !== this.savedProjectMetadata)
+        throw new Error(
+          "Saved project associations changed elsewhere. Copy your unsaved edits before reloading.",
+        );
       // One lost creation reply can account for exactly one new drawing and revision.
       const attempted = this.attemptedDrawing;
       const unknown = remote.artifacts.filter(
@@ -931,6 +1230,29 @@ export class Editor {
         document: {
           ...document,
           canvas: { ...document.canvas, revision: remote.canvas.revision },
+          ...((document.projectGroups ?? []).length
+            ? {
+                projectGroups: document.projectGroups.map((group) => ({
+                  ...group,
+                  revision: remote.projectGroups.find(
+                    (item) => item.id === group.id,
+                  )!.revision,
+                  available: remote.projectGroups.find(
+                    (item) => item.id === group.id,
+                  )!.available,
+                })),
+              }
+            : {}),
+          ...((document.sessionTiles ?? []).length
+            ? {
+                sessionTiles: document.sessionTiles.map((tile) => ({
+                  ...tile,
+                  revision: remote.sessionTiles.find(
+                    (item) => item.id === tile.id,
+                  )!.revision,
+                })),
+              }
+            : {}),
           artifacts: document.artifacts.map((draft) =>
             pending.has(draft.id)
               ? draft
