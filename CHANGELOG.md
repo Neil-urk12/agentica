@@ -195,6 +195,9 @@ released version and date. Keep validation evidence in the
 - Add a persisted light/dark theme toggle. The site follows the system preference
   until a visitor chooses a theme, applies it before first paint, and updates the
   browser theme color with it.
+- Set the landing page in Poppins for headings, body copy, and page labels to
+  match the desktop app. DM Mono remains only for code, terminal text, and the
+  miniature canvas annotations.
 
 ### 2026-10-16
 
