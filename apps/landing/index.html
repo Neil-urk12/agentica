@@ -1,0 +1,721 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f2efe7" />
+    <meta
+      name="description"
+      content="Agentica is an infinite canvas for agent work — text, sketches, and instructions on one local-first surface."
+    />
+    <title>Agentica — a canvas for work that needs room</title>
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Agentica" />
+    <meta
+      property="og:title"
+      content="Agentica — a canvas for work that needs room"
+    />
+    <meta
+      property="og:description"
+      content="An infinite canvas for agent work. Notes, sketches, and instructions on one local-first surface."
+    />
+    <meta name="twitter:card" content="summary" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <script>
+      document.documentElement.classList.add("js");
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="nav">
+      <div class="nav__inner">
+        <a class="brand" href="./" aria-label="Agentica home">
+          <svg class="brand__mark" viewBox="0 0 28 28" aria-hidden="true">
+            <rect x="1" y="1" width="26" height="26" rx="7" />
+            <path d="M9 9h10M9 9l5 10" />
+            <circle cx="9" cy="9" r="2.1" />
+            <circle cx="19" cy="9" r="2.1" />
+            <circle cx="14" cy="19" r="2.1" />
+          </svg>
+          <span class="brand__word">agentica</span>
+        </a>
+
+        <nav class="nav__links" aria-label="Primary">
+          <a href="#surface">The surface</a>
+          <a href="#how">How it works</a>
+          <a href="#download">Download</a>
+        </nav>
+
+        <div class="nav__actions">
+          <a
+            class="nav__gh"
+            href="https://github.com/Neil-urk12/agentica"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M12 2.2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.36 1.09 2.93.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.95 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.5 9.5 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.85-2.34 4.7-4.57 4.95.36.31.68.92.68 1.86v2.75c0 .27.18.58.69.48A10 10 0 0 0 12 2.2Z"
+              />
+            </svg>
+            <span>GitHub</span>
+          </a>
+          <a class="btn btn--ink btn--small" href="#download">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M4 20h16" />
+            </svg>
+            <span data-download-label>Download</span>
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main">
+      <!-- ------------------------------------------------------------ hero -->
+      <section class="hero">
+        <div class="hero__glow" aria-hidden="true"></div>
+        <div class="wrap hero__grid">
+          <div class="hero__copy">
+            <p class="eyebrow">
+              <span class="eyebrow__dot"></span>
+              A visual workspace OS for agents
+              <span class="eyebrow__state">in development</span>
+            </p>
+
+            <h1 class="display">
+              <span>Give your agents</span>
+              <span
+                >a place to <em>think</em
+                ><span class="display__dot">.</span></span
+              >
+            </h1>
+
+            <p class="lede">
+              Agentica is an infinite canvas for the messy middle of agent work.
+              Notes, sketches, and instructions live on one surface — instead of
+              scrolling away in a chat log.
+            </p>
+
+            <div class="hero__cta">
+              <a class="btn btn--ink btn--hero" href="#download">
+                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M4 20h16" />
+                </svg>
+                <span data-download-label>Download for desktop</span>
+              </a>
+              <a class="btn btn--line" href="#surface">
+                See the surface
+                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 12h15m0 0-5.5-5.5M19 12l-5.5 5.5" />
+                </svg>
+              </a>
+            </div>
+
+            <ul class="hero__meta" aria-label="Project facts">
+              <li>Free &amp; open source</li>
+              <li>MIT licensed</li>
+              <li>Local-first</li>
+            </ul>
+          </div>
+
+          <figure class="specimen">
+            <div class="specimen__sheet">
+              <div class="specimen__bar">
+                <span class="specimen__path">workspace / launch-notes</span>
+                <span class="specimen__saved">
+                  <span class="specimen__saved-dot"></span>
+                  saved
+                </span>
+              </div>
+
+              <div class="board" data-board>
+                <svg
+                  class="board__edges"
+                  data-edges
+                  aria-hidden="true"
+                  focusable="false"
+                >
+                  <defs>
+                    <marker
+                      id="board-arrow"
+                      markerWidth="6"
+                      markerHeight="6"
+                      refX="4.6"
+                      refY="3"
+                      orient="auto"
+                    >
+                      <path d="M0 0l5 3-5 3z" fill="currentColor" />
+                    </marker>
+                  </defs>
+                  <g data-edge="notes" data-to="sticky">
+                    <path />
+                  </g>
+                  <g data-edge="notes" data-to="reply">
+                    <path />
+                  </g>
+                  <g data-edge="sketch" data-to="reply">
+                    <path />
+                  </g>
+                </svg>
+
+                <div
+                  class="node node--notes"
+                  data-node="notes"
+                  tabindex="0"
+                  role="group"
+                  aria-label="Canvas note: Launch notes. Drag or use arrow keys to move."
+                  style="--x: 5%; --y: 9%"
+                >
+                  <div class="node__head">
+                    <span class="node__icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24">
+                        <path d="M7 4h10l3 3v13H7z" />
+                        <path d="M10 10h7M10 14h7M10 18h4" />
+                      </svg>
+                    </span>
+                    <span class="node__title">Launch notes</span>
+                  </div>
+                  <p class="node__body">
+                    Agents don’t need another chat box. Give them a desk.
+                  </p>
+                  <span class="node__tag">note</span>
+                </div>
+
+                <div
+                  class="node node--sticky"
+                  data-node="sticky"
+                  tabindex="0"
+                  role="group"
+                  aria-label="Instruction note: Sketch the first-run flow, keep it quiet. Drag or use arrow keys to move."
+                  style="--x: 59%; --y: 5%"
+                >
+                  <span class="node__pin" aria-hidden="true"></span>
+                  <span class="node__tag">instruction</span>
+                  <p class="node__body">
+                    Sketch the first-run flow. Keep it quiet.
+                  </p>
+                  <span class="node__hand">— you</span>
+                </div>
+
+                <div
+                  class="node node--sketch"
+                  data-node="sketch"
+                  tabindex="0"
+                  role="group"
+                  aria-label="Drawing node: a three-step flow. Drag or use arrow keys to move."
+                  style="--x: 9%; --y: 60%"
+                >
+                  <span class="node__tag">drawing</span>
+                  <svg
+                    class="node__sketch"
+                    viewBox="0 0 190 72"
+                    aria-hidden="true"
+                  >
+                    <rect x="2" y="24" width="48" height="26" rx="5" />
+                    <rect x="71" y="12" width="48" height="26" rx="5" />
+                    <rect x="71" y="46" width="48" height="26" rx="5" />
+                    <rect x="140" y="24" width="48" height="26" rx="5" />
+                    <path
+                      d="M50 37h21M119 25c12 0 9 12 21 12M119 49c12 0 9-12 21-12"
+                    />
+                  </svg>
+                  <span class="node__caption">first-run flow, v1</span>
+                </div>
+
+                <div
+                  class="node node--reply"
+                  data-node="reply"
+                  tabindex="0"
+                  role="group"
+                  aria-label="Agent draft note with three onboarding steps. Drag or use arrow keys to move."
+                  style="--x: 56%; --y: 56%"
+                >
+                  <div class="node__head">
+                    <span class="node__spark" aria-hidden="true">✳</span>
+                    <span class="node__title">agent · draft</span>
+                    <span class="node__chip">OpenRouter</span>
+                  </div>
+                  <p class="node__body">
+                    1. Open on a blank canvas.<br />
+                    2. Drop one note.<br />
+                    3. Invite the agent in.
+                  </p>
+                </div>
+
+                <div class="board__cursor" aria-hidden="true">
+                  <svg viewBox="0 0 16 18">
+                    <path d="M1 1l13 7.2-6.1 1.3L5.4 16z" />
+                  </svg>
+                  <span>you</span>
+                </div>
+
+                <div class="board__foot" aria-hidden="true">
+                  <span>100%</span>
+                  <span>grid 24</span>
+                  <span>infinite</span>
+                </div>
+              </div>
+            </div>
+            <figcaption>
+              <span>fig. 01</span> One canvas, everything in place. Drag a node.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------- ticker -->
+      <div class="ticker" aria-hidden="true">
+        <div class="ticker__track">
+          <span class="ticker__group">
+            <span>Text notes</span><i></i> <span>Sketches</span><i></i>
+            <span>Instruction notes</span><i></i> <span>Infinite canvas</span
+            ><i></i> <span>Local SQLite</span><i></i>
+            <span>OpenRouter text</span><i></i> <span>Desktop + browser</span
+            ><i></i>
+          </span>
+          <span class="ticker__group">
+            <span>Text notes</span><i></i> <span>Sketches</span><i></i>
+            <span>Instruction notes</span><i></i> <span>Infinite canvas</span
+            ><i></i> <span>Local SQLite</span><i></i>
+            <span>OpenRouter text</span><i></i> <span>Desktop + browser</span
+            ><i></i>
+          </span>
+        </div>
+      </div>
+
+      <!-- --------------------------------------------------------- surface -->
+      <section class="section" id="surface">
+        <div class="wrap">
+          <header class="section__head" data-reveal>
+            <p class="kicker"><span>01</span> The surface</p>
+            <h2 class="h2">
+              Chat logs are a transcript.<br />
+              This is the <em>desk</em>.
+            </h2>
+            <p class="section__intro">
+              An agent’s work is rarely a straight line. Agentica gives it a
+              place to spread out: artefacts as objects, placement as memory,
+              and the whole board saved exactly where you left it.
+            </p>
+          </header>
+
+          <div class="plates">
+            <article class="plate plate--wide" data-reveal style="--d: 1">
+              <div class="plate__copy">
+                <p class="plate__index">01 / space</p>
+                <h3>A canvas that remembers</h3>
+                <p>
+                  Pan, zoom, and every node’s position persist with the canvas.
+                  Reopening a workspace puts the thinking back on the desk, not
+                  at the top of a feed.
+                </p>
+                <p class="plate__note">
+                  <span class="plot-dot"></span> infinite canvas · saved
+                  viewport
+                </p>
+              </div>
+              <div class="plate__visual plate__visual--map" aria-hidden="true">
+                <svg viewBox="0 0 320 200">
+                  <g class="map-grid">
+                    <path d="M0 40h320M0 80h320M0 120h320M0 160h320" />
+                    <path
+                      d="M40 0v200M80 0v200M120 0v200M160 0v200M200 0v200M240 0v200M280 0v200"
+                    />
+                  </g>
+                  <path class="map-line" d="M62 132 132 76 208 108 268 52" />
+                  <circle class="map-node" cx="62" cy="132" r="6" />
+                  <circle
+                    class="map-node map-node--fill"
+                    cx="132"
+                    cy="76"
+                    r="7"
+                  />
+                  <circle class="map-node" cx="208" cy="108" r="6" />
+                  <rect
+                    class="map-card"
+                    x="238"
+                    y="32"
+                    width="58"
+                    height="34"
+                    rx="5"
+                  />
+                  <path class="map-label" d="M244 44h30M244 52h20" />
+                  <path
+                    class="map-cross"
+                    d="M132 64v-16M132 96v16M120 76h-16M160 76h16"
+                  />
+                </svg>
+                <span class="map-readout">x 1482 · y −380 · 100%</span>
+              </div>
+            </article>
+
+            <article class="plate" data-reveal style="--d: 2">
+              <div class="plate__copy">
+                <p class="plate__index">02 / instructions</p>
+                <h3>Instructions are objects</h3>
+                <p>
+                  Pin a note beside the thing it applies to. It stays put as
+                  reference, instead of disappearing upstream in a thread.
+                </p>
+              </div>
+              <div
+                class="plate__visual plate__visual--sticky"
+                aria-hidden="true"
+              >
+                <div class="mini-sticky">
+                  <span>keep it quiet</span>
+                  <span class="mini-sticky__line"></span>
+                  <span
+                    class="mini-sticky__line mini-sticky__line--short"
+                  ></span>
+                  <span class="mini-sticky__tag">instruction</span>
+                </div>
+              </div>
+            </article>
+
+            <article class="plate" data-reveal style="--d: 3">
+              <div class="plate__copy">
+                <p class="plate__index">03 / storage</p>
+                <h3>Your disk, not our cloud</h3>
+                <p>
+                  Each workspace is a SQLite database on your machine, with one
+                  writer per workspace. No account, no sync service, nothing to
+                  sign up for.
+                </p>
+              </div>
+              <div class="plate__visual plate__visual--disk" aria-hidden="true">
+                <div class="mini-terminal">
+                  <div class="mini-terminal__bar">
+                    <span>terminal</span><span>zsh</span>
+                  </div>
+                  <p>
+                    <span class="mini-terminal__prompt">$</span> ls
+                    ~/.local/share/agentica
+                  </p>
+                  <p class="mini-terminal__out">launch-notes.db</p>
+                  <p class="mini-terminal__out">second-brain.db</p>
+                  <p>
+                    <span class="mini-terminal__prompt">$</span>
+                    <span class="mini-caret"></span>
+                  </p>
+                </div>
+                <p class="mini-disk-note">
+                  Windows: <code>%APPDATA%\agentica</code>
+                </p>
+              </div>
+            </article>
+
+            <article class="plate plate--wide" data-reveal style="--d: 4">
+              <div class="plate__copy">
+                <p class="plate__index">04 / access</p>
+                <h3>Two ways in</h3>
+                <p>
+                  A native Tauri window with the Rust runtime inside, or the
+                  same canvas served from a local backend at your own loopback
+                  address.
+                </p>
+              </div>
+              <div
+                class="plate__visual plate__visual--doors"
+                aria-hidden="true"
+              >
+                <div class="mini-window">
+                  <span class="mini-window__title">Agentica</span>
+                  <span class="mini-window__meta">desktop</span>
+                </div>
+                <div class="mini-window mini-window--browser">
+                  <span class="mini-window__title">agentica</span>
+                  <span class="mini-window__meta">127.0.0.1:1421</span>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <aside class="ledger" data-reveal>
+            <p class="ledger__title">Where it is now</p>
+            <ul class="ledger__list">
+              <li>
+                <span>Canvas, persistence &amp; autosave</span>
+                <span class="state state--live">working</span>
+              </li>
+              <li>
+                <span>Text generation via OpenRouter</span>
+                <span class="state state--live">working</span>
+              </li>
+              <li>
+                <span>Agent orchestration</span>
+                <span class="state state--building">in progress</span>
+              </li>
+              <li>
+                <span>Signed installers</span>
+                <span class="state">not yet</span>
+              </li>
+            </ul>
+            <p class="ledger__foot">
+              This is a young, pre-release project. The canvas is real; agent
+              integration is next.
+            </p>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------------------- how -->
+      <section class="section section--how" id="how">
+        <div class="wrap">
+          <header class="section__head" data-reveal>
+            <p class="kicker"><span>02</span> How it works</p>
+            <h2 class="h2">Three moves, then <em>stay</em> a while.</h2>
+          </header>
+
+          <ol class="steps">
+            <li class="step" data-reveal style="--d: 1">
+              <span class="step__num">01</span>
+              <div class="step__body">
+                <h3>Open a workspace</h3>
+                <p>
+                  Name it, and a local SQLite file is created. One workspace,
+                  one writer, no daemon in the middle.
+                </p>
+                <span class="step__chip">workspace / new</span>
+              </div>
+            </li>
+            <li class="step" data-reveal style="--d: 2">
+              <span class="step__num">02</span>
+              <div class="step__body">
+                <h3>Put it on the surface</h3>
+                <p>
+                  Write a note, draw a flow, pin an instruction. Arrange it the
+                  way you’d arrange paper on a desk.
+                </p>
+                <span class="step__chip">text · draw · arrow</span>
+              </div>
+            </li>
+            <li class="step" data-reveal style="--d: 3">
+              <span class="step__num">03</span>
+              <div class="step__body">
+                <h3>Pick it up later</h3>
+                <p>
+                  Autosave keeps the canvas and its viewport. Close the app,
+                  reopen it, and the board is still there.
+                </p>
+                <span class="step__chip">saved · just now</span>
+              </div>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- -------------------------------------------------------- download -->
+      <section class="section section--download" id="download">
+        <div class="wrap">
+          <div class="download" data-reveal>
+            <div class="download__glow" aria-hidden="true"></div>
+            <div class="download__intro">
+              <p class="kicker kicker--light"><span>03</span> Get the app</p>
+              <h2 class="h2 h2--light">
+                Take it to<br />
+                your <em>canvas</em>.
+              </h2>
+              <p class="download__lede">
+                A native desktop build with the Rust runtime bundled in. No
+                account, no server, no browser tab required.
+              </p>
+              <a
+                class="btn btn--paper btn--hero"
+                href="https://github.com/Neil-urk12/agentica/releases"
+              >
+                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M4 20h16" />
+                </svg>
+                <span data-download-label>Download for desktop</span>
+              </a>
+              <p class="download__hint">GitHub Releases · pre-release</p>
+            </div>
+
+            <div class="download__panel">
+              <p class="download__panel-title">Choose your machine</p>
+              <div
+                class="platforms"
+                role="group"
+                aria-label="Choose your operating system"
+              >
+                <button
+                  class="platform"
+                  type="button"
+                  data-platform="windows"
+                  aria-pressed="false"
+                >
+                  <svg
+                    class="platform__os"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M4 5.5 11 4.5v7H4zM12.5 4.2 20 3v8.5h-7.5zM4 12h7v7l-7-1zM12.5 12H20v9l-7.5-1.1z"
+                    />
+                  </svg>
+                  <span class="platform__name">Windows</span>
+                  <span class="platform__meta">x64 · .exe</span>
+                  <span class="platform__check" aria-hidden="true"></span>
+                </button>
+                <button
+                  class="platform"
+                  type="button"
+                  data-platform="macos"
+                  aria-pressed="false"
+                >
+                  <svg
+                    class="platform__os"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M16.4 12.7c0-2.2 1.8-3.3 1.9-3.4-1-1.5-2.6-1.7-3.2-1.7-1.4-.1-2.6.8-3.3.8-.7 0-1.7-.8-2.8-.8-1.5 0-2.8.8-3.5 2.1-1.5 2.6-.4 6.5 1.1 8.6.7 1 1.6 2.2 2.7 2.1 1.1 0 1.5-.7 2.8-.7s1.7.7 2.8.7c1.2 0 2-1 2.7-2.1.8-1.2 1.2-2.4 1.2-2.5-.1 0-2.4-.9-2.4-3.1ZM14.5 5.7c.6-.8 1-1.8.9-2.9-.9.1-1.9.6-2.5 1.4-.6.7-1.1 1.8-.9 2.8 1 .1 1.9-.5 2.5-1.3Z"
+                    />
+                  </svg>
+                  <span class="platform__name">macOS</span>
+                  <span class="platform__meta">Apple silicon</span>
+                  <span class="platform__check" aria-hidden="true"></span>
+                </button>
+                <button
+                  class="platform"
+                  type="button"
+                  data-platform="linux"
+                  aria-pressed="false"
+                >
+                  <svg
+                    class="platform__os"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M12 2.5c-2.1 0-3.4 1.7-3.4 4.2 0 1.5.1 2.2-.5 3.3-.8 1.4-1.9 2.9-2.4 4.4-.5 1.6-.2 3 .7 3.6.5.4.7.9 1.3 1.3.9.6 2.1 1 3.4 1 1.9 0 3.6-.7 4.6-1.9.5-.6 1.4-.8 1.9-1.5.7-.9.7-2.2.2-3.7-.4-1.3-1.4-2.8-2-4.2-.5-1.2-.4-2.1-.4-3.5 0-2.7-1.3-4.3-3.4-4.3Zm-1.6 4.1c.4 0 .7.5.7 1.1s-.3 1.1-.7 1.1-.7-.5-.7-1.1.3-1.1.7-1.1Zm3.2 0c.4 0 .7.5.7 1.1s-.3 1.1-.7 1.1-.7-.5-.7-1.1.3-1.1.7-1.1Zm-1.6 2.6c.5 0 1.2.4 1.5.9.3.4-.1.8-.5 1-.4.2-.7.3-1 .3s-.6-.1-1-.3c-.5-.2-.8-.6-.5-1 .3-.5 1-.9 1.5-.9Z"
+                    />
+                  </svg>
+                  <span class="platform__name">Linux</span>
+                  <span class="platform__meta">x64 · binary</span>
+                  <span class="platform__check" aria-hidden="true"></span>
+                </button>
+              </div>
+
+              <div class="source">
+                <div class="source__head">
+                  <p>Or build it from source</p>
+                  <span>recommended for now</span>
+                </div>
+                <div class="source__block">
+                  <code>pnpm install --frozen-lockfile</code>
+                  <button
+                    class="copy"
+                    type="button"
+                    data-copy="pnpm install --frozen-lockfile"
+                    aria-label="Copy install command"
+                  >
+                    <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                      <rect x="9" y="9" width="11" height="11" rx="2" />
+                      <path d="M5 15V5h10" />
+                    </svg>
+                  </button>
+                </div>
+                <div class="source__block">
+                  <code>pnpm build:desktop</code>
+                  <button
+                    class="copy"
+                    type="button"
+                    data-copy="pnpm build:desktop"
+                    aria-label="Copy desktop build command"
+                  >
+                    <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                      <rect x="9" y="9" width="11" height="11" rx="2" />
+                      <path d="M5 15V5h10" />
+                    </svg>
+                  </button>
+                </div>
+                <p class="source__note">
+                  Needs Node.js 24, pnpm 11.6, Rust, and the
+                  <a
+                    href="https://v2.tauri.app/start/prerequisites/"
+                    target="_blank"
+                    rel="noreferrer"
+                    >Tauri platform prerequisites</a
+                  >. The executable lands in <code>target/release/</code>.
+                  Installers are still pending.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="wrap footer__inner">
+        <div class="footer__top">
+          <div class="footer__claim">
+            <p class="footer__word">
+              <span class="brand__word">agentica</span>
+              <span class="footer__slash">/</span>
+            </p>
+            <p class="footer__line">
+              A canvas for work that needs room to think.
+            </p>
+          </div>
+          <nav class="footer__nav" aria-label="Footer">
+            <div>
+              <p class="footer__head">Project</p>
+              <a href="#surface">The surface</a>
+              <a href="#how">How it works</a>
+              <a href="#download">Download</a>
+            </div>
+            <div>
+              <p class="footer__head">Source</p>
+              <a
+                href="https://github.com/Neil-urk12/agentica"
+                target="_blank"
+                rel="noreferrer"
+                >GitHub</a
+              >
+              <a
+                href="https://github.com/Neil-urk12/agentica#readme"
+                target="_blank"
+                rel="noreferrer"
+                >Documentation</a
+              >
+              <a
+                href="https://github.com/Neil-urk12/agentica/blob/main/CHANGELOG.md"
+                target="_blank"
+                rel="noreferrer"
+                >Changelog</a
+              >
+            </div>
+            <div>
+              <p class="footer__head">Legal</p>
+              <a
+                href="https://github.com/Neil-urk12/agentica/blob/main/LICENSE"
+                target="_blank"
+                rel="noreferrer"
+                >MIT license</a
+              >
+              <a
+                href="https://github.com/Neil-urk12/agentica/blob/main/.github/SECURITY.md"
+                target="_blank"
+                rel="noreferrer"
+                >Security</a
+              >
+            </div>
+          </nav>
+        </div>
+
+        <p class="footer__base">
+          <span>© <span data-year>2026</span> Agentica contributors</span>
+          <span>Built with Svelte, Rust &amp; SQLite</span>
+        </p>
+      </div>
+    </footer>
+
+    <div class="toast" data-toast role="status" aria-live="polite"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

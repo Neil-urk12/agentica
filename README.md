@@ -159,6 +159,7 @@ work; the setup hint does not indicate whether Codex is configured.
 | [Browser with a compiled backend](#browser-with-a-compiled-backend) | `pnpm build:backend`, then run the executable                | Embedded browser UI and Rust runtime on port 1421     |
 | [Preview the built browser UI](#preview-the-built-browser-ui)       | Run a backend and serve the built frontend with Vite preview | Local preview of the built UI                         |
 | [Frontend only](#frontend-only)                                     | `pnpm dev:web`                                               | Canvas UI without a connected backend                 |
+| [Landing page](#landing-page)                                       | `pnpm dev:landing`                                           | Marketing page with the desktop download links        |
 
 The UI implements canvas display, runtime health checks, workspace and canvas
 creation and reopening, text and node placement editing, persisted pan/zoom,
@@ -282,6 +283,18 @@ Open `http://127.0.0.1:1420` to work on the canvas UI. This needs no Rust toolch
 or desktop libraries. Backend health stays disconnected until you start a backend,
 enter its connection key, and connect.
 
+### Landing page
+
+```sh
+pnpm dev:landing
+```
+
+Open `http://127.0.0.1:1430` for the standalone marketing page. It detects the
+visitor's platform for the download call to action and links to GitHub Releases;
+the source-build commands are listed alongside. `pnpm build:landing` writes the
+static site to `apps/landing/dist`. The page does not talk to the runtime and has
+no backend dependency.
+
 ### Browser connection and shutdown
 
 1. Keep the backend running (and the frontend server for development).
@@ -325,6 +338,7 @@ Stop only your own detached backend before running tests, which use port 1421.
 ```text
 apps/desktop/              Svelte 5, Svelte Flow, Tailwind CSS, Vite
 apps/desktop/src-tauri/    Tauri 2 native host
+apps/landing/              Standalone marketing page, Vite and static assets
 packages/protocol/        TypeScript wire contracts and response validation
 packages/agent-runtime/   Shared Rust logic and the detached Axum executable
 tests/                    Browser protocol integration checks against Rust
