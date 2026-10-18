@@ -81,13 +81,10 @@ importers:
 
   apps/landing:
     dependencies:
-      '@fontsource-variable/archivo':
-        specifier: ^5.3.0
-        version: 5.3.0
-      '@fontsource-variable/fraunces':
-        specifier: ^5.3.0
-        version: 5.3.0
       '@fontsource/dm-mono':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource/poppins':
         specifier: ^5.3.0
         version: 5.3.0
     devDependencies:
@@ -105,12 +102,6 @@ importers:
         version: 4.6.5
 
 packages:
-
-  '@fontsource-variable/archivo@5.3.0':
-    resolution: {integrity: sha512-HogK8FJelrD1o7TlZlkIVtHgc20bO5PZRWE7mUeUTdMN055alznQV6/00J00IBeu8FQAH4s3zW9UJNvKExXf+g==}
-
-  '@fontsource-variable/fraunces@5.3.0':
-    resolution: {integrity: sha512-9BYGySn4AHEJdgp9Z28tQ3X+laJMEOITXkQarZXeloWQZDq5oOvXJ3kDA8c7MGIfpogIaZfjrQBqmda8POOCKA==}
 
   '@fontsource/dm-mono@5.3.0':
     resolution: {integrity: sha512-OINjI8C1S/wpchhQxl7njZdMn4+hnDCpQ4YtvvOpKNARo+0J8O1x1IcrChxNjHOhfVv1by8C/FQoy3hXK+C1Ug==}
@@ -1147,10 +1138,6 @@ packages:
     resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
 
 snapshots:
-
-  '@fontsource-variable/archivo@5.3.0': {}
-
-  '@fontsource-variable/fraunces@5.3.0': {}
 
   '@fontsource/dm-mono@5.3.0': {}
 
