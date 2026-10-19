@@ -10,6 +10,8 @@
   import "@xterm/xterm/css/xterm.css";
   import {
     LIMITS,
+    PROJECT_HEADER,
+    PROJECT_PADDING,
     type RuntimeParams,
     type SessionStatus,
     type CanvasOperation,
@@ -21,6 +23,8 @@
   import Reader from "./lib/components/Reader.svelte";
   import ReviewBar from "./lib/components/ReviewBar.svelte";
   import CanvasNavigation from "./lib/components/CanvasNavigation.svelte";
+  import AttentionQueue from "./lib/components/AttentionQueue.svelte";
+  import { isApplePlatform, isQueueShortcut } from "./lib/session-attention";
   import {
     CARD,
     EXCHANGE_RESERVE,
@@ -131,6 +135,8 @@
   // expanded layout.
   let expandedGroups = $state.raw<Record<string, boolean>>({});
   let groupViewCanvasId = "";
+  /** Height of a collapsed project group's bordered status strip. */
+  const COLLAPSED_PROJECT_HEIGHT = 48;
   const DRAWER_MIN_WIDTH = 180;
   const DRAWER_MAX_WIDTH = 480;
   let drawerWidth = $state(readDrawerWidth());
@@ -222,6 +228,17 @@
         ? "canvas"
         : "editor",
   );
+  /** Top-bar waiting queue; Ctrl+J (Cmd+J on Apple) toggles it. */
+  let queueOpen = $state(false);
+  const apple = isApplePlatform();
+  const queueCanvas = $derived(
+    stage === "editor" ? (editorState.document?.canvas.id ?? "") : "",
+  );
+  // The queue belongs to one open canvas; leaving it closes the panel.
+  $effect(() => {
+    void queueCanvas;
+    queueOpen = false;
+  });
   const dark = $derived(theme === "dark");
   const connected = $derived(status === "connected");
   const working = $derived(editorState.busy || editorState.saving || busy);
@@ -996,7 +1013,7 @@
             type: "project",
             position: { x: group.x, y: group.y },
             width: group.width,
-            height: collapsed ? 96 : group.height,
+            height: collapsed ? COLLAPSED_PROJECT_HEIGHT : group.height,
             dragHandle: ".project-drag",
             connectable: false,
             data: {
@@ -1004,12 +1021,15 @@
               group: { ...group, collapsed },
               editable,
               locatable: !running.length,
-              attentionCount: sessions
-                .attention(workspaceId, document.canvas.id)
-                .filter((entry) => entry.tile.projectId === group.id).length,
-              summary: running.length
-                ? `${running.length} live · ${running.map((s) => s.state).join(", ")}`
-                : `${tiles.length} stopped ${tiles.length === 1 ? "tile" : "tiles"}`,
+              status: {
+                running: running.filter((s) => s.state === "running").length,
+                starting: running.filter((s) => s.state === "starting").length,
+                stopping: running.filter((s) => s.state === "stopping").length,
+                stopped: tiles.length - running.length,
+                waiting: sessions
+                  .attention(workspaceId, document.canvas.id)
+                  .filter((entry) => entry.tile.projectId === group.id).length,
+              },
               minWidth: Math.max(320, ...tiles.map((t) => t.x + t.width + 16)),
               minHeight: Math.max(
                 240,
@@ -1057,8 +1077,8 @@
             hidden: groupView[group.id] !== true,
             dragHandle: ".session-drag",
             extent: [
-              [16, 96],
-              [group.width - 16, group.height - 16],
+              [PROJECT_PADDING, PROJECT_HEADER],
+              [group.width - PROJECT_PADDING, group.height - PROJECT_PADDING],
             ],
             connectable: false,
             data: {
@@ -1299,6 +1319,9 @@
   }
 
   const TYPING_TAGS = ["INPUT", "TEXTAREA", "SELECT"];
+  const isTyping = (target: EventTarget | null) =>
+    target instanceof HTMLElement &&
+    (target.isContentEditable || TYPING_TAGS.includes(target.tagName));
 
   async function openProject(projectId?: string) {
     projectError = "";
@@ -1416,14 +1439,24 @@
   }
 
   function onKeydown(event: KeyboardEvent) {
+    const dialogOpen = settingsOpen || reader || projectDialog || removal;
+    const target = event.target as HTMLElement | null;
+    // The queue shortcut also works from tile controls (header buttons,
+    // Mark seen); only the terminal itself and text fields keep Ctrl+J.
     if (
-      settingsOpen ||
-      reader ||
-      projectDialog ||
-      removal ||
-      (event.target as HTMLElement | null)?.closest(
-        "[data-terminal],[data-terminal-controls]",
-      )
+      !dialogOpen &&
+      stage === "editor" &&
+      editorState.document &&
+      isQueueShortcut(event, apple)
+    ) {
+      if (target?.closest("[data-terminal]") || isTyping(event.target)) return;
+      event.preventDefault();
+      queueOpen = !queueOpen;
+      return;
+    }
+    if (
+      dialogOpen ||
+      target?.closest("[data-terminal],[data-terminal-controls]")
     )
       return;
     if (event.key === "Escape") {
@@ -1432,12 +1465,7 @@
     }
     if (stage !== "editor" || event.metaKey || event.ctrlKey || event.altKey)
       return;
-    const target = event.target as HTMLElement | null;
-    if (
-      target &&
-      (target.isContentEditable || TYPING_TAGS.includes(target.tagName))
-    )
-      return;
+    if (isTyping(event.target)) return;
     const next = TOOL_KEYS[event.key.toLowerCase()];
     if (!next) return;
     event.preventDefault();
@@ -1694,6 +1722,15 @@
       </div>
 
       <div class="topbar__actions">
+        {#if editorState.document}
+          <AttentionQueue
+            bind:open={queueOpen}
+            entries={attentionEntries}
+            projects={editorState.document.projectGroups}
+            onJump={focusObject}
+            onMarkSeen={(owner) => void sessions.dismiss(owner)}
+          />
+        {/if}
         <button
           class="btn btn--soft"
           type="button"
@@ -1987,9 +2024,6 @@
             onReset={() => zoomBy(1 / viewport.zoom)}
             onFit={fitCanvas}
             onFocus={focusSelection}
-            attention={attentionEntries}
-            projects={editorState.document.projectGroups}
-            onGo={focusObject}
           />
         {/if}
 

@@ -8,6 +8,7 @@ import {
   fitTextHeight,
   fitViewport,
   overlayInsets,
+  projectStatusItems,
   proposedContent,
   turnStatus,
   unionBox,
@@ -15,7 +16,12 @@ import {
   zoomAbout,
 } from "../apps/desktop/src/lib/canvas-view.ts";
 import { exchangePosition } from "../apps/desktop/src/lib/canvas-agent.ts";
-import { attentionLabel } from "../apps/desktop/src/lib/session-attention.ts";
+import {
+  attentionLabel,
+  isQueueShortcut,
+  sortWaiting,
+  waitedLabel,
+} from "../apps/desktop/src/lib/session-attention.ts";
 
 test("attention labels describe only received signals, independent of tile kind", () => {
   const label = (kind, message = null, details = {}) =>
@@ -26,24 +32,105 @@ test("attention labels describe only received signals, independent of tile kind"
       error: null,
       ...details,
     });
-  assert.equal(label("bell"), "Bell");
-  assert.equal(label("notification", ""), "Notification");
-  assert.equal(label("notification"), "Notification");
+  assert.equal(label("bell"), "Waiting for you");
+  assert.equal(label("notification", ""), "Sent a notification");
+  assert.equal(label("notification"), "Sent a notification");
   assert.equal(
     label("notification", "Approval requested <script>"),
-    "Notification “Approval requested <script>”",
+    "Approval requested <script>",
   );
-  assert.equal(
-    label("exited", null, { exitCode: 0 }),
-    "Process exited (code 0)",
-  );
+  assert.equal(label("exited", null, { exitCode: 0 }), "Stopped (exit code 0)");
   assert.equal(
     label("exited", null, { exitSignal: "SIGTERM" }),
-    "Process exited (signal SIGTERM)",
+    "Stopped (signal SIGTERM)",
   );
+  assert.equal(label("exited"), "Stopped");
   assert.equal(
     label("failed", null, { error: "Launch error" }),
-    "Process failed: Launch error",
+    "Failed: Launch error",
+  );
+  assert.equal(label("failed"), "Failed to start");
+});
+
+test("waited time reads in coarse units and clamps clock skew", () => {
+  const now = 10 * 86_400_000;
+  const ago = (ms) => waitedLabel(now - ms, now);
+  assert.equal(waitedLabel(null, now), "");
+  assert.equal(ago(0), "just now");
+  assert.equal(ago(59_999), "just now");
+  assert.equal(ago(-120_000), "just now");
+  assert.equal(ago(60_000), "1 min ago");
+  assert.equal(ago(59 * 60_000), "59 min ago");
+  assert.equal(ago(60 * 60_000), "1 h ago");
+  assert.equal(ago(125 * 60_000), "2 h 5 min ago");
+  assert.equal(ago(24 * 3_600_000), "1 d ago");
+});
+
+test("waiting entries sort oldest first, stable, untimed last", () => {
+  const entry = (id, at) => ({ id, status: { attention: { at } } });
+  const sorted = sortWaiting([
+    entry("a", null),
+    entry("b", 300),
+    entry("c", 100),
+    entry("d", 300),
+    entry("e", null),
+  ]);
+  assert.deepEqual(
+    sorted.map((item) => item.id),
+    ["c", "b", "d", "a", "e"],
+  );
+});
+
+test("the queue shortcut uses Cmd on Apple and Ctrl elsewhere", () => {
+  const key = (mods = {}) => ({
+    key: "j",
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    shiftKey: false,
+    ...mods,
+  });
+  assert.equal(isQueueShortcut(key({ ctrlKey: true }), false), true);
+  assert.equal(isQueueShortcut(key({ ctrlKey: true, key: "J" }), false), true);
+  assert.equal(isQueueShortcut(key({ metaKey: true }), false), false);
+  assert.equal(isQueueShortcut(key({ metaKey: true }), true), true);
+  assert.equal(isQueueShortcut(key({ ctrlKey: true }), true), false);
+  assert.equal(
+    isQueueShortcut(key({ ctrlKey: true, shiftKey: true }), false),
+    false,
+  );
+  assert.equal(
+    isQueueShortcut(key({ ctrlKey: true, altKey: true }), false),
+    false,
+  );
+  assert.equal(isQueueShortcut(key(), false), false);
+});
+
+test("project status items list non-zero counts separately", () => {
+  const counts = {
+    running: 0,
+    starting: 0,
+    stopping: 0,
+    stopped: 0,
+    waiting: 0,
+  };
+  assert.deepEqual(projectStatusItems(counts), [
+    { label: "No sessions yet", tone: "neutral" },
+  ]);
+  assert.deepEqual(
+    projectStatusItems({ ...counts, running: 1, stopped: 2, waiting: 1 }),
+    [
+      { label: "1 running", tone: "ok" },
+      { label: "2 stopped", tone: "neutral" },
+      { label: "1 waiting for you", tone: "pending" },
+    ],
+  );
+  assert.deepEqual(
+    projectStatusItems({ ...counts, starting: 1, stopping: 2 }),
+    [
+      { label: "1 starting", tone: "busy" },
+      { label: "2 stopping", tone: "busy" },
+    ],
   );
 });
 

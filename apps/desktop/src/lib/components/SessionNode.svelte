@@ -7,7 +7,8 @@
   } from "@agentica/protocol";
   import type { SessionManager } from "../sessions";
   import Icon from "./Icon.svelte";
-  import { attentionLabel } from "../session-attention";
+  import { attentionLabel, waitedLabel } from "../session-attention";
+  import { clock } from "../clock.svelte";
   interface Props {
     data: {
       kind: "session";
@@ -44,6 +45,16 @@
       return "Locate the project folder before starting.";
     return "";
   });
+  const attention = $derived(
+    view.status?.attention.raised ? view.status : null,
+  );
+  const failed = $derived(attention?.attention.kind === "failed");
+  const exitedAttention = $derived(attention?.attention.kind === "exited");
+  const waiting = $derived(!!attention);
+  // Waited time ticks only while attention is raised on this tile.
+  $effect(() => {
+    if (waiting) return clock.hold();
+  });
   const maxWidth = $derived(data.group.width - data.tile.x - 16);
   const maxHeight = $derived(data.group.height - data.tile.y - 16);
   function terminal(element: HTMLDivElement) {
@@ -68,7 +79,12 @@
   }
 </script>
 
-<section class="session" aria-label={`${title} in ${data.group.label}`}>
+<section
+  class="session"
+  class:attention={!!attention}
+  class:failed
+  aria-label={`${title} in ${data.group.label}`}
+>
   <header
     class="session-drag"
     data-terminal-controls
@@ -139,17 +155,6 @@
         onclick={data.onRemove}><Icon name="delete_outline" size={17} /></button
       >
     </div>
-    {#if view.status?.attention.raised}
-      <div class="session-notice attention nodrag" data-terminal-controls>
-        <span>● {attentionLabel(view.status)}</span>
-        <button
-          class="btn btn--soft"
-          type="button"
-          aria-label={`Dismiss attention for ${title} in ${data.group.label}`}
-          onclick={() => void data.manager.dismiss(data.owner)}>Dismiss</button
-        >
-      </div>
-    {/if}
   </header>
   {#if data.tile.kind === "cli-agent"}
     <details class="session-notice nodrag nopan nowheel">
@@ -182,11 +187,11 @@ notification_condition = "always"`}</code
       Earlier output is unavailable. Redraw refreshes the current screen, not
       lost history.
     </p>{/if}
-  {#if phase === "exited"}<p class="session-notice">
-      Process exited{view.status?.exitSignal
+  {#if phase === "exited" && !exitedAttention}<p class="session-notice">
+      Stopped{view.status?.exitSignal
         ? ` (signal ${view.status.exitSignal})`
         : view.status?.exitCode != null
-          ? ` (code ${view.status.exitCode})`
+          ? ` (exit code ${view.status.exitCode})`
           : ""}.
     </p>{/if}
   {#if view.status?.shellFallback}<p class="session-notice">
@@ -199,6 +204,24 @@ notification_condition = "always"`}</code
     aria-label={`${title} terminal; Ctrl Shift Escape returns to controls`}
     use:terminal
   ></div>
+  {#if attention}
+    {@const reason = attentionLabel(attention)}
+    {@const waited = waitedLabel(attention.attention.at, clock.now)}
+    <div class="attention-strip nodrag" data-terminal-controls>
+      <span class="dot" aria-hidden="true"></span>
+      <span class="reason" title={reason}>{reason}</span>
+      {#if waited && attention.attention.at !== null}<time
+          datetime={new Date(attention.attention.at).toISOString()}
+          >{waited}</time
+        >{/if}
+      <button
+        class="btn btn--soft"
+        type="button"
+        aria-label={`Mark ${title} in ${data.group.label} as seen`}
+        onclick={() => void data.manager.dismiss(data.owner)}>Mark seen</button
+      >
+    </div>
+  {/if}
   <footer>
     Ctrl+Shift+Esc returns to controls · Ctrl+Shift+C copies selection
   </footer>
@@ -299,12 +322,6 @@ notification_condition = "always"`}</code
     line-height: 17px;
     flex: none;
   }
-  .attention {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    color: var(--ink);
-  }
   details.session-notice {
     max-height: 180px;
     overflow: auto;
@@ -317,11 +334,86 @@ notification_condition = "always"`}</code
     overflow-wrap: anywhere;
     user-select: text;
   }
-  .attention span {
+  /* Attention: amber ring plus a strip under the terminal. The strip sits
+     outside .terminal-body, so the body's ResizeObserver refits xterm. */
+  .session.attention {
+    border-color: var(--warn);
+    box-shadow:
+      0 0 0 2px var(--warn),
+      var(--shadow-sm);
+    animation: attention-pulse 900ms ease-out 1;
+  }
+  .session.attention.failed {
+    border-color: var(--bad);
+    box-shadow:
+      0 0 0 2px var(--bad),
+      var(--shadow-sm);
+    animation-name: attention-pulse-bad;
+  }
+  @keyframes attention-pulse {
+    30% {
+      box-shadow:
+        0 0 0 6px color-mix(in srgb, var(--warn) 30%, transparent),
+        var(--shadow-sm);
+    }
+  }
+  @keyframes attention-pulse-bad {
+    30% {
+      box-shadow:
+        0 0 0 6px color-mix(in srgb, var(--bad) 30%, transparent),
+        var(--shadow-sm);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .session.attention,
+    .session.attention.failed {
+      animation: none;
+    }
+  }
+  .attention-strip {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+    padding: 2px 6px 2px 10px;
+    box-sizing: border-box;
+    background: var(--warn-soft);
+    border-top: 1px solid var(--warn-line);
+    cursor: default;
+  }
+  .failed .attention-strip {
+    background: var(--bad-soft);
+    border-top-color: var(--bad-line);
+  }
+  .attention-strip .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex: none;
+    background: var(--warn);
+  }
+  .failed .attention-strip .dot {
+    background: var(--bad);
+  }
+  .attention-strip .reason {
     flex: 1;
-    overflow-wrap: anywhere;
-    max-height: 64px;
-    overflow: auto;
+    min-width: 0;
+    font-size: 13px;
+    color: var(--ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .attention-strip time {
+    flex: none;
+    font-size: 12px;
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
+  .attention-strip .btn {
+    flex: none;
+    background: var(--surface);
   }
   footer {
     padding: 4px 10px;

@@ -108,15 +108,24 @@ pnpm install --frozen-lockfile
 ## Session attention
 
 Session tiles show attention for terminal bells (BEL), program-declared OSC 9
-notifications, and an unseen process exit or launch failure. The canvas navigation
-control lists affected tiles on the current canvas. **Go** moves the viewport
-without expanding a collapsed project or clearing attention. Focus the terminal
-or choose **Dismiss** to clear it. Collapsed projects show member attention counts.
+notifications, and an unseen process exit or launch failure. An affected tile gets
+an amber ring (red for a failed launch) and a strip under the terminal with the
+reason, how long it has waited, and **Mark seen**. Project groups list separate
+status items, such as "1 running" and "2 waiting for you", also when collapsed.
 
-Labels describe only received signals: **Bell**, **Notification** with quoted
-program text when provided, **Process exited** with code/signal, or **Process failed** with an
-error. They do not establish approval, thinking, turn completion, or task results.
-Title, directory, and progress escape sequences do not raise attention.
+The top bar shows how many sessions on the current canvas are waiting. Select it,
+or press Ctrl+J (⌘J on macOS) outside text fields and terminals, to open the
+queue: every waiting session, oldest first, with its project, reason, and waited
+time. Up and Down move between rows, Enter jumps to the tile, and Escape closes
+the queue. **Jump to** moves the viewport without expanding a collapsed project or
+clearing attention. Focus the terminal or choose **Mark seen** to clear it.
+
+Labels describe only received signals: **Waiting for you** for a terminal bell,
+the program's notification text (or **Sent a notification** when it is empty),
+**Stopped** with the exit code or signal, and **Failed** with the error (or
+**Failed to start**). They do not establish approval, thinking, turn completion,
+or task results. Title, directory, and progress escape sequences do not raise
+attention.
 
 Attention remains in the backend across canvas switches and browser refreshes;
 it resets when the session is restarted or the backend ends. Signals while the
