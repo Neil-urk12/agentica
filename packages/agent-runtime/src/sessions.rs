@@ -10,9 +10,11 @@ mod launch;
 pub use launch::{capabilities, LaunchSpec, SessionCapabilities};
 mod output;
 pub use output::{OutputFrame, OutputPage};
+mod attention;
 #[cfg(target_os = "linux")]
 mod linux;
 mod process;
+pub use attention::{Attention, Kind as AttentionKind};
 mod service;
 pub mod wire;
 pub use service::SessionService;
@@ -79,6 +81,7 @@ pub struct SessionStatus {
     pub project_id: Option<String>,
     pub rows: u16,
     pub cols: u16,
+    pub attention: Attention,
 }
 
 struct Session {
@@ -87,6 +90,31 @@ struct Session {
     output: output::Output,
     process: Option<process::Process>,
     stop: Arc<std::sync::atomic::AtomicBool>,
+    scanner: attention::Scanner,
+    focused: bool,
+}
+
+impl Session {
+    fn push(&mut self, bytes: &[u8]) -> Result<(), RuntimeError> {
+        let Self {
+            scanner,
+            status,
+            focused,
+            ..
+        } = self;
+        scanner.scan(bytes, |kind, message| {
+            if !*focused {
+                status.attention.raise(kind, message);
+            }
+        });
+        self.output.push(bytes)
+    }
+
+    fn exit_attention(&mut self, kind: AttentionKind) {
+        if !self.focused && !self.stop.load(std::sync::atomic::Ordering::SeqCst) {
+            self.status.attention.raise(kind, None);
+        }
+    }
 }
 
 /// Share this handle at host scope alongside (not inside) the database mutex.
@@ -156,6 +184,7 @@ impl SessionSupervisor {
             project_id: None,
             rows: 24,
             cols: 80,
+            attention: Attention::default(),
         };
         sessions.insert(
             owner,
@@ -165,6 +194,8 @@ impl SessionSupervisor {
                 output: output::Output::default(),
                 process: None,
                 stop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                scanner: attention::Scanner::default(),
+                focused: false,
             },
         );
         Ok((status, true))
@@ -263,7 +294,11 @@ impl SessionSupervisor {
         session_id: &str,
         after: u64,
     ) -> Result<String, RuntimeError> {
-        self.with_session(owner, session_id, |session| session.output.attach(after))
+        self.with_session(owner, session_id, |session| {
+            let attachment = session.output.attach(after)?;
+            session.focused = false;
+            Ok(attachment)
+        })
     }
 
     pub fn output(
@@ -294,7 +329,41 @@ impl SessionSupervisor {
         attachment: &str,
     ) -> Result<(), RuntimeError> {
         self.with_session(owner, session_id, |session| {
-            session.output.detach(attachment)
+            session.output.detach(attachment)?;
+            session.focused = false;
+            Ok(())
+        })
+    }
+
+    pub fn focus(
+        &self,
+        owner: &SessionOwner,
+        session_id: &str,
+        attachment: &str,
+        focused: bool,
+    ) -> Result<(), RuntimeError> {
+        self.with_session(owner, session_id, |session| {
+            session.output.controller(attachment)?;
+            session.focused = focused;
+            if focused {
+                session
+                    .status
+                    .attention
+                    .clear(session.status.attention.sequence);
+            }
+            Ok(())
+        })
+    }
+
+    pub fn clear_attention(
+        &self,
+        owner: &SessionOwner,
+        session_id: &str,
+        sequence: u64,
+    ) -> Result<(), RuntimeError> {
+        self.with_session(owner, session_id, |session| {
+            session.status.attention.clear(sequence);
+            Ok(())
         })
     }
 
@@ -469,6 +538,11 @@ impl SessionSupervisor {
         session.status.exit_code = exit_code;
         session.status.exit_signal = exit_signal;
         session.status.error = error;
+        match state {
+            ProcessState::Exited => session.exit_attention(AttentionKind::Exited),
+            ProcessState::Failed => session.exit_attention(AttentionKind::Failed),
+            _ => {}
+        }
         Ok(session.status.clone())
     }
 }
@@ -543,6 +617,117 @@ mod tests {
             supervisor.status(&owner).unwrap().unwrap().state,
             ProcessState::Starting
         );
+    }
+
+    #[test]
+    fn attention_focus_clear_races_detach_and_replacement() {
+        let supervisor = SessionSupervisor::new().unwrap();
+        let owner = owner();
+        let (status, _) = supervisor.reserve_start(owner.clone(), "start").unwrap();
+        let id = &status.session_id;
+        let attachment = supervisor.attach(&owner, id, 0).unwrap();
+        let push = |bytes: &[u8]| {
+            supervisor
+                .with_session(&owner, id, |session| session.push(bytes))
+                .unwrap()
+        };
+        push(b"\x07");
+        supervisor.focus(&owner, id, &attachment, true).unwrap();
+        push(b"\x07");
+        assert!(!supervisor.status(&owner).unwrap().unwrap().attention.raised);
+        assert!(supervisor
+            .focus(&owner, id, &new_id().unwrap(), false)
+            .is_err());
+        supervisor.detach(&owner, id, &attachment).unwrap();
+        push(&vec![7; 1000]);
+        let status = supervisor.status(&owner).unwrap().unwrap();
+        assert_eq!(status.attention.count, 1000);
+        assert_eq!(status.attention.sequence, 1001);
+        let attachment = supervisor.attach(&owner, id, 0).unwrap();
+        assert_eq!(
+            supervisor.status(&owner).unwrap().unwrap().attention.count,
+            1000
+        );
+        supervisor.clear_attention(&owner, id, 1000).unwrap();
+        assert!(supervisor.status(&owner).unwrap().unwrap().attention.raised);
+        supervisor.clear_attention(&owner, id, 1001).unwrap();
+        supervisor.clear_attention(&owner, id, 1001).unwrap();
+        assert!(!supervisor.status(&owner).unwrap().unwrap().attention.raised);
+        supervisor.focus(&owner, id, &attachment, true).unwrap();
+        supervisor.detach(&owner, id, &attachment).unwrap();
+        supervisor
+            .transition(
+                &owner,
+                id,
+                ProcessState::Failed,
+                None,
+                None,
+                Some("failed".into()),
+            )
+            .unwrap();
+        assert_eq!(
+            supervisor.status(&owner).unwrap().unwrap().attention.kind,
+            Some(AttentionKind::Failed)
+        );
+        assert!(
+            serde_json::to_vec(&supervisor.status(&owner).unwrap())
+                .unwrap()
+                .len()
+                < wire::MAX_SESSION_WIRE_BYTES
+        );
+        let (replacement, _) = supervisor
+            .reserve_start(owner.clone(), "replacement")
+            .unwrap();
+        assert!(!replacement.attention.raised);
+        assert!(supervisor.clear_attention(&owner, id, 1002).is_err());
+        supervisor
+            .request_stop(&owner, &replacement.session_id)
+            .unwrap();
+        let stopped = supervisor
+            .transition(
+                &owner,
+                &replacement.session_id,
+                ProcessState::Exited,
+                Some(0),
+                None,
+                None,
+            )
+            .unwrap();
+        assert!(!stopped.attention.raised);
+    }
+
+    #[test]
+    fn attention_count_saturates_and_natural_exit_raises() {
+        let mut latch = Attention {
+            count: u32::MAX,
+            ..Attention::default()
+        };
+        latch.raise(AttentionKind::Bell, None);
+        assert_eq!(latch.count, u32::MAX);
+        let supervisor = SessionSupervisor::new().unwrap();
+        let owner = owner();
+        let (status, _) = supervisor.reserve_start(owner.clone(), "start").unwrap();
+        supervisor
+            .transition(
+                &owner,
+                &status.session_id,
+                ProcessState::Running,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let exited = supervisor
+            .transition(
+                &owner,
+                &status.session_id,
+                ProcessState::Exited,
+                Some(0),
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(exited.attention.kind, Some(AttentionKind::Exited));
     }
 
     #[test]

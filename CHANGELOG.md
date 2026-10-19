@@ -12,6 +12,21 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-19
 
+- Show session attention in tile headers, collapsed projects, and canvas
+  navigation, with Go and Dismiss controls. Scan BEL and OSC 9 in the backend so
+  renderer disposal and browser refresh cannot lose signals; bounded latches
+  coalesce signals and focus gates raising. Labels quote received notifications
+  without inferring agent/task state. Document opt-in Codex notification setup.
+- Preserve CSI state when reporting BEL, and keep BEL inside DCS, APC, PM, and
+  SOS strings ignored until termination. Track OSC separately so its terminating
+  BEL still ends the string without raising attention.
+- Report BEL after ESC while preserving escape state, so an intervening bell
+  cannot swallow a following OSC 9 notification.
+- Clear displayed attention when focusing an exited terminal after its output
+  subscription detaches, using sequence-aware dismissal to preserve newer signals.
+- Move the pointer to browser smoke-test click targets before pressing, so
+  headless Chrome updates hit-testing before dispatching input.
+
 - Wait for affected terminal output to drain before removing saved workspaces,
   canvases, projects, or tiles. Stream reads and acknowledgements still need that
   metadata after process exit; deleting it early could block later subscriptions.

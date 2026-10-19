@@ -57,6 +57,9 @@ class Terminal {
   resize() {}
   reset() {}
   dispose() {}
+  open() {
+    this.textarea = { tabIndex: 0 };
+  }
   write(bytes, callback) {
     this.written.push(...bytes);
     if (globalThis.sessionTest.client.blockWrites)
@@ -89,6 +92,14 @@ const status = (n, state = "running", canvas) => ({
   executable: "/bin/bash",
   shellFallback: false,
   projectId: id(5),
+  attention: {
+    raised: false,
+    count: 0,
+    sequence: 0,
+    kind: null,
+    at: null,
+    message: null,
+  },
 });
 const document = (statuses, canvas = canvasId) => ({
   canvas: { id: canvas },
@@ -125,6 +136,22 @@ function setup(t, statuses) {
         };
       if (command.op === "acknowledge") {
         await this.acknowledging?.promise;
+        return {};
+      }
+      if (command.op === "focus") return {};
+      if (command.op === "clearAttention") {
+        const item = this.statuses.find(
+          (item) => item.sessionId === command.sessionId,
+        );
+        if (command.sequence >= item.attention.sequence)
+          item.attention = {
+            ...item.attention,
+            raised: false,
+            count: 0,
+            kind: null,
+            at: null,
+            message: null,
+          };
         return {};
       }
       if (command.op === "status")
@@ -195,6 +222,191 @@ function setup(t, statuses) {
   t.after(() => manager.dispose());
   return { manager, client };
 }
+
+test("attention updates offscreen and dismissal acknowledges only the displayed sequence", async (t) => {
+  const item = status(0);
+  const { manager, client } = setup(t, [item]);
+  const saved = document([item]);
+  const before = JSON.stringify(saved);
+  await manager.reconcile(workspaceId, saved);
+  item.attention = {
+    raised: true,
+    count: 2,
+    sequence: 2,
+    kind: "notification",
+    at: Date.now(),
+    message: "<script>inert</script>",
+  };
+  client.emit(item.sessionId, [], 0, 0);
+  await setImmediate();
+  assert.equal(manager.attention(workspaceId, canvasId).length, 1);
+  assert.equal(manager.attention(workspaceId, id(999)).length, 0);
+  // A newer backend signal exists before the displayed sequence is acknowledged.
+  item.attention = {
+    ...item.attention,
+    count: 3,
+    sequence: 3,
+    message: "newer",
+  };
+  await manager.dismiss(item.owner);
+  assert.equal(
+    client.calls.find((call) => call.op === "clearAttention").sequence,
+    2,
+  );
+  assert.equal(manager.view(item.owner).status.attention.raised, true);
+  await manager.dismiss(item.owner);
+  assert.equal(manager.attention(workspaceId, canvasId).length, 0);
+  assert.equal(
+    JSON.stringify(saved),
+    before,
+    "runtime attention never enters the saved document",
+  );
+});
+
+test("terminal and window focus report only actual textarea focus and unmount clears focus", async (t) => {
+  const item = status(0);
+  const { manager, client } = setup(t, [item]);
+  await manager.reconcile(workspaceId, document([item]));
+  const old = {
+    document: globalThis.document,
+    window: globalThis.window,
+    ResizeObserver: globalThis.ResizeObserver,
+    requestAnimationFrame: globalThis.requestAnimationFrame,
+    cancelAnimationFrame: globalThis.cancelAnimationFrame,
+  };
+  t.after(() => Object.assign(globalThis, old));
+  let hasFocus = true;
+  const host = new EventTarget();
+  host.append = () => {};
+  globalThis.document = {
+    activeElement: null,
+    hasFocus: () => hasFocus,
+    createElement: () => ({ style: {}, remove() {} }),
+  };
+  globalThis.window = new EventTarget();
+  globalThis.ResizeObserver = class {
+    observe() {}
+    disconnect() {}
+  };
+  globalThis.requestAnimationFrame = () => 1;
+  globalThis.cancelAnimationFrame = () => {};
+  const unmount = manager.mount(item.owner, host, () => {});
+  await setImmediate();
+  const terminal = manager.entries.values().next().value.terminal;
+  globalThis.document.activeElement = terminal.textarea;
+  host.dispatchEvent(new Event("focusin"));
+  await setImmediate();
+  hasFocus = false;
+  globalThis.window.dispatchEvent(new Event("blur"));
+  await setImmediate();
+  hasFocus = true;
+  globalThis.window.dispatchEvent(new Event("focus"));
+  await setImmediate();
+  unmount();
+  await setImmediate();
+  assert.deepEqual(
+    client.calls
+      .filter((call) => call.op === "focus")
+      .map((call) => call.focused),
+    [false, true, false, true, false],
+  );
+});
+
+test("focus clears detached exited attention without acknowledging newer signals", async (t) => {
+  const item = status(0);
+  const { manager, client } = setup(t, [item]);
+  await manager.reconcile(workspaceId, document([item]));
+  const old = {
+    document: globalThis.document,
+    window: globalThis.window,
+    ResizeObserver: globalThis.ResizeObserver,
+    requestAnimationFrame: globalThis.requestAnimationFrame,
+    cancelAnimationFrame: globalThis.cancelAnimationFrame,
+  };
+  t.after(() => Object.assign(globalThis, old));
+  let hasFocus = false;
+  const host = new EventTarget();
+  host.append = () => {};
+  globalThis.document = {
+    activeElement: null,
+    hasFocus: () => hasFocus,
+    createElement: () => ({ style: {}, remove() {} }),
+  };
+  globalThis.window = new EventTarget();
+  globalThis.ResizeObserver = class {
+    observe() {}
+    disconnect() {}
+  };
+  globalThis.requestAnimationFrame = () => 1;
+  globalThis.cancelAnimationFrame = () => {};
+  const unmount = manager.mount(item.owner, host, () => {});
+  const terminal = manager.entries.values().next().value.terminal;
+  item.state = "exited";
+  item.attention = {
+    raised: true,
+    count: 1,
+    sequence: 1,
+    kind: "exited",
+    at: Date.now(),
+    message: null,
+  };
+  client.emit(item.sessionId, [{ sequence: 1, bytes: [65] }], 1, 1);
+  await setImmediate();
+  assert.equal(client.active.size, 0);
+  assert.equal(manager.view(item.owner).connected, false);
+  assert.equal(manager.attention(workspaceId, canvasId).length, 1);
+  const callsBeforeFocus = client.calls.length;
+
+  globalThis.document.activeElement = terminal.textarea;
+  host.dispatchEvent(new Event("focusin"));
+  await setImmediate();
+  assert.equal(
+    client.calls.length,
+    callsBeforeFocus,
+    "an unfocused window must not clear attention",
+  );
+  hasFocus = true;
+  globalThis.document.activeElement = host;
+  globalThis.window.dispatchEvent(new Event("focus"));
+  await setImmediate();
+  assert.equal(
+    client.calls.length,
+    callsBeforeFocus,
+    "only textarea focus clears attention",
+  );
+
+  // A newer signal reaches the backend before the displayed exit is cleared.
+  item.attention = { ...item.attention, count: 2, sequence: 2 };
+  globalThis.document.activeElement = terminal.textarea;
+  host.dispatchEvent(new Event("focusin"));
+  await setImmediate();
+  assert.equal(
+    client.calls.find((call) => call.op === "clearAttention")?.sequence,
+    1,
+  );
+  assert.equal(manager.view(item.owner).status.attention.raised, true);
+  assert.equal(manager.view(item.owner).status.attention.sequence, 2);
+
+  hasFocus = false;
+  globalThis.window.dispatchEvent(new Event("blur"));
+  hasFocus = true;
+  globalThis.window.dispatchEvent(new Event("focus"));
+  await setImmediate();
+  assert.equal(manager.attention(workspaceId, canvasId).length, 0);
+  assert.deepEqual(
+    client.calls
+      .filter((call) => call.op === "clearAttention")
+      .map((call) => call.sequence),
+    [1, 2],
+  );
+  unmount();
+  await setImmediate();
+  assert.equal(
+    client.calls.slice(callsBeforeFocus).filter((call) => call.op === "focus")
+      .length,
+    0,
+  );
+});
 
 test("eight exited subscriptions drain and release before a ninth live subscription", async (t) => {
   const statuses = Array.from({ length: 8 }, (_, n) => status(n));

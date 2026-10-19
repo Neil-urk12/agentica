@@ -229,6 +229,23 @@ impl SessionService {
             SessionCommand::Stop { owner, session_id } => {
                 Ok(json!({"status": supervisor.request_stop(&owner, &session_id)?}))
             }
+            SessionCommand::Focus {
+                owner,
+                session_id,
+                attachment_id,
+                focused,
+            } => {
+                supervisor.focus(&owner, &session_id, &attachment_id, focused)?;
+                Ok(json!({}))
+            }
+            SessionCommand::ClearAttention {
+                owner,
+                session_id,
+                sequence,
+            } => {
+                supervisor.clear_attention(&owner, &session_id, sequence)?;
+                Ok(json!({}))
+            }
         }
     }
 

@@ -104,6 +104,40 @@ Install JavaScript dependencies before using the frontend or desktop commands:
 pnpm install --frozen-lockfile
 ```
 
+## Session attention
+
+Session tiles show attention for terminal bells (BEL), program-declared OSC 9
+notifications, and an unseen process exit or launch failure. The canvas navigation
+control lists affected tiles on the current canvas. **Go** moves the viewport
+without expanding a collapsed project or clearing attention. Focus the terminal
+or choose **Dismiss** to clear it. Collapsed projects show member attention counts.
+
+Labels describe only received signals: **Bell**, **Notification** with quoted
+program text, **Process exited** with code/signal, or **Process failed** with an
+error. They do not establish approval, thinking, turn completion, or task results.
+Title, directory, and progress escape sequences do not raise attention.
+
+Attention remains in the backend across canvas switches and browser refreshes;
+it resets when the session is restarted or the backend ends. Signals while the
+terminal is focused, and user-requested Stop/Restart/removal exits, do not raise
+attention. Notification text stays out of saved canvas content and conversations.
+
+To opt in to Codex notifications, add these settings to your Codex configuration:
+
+```toml
+[tui]
+notifications = true
+notification_method = "osc9"
+notification_condition = "always"
+```
+
+These are global Codex settings (normally `~/.codex/config.toml`) and also affect
+Codex in other terminals, including notifications while focused there. `osc9`
+avoids relying on inherited terminal detection; `always` lets Agentica apply its
+own terminal-focus gating. Agentica does not inspect or modify Codex configuration
+or add launch flags. Without this opt-in, bell and process-exit attention still
+work; the setup hint does not indicate whether Codex is configured.
+
 ## Running the application
 
 | Option                                                              | How to start                                                 | What opens                                            |

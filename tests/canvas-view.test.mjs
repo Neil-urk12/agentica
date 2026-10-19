@@ -15,6 +15,35 @@ import {
   zoomAbout,
 } from "../apps/desktop/src/lib/canvas-view.ts";
 import { exchangePosition } from "../apps/desktop/src/lib/canvas-agent.ts";
+import { attentionLabel } from "../apps/desktop/src/lib/session-attention.ts";
+
+test("attention labels describe only received signals, independent of tile kind", () => {
+  const label = (kind, message = null, details = {}) =>
+    attentionLabel({
+      attention: { kind, message },
+      exitCode: null,
+      exitSignal: null,
+      error: null,
+      ...details,
+    });
+  assert.equal(label("bell"), "Bell");
+  assert.equal(
+    label("notification", "Approval requested <script>"),
+    "Notification “Approval requested <script>”",
+  );
+  assert.equal(
+    label("exited", null, { exitCode: 0 }),
+    "Process exited (code 0)",
+  );
+  assert.equal(
+    label("exited", null, { exitSignal: "SIGTERM" }),
+    "Process exited (signal SIGTERM)",
+  );
+  assert.equal(
+    label("failed", null, { error: "Launch error" }),
+    "Process failed: Launch error",
+  );
+});
 
 const node = (id, x, y, width, height) => ({ id, x, y, width, height });
 

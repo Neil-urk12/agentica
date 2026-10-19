@@ -44,6 +44,7 @@ pub(super) fn launch(
             session.status.state = ProcessState::Failed;
             session.status.error =
                 Some(format!("Session launch failed: {error}. Retry explicitly."));
+            session.exit_attention(AttentionKind::Failed);
             Ok(())
         });
     }
@@ -83,7 +84,7 @@ fn spawn(
                     Ok(count) => {
                         if output_supervisor
                             .with_session(&output_owner, &output_id, |session| {
-                                session.output.push(&buffer[..count])
+                                session.push(&buffer[..count])
                             })
                             .is_err()
                         {
@@ -159,6 +160,7 @@ fn spawn(
                     session.status.exit_signal = signal;
                     session.process = None;
                     session.status.error = None;
+                    session.exit_attention(AttentionKind::Exited);
                     Ok(())
                 });
                 return Ok(());

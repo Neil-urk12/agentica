@@ -11,7 +11,74 @@ import {
   ResultSchemas,
   RuntimeRequestSchema,
   SessionRequestSchema,
+  SessionAttentionSchema,
 } from "@agentica/protocol";
+
+test("attention is bounded plain text and controls require identities and safe sequences", () => {
+  const clear = {
+    raised: false,
+    count: 0,
+    sequence: 4,
+    kind: null,
+    at: null,
+    message: null,
+  };
+  const notification = {
+    raised: true,
+    count: 2,
+    sequence: 5,
+    kind: "notification",
+    at: Date.now(),
+    message: "<b>Received</b>",
+  };
+  for (const value of [
+    clear,
+    notification,
+    { ...notification, message: "😀".repeat(256) },
+  ])
+    assert.equal(SessionAttentionSchema.safeParse(value).success, true);
+  for (const value of [
+    { ...notification, message: "x".repeat(257) },
+    { ...notification, message: "\u001b[31m" },
+    { ...notification, message: "\u009d" },
+    { ...notification, count: 2 ** 32 },
+    { ...notification, sequence: Number.MAX_SAFE_INTEGER + 1 },
+    { ...notification, kind: "approval" },
+    { ...notification, at: -1 },
+    { ...notification, message: null },
+    { ...clear, count: 1 },
+  ])
+    assert.equal(SessionAttentionSchema.safeParse(value).success, false);
+  const id = "00000000-0000-4000-8000-000000000001";
+  const owner = { workspaceId: id, canvasId: id, tileId: id };
+  const commands = [
+    { op: "focus", owner, sessionId: id, attachmentId: id, focused: true },
+    { op: "clearAttention", owner, sessionId: id, sequence: 4 },
+  ];
+  for (const command of commands) {
+    assert.equal(
+      SessionRequestSchema.safeParse({ id: "test", command }).success,
+      true,
+    );
+    assert.equal(
+      SessionRequestSchema.safeParse({
+        id: "test",
+        command: { ...command, sessionId: "stale" },
+      }).success,
+      false,
+    );
+  }
+  for (const command of [
+    { ...commands[0], focused: 1 },
+    { ...commands[0], attachmentId: undefined },
+    { ...commands[1], sequence: -1 },
+    { ...commands[1], sequence: 2 ** 53 },
+  ])
+    assert.equal(
+      SessionRequestSchema.safeParse({ id: "test", command }).success,
+      false,
+    );
+});
 
 test("session controls enforce ownership shape and payload, cursor and dimension bounds", () => {
   const id = "00000000-0000-4000-8000-000000000001";

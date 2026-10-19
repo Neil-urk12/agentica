@@ -277,6 +277,7 @@ async function mouse(
 
 export async function clickAt(page, { x, y }) {
   await focusPage(page);
+  await mouse(page, "mouseMoved", { x, y });
   await mouse(page, "mousePressed", {
     x,
     y,

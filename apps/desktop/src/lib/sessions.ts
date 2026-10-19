@@ -49,6 +49,8 @@ interface Entry {
   render: Promise<void>;
   input: Promise<void>;
   pendingInput: number;
+  focused?: boolean;
+  focusReport?: Promise<void>;
 }
 export class SessionManager {
   capabilities: SessionResult<"capabilities"> | null = null;
@@ -86,6 +88,80 @@ export class SessionManager {
           live(entry.status),
       )
       .map((entry) => entry.status!);
+  }
+  attention(workspaceId: string, canvasId: string) {
+    return [...this.entries.values()]
+      .filter(
+        (entry) =>
+          entry.owner.workspaceId === workspaceId &&
+          entry.owner.canvasId === canvasId &&
+          entry.status?.attention.raised,
+      )
+      .map((entry) => ({
+        owner: entry.owner,
+        tile: entry.tile,
+        status: entry.status!,
+      }));
+  }
+
+  async dismiss(owner: SessionOwner) {
+    const entry = this.entries.get(key(owner));
+    if (!entry?.status) return;
+    const { sessionId, attention } = entry.status;
+    try {
+      await this.client.request({
+        op: "clearAttention",
+        owner,
+        sessionId,
+        sequence: attention.sequence,
+      });
+      const { status } = await this.client.request({ op: "status", owner });
+      if (
+        entry.status?.sessionId === sessionId &&
+        status?.sessionId === sessionId &&
+        status.attention.sequence >= entry.status.attention.sequence
+      )
+        entry.status = status;
+    } catch (error) {
+      entry.error = message(error);
+    }
+    this.changed();
+  }
+
+  private reportFocus(entry: Entry, forceUnfocused = false) {
+    const attachment = entry.attachment;
+    const sessionId = entry.status?.sessionId;
+    if (!sessionId) return;
+    const focused =
+      !forceUnfocused &&
+      !!entry.host &&
+      !!entry.terminal?.textarea &&
+      document.activeElement === entry.terminal.textarea &&
+      document.hasFocus();
+    if (!attachment) {
+      if (focused && entry.status?.attention.raised)
+        void this.dismiss(entry.owner);
+      return;
+    }
+    if (entry.focused === focused) return;
+    entry.focused = focused;
+    entry.focusReport = (entry.focusReport ?? Promise.resolve())
+      .then(async () => {
+        if (entry.attachment !== attachment) return;
+        await this.client.request({
+          op: "focus",
+          owner: entry.owner,
+          sessionId,
+          attachmentId: attachment.id,
+          focused,
+        });
+      })
+      .catch((error) => {
+        if (entry.attachment !== attachment) return;
+        entry.focused = undefined;
+        entry.error = message(error);
+        this.changed();
+      });
   }
   async connect() {
     this.capabilities = await this.client.request({ op: "capabilities" });
@@ -203,6 +279,7 @@ export class SessionManager {
     entry.drainedResolve = undefined;
     entry.attachment = undefined;
     entry.connected = false;
+    entry.focused = undefined;
     entry.generation++;
     if (entry.terminal) entry.terminal.options.disableStdin = true;
     entry.detaching = (async () => {
@@ -338,6 +415,12 @@ export class SessionManager {
       entry.opened = true;
       if (terminal.textarea) terminal.textarea.tabIndex = -1;
     }
+    const focusChanged = () => this.reportFocus(entry);
+    host.addEventListener("focusin", focusChanged);
+    host.addEventListener("focusout", focusChanged);
+    window.addEventListener("focus", focusChanged);
+    window.addEventListener("blur", focusChanged);
+    this.reportFocus(entry);
     const stop = (event: Event) => event.stopPropagation();
     const paste = (event: ClipboardEvent) => {
       event.preventDefault();
@@ -377,6 +460,11 @@ export class SessionManager {
     observer.observe(host);
     const frame = requestAnimationFrame(() => this.fit(entry));
     return () => {
+      this.reportFocus(entry, true);
+      host.removeEventListener("focusin", focusChanged);
+      host.removeEventListener("focusout", focusChanged);
+      window.removeEventListener("focus", focusChanged);
+      window.removeEventListener("blur", focusChanged);
       observer.disconnect();
       cancelAnimationFrame(frame);
       for (const event of [
@@ -527,6 +615,8 @@ export class SessionManager {
         }
         entry.attachment = attachment;
         entry.connected = true;
+        entry.focused = undefined;
+        this.reportFocus(entry);
         entry.error = "";
         this.terminal(entry).options.disableStdin =
           entry.status?.state !== "running";

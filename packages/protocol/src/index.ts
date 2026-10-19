@@ -681,6 +681,16 @@ export const SessionCommandSchema = z.discriminatedUnion("op", [
     sequence: Sequence,
   }),
   z.strictObject({ op: z.literal("detach"), ...AttachmentRef }),
+  z.strictObject({
+    op: z.literal("focus"),
+    ...AttachmentRef,
+    focused: z.boolean(),
+  }),
+  z.strictObject({
+    op: z.literal("clearAttention"),
+    ...SessionRef,
+    sequence: Sequence,
+  }),
   z.strictObject({ op: z.literal("stop"), ...SessionRef }),
   z.strictObject({
     op: z.literal("restart"),
@@ -694,6 +704,32 @@ export const SessionRequestSchema = z.strictObject({
   id: RequestId,
   command: SessionCommandSchema,
 });
+export const SessionAttentionSchema = z
+  .strictObject({
+    raised: z.boolean(),
+    count: z.number().int().min(0).max(0xffffffff),
+    sequence: Sequence,
+    kind: z.enum(["bell", "notification", "exited", "failed"]).nullable(),
+    at: Sequence.nullable(),
+    message: z
+      .string()
+      .refine((text) => [...text].length <= 256 && !/[\p{Cc}]/u.test(text))
+      .nullable(),
+  })
+  .refine((value) =>
+    value.raised
+      ? value.count > 0 &&
+        value.sequence > 0 &&
+        value.kind !== null &&
+        value.at !== null &&
+        (value.kind === "notification"
+          ? value.message !== null
+          : value.message === null)
+      : value.count === 0 &&
+        value.kind === null &&
+        value.at === null &&
+        value.message === null,
+  );
 export const SessionStatusSchema = z.strictObject({
   backendId: IdSchema,
   sessionId: IdSchema,
@@ -712,6 +748,7 @@ export const SessionStatusSchema = z.strictObject({
   executable: z.string().nullable(),
   shellFallback: z.boolean(),
   projectId: IdSchema.nullable(),
+  attention: SessionAttentionSchema,
   ...TerminalDimensions,
 });
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
@@ -748,6 +785,8 @@ export const SessionResultSchemas = {
   resize: EmptySessionResult,
   acknowledge: EmptySessionResult,
   detach: EmptySessionResult,
+  focus: EmptySessionResult,
+  clearAttention: EmptySessionResult,
 } as const;
 export type SessionResult<C extends SessionCommand["op"]> = z.infer<
   (typeof SessionResultSchemas)[C]

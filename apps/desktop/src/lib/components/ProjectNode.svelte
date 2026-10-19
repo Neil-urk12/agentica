@@ -9,6 +9,7 @@
       editable: boolean;
       locatable: boolean;
       summary: string;
+      attentionCount: number;
       minWidth: number;
       minHeight: number;
       onCollapse: () => void;
@@ -83,7 +84,10 @@
         disabled={!data.editable || !data.group.available}
         ><Icon name="terminal" size={17} />Add terminal</button
       >
-      <span class="summary" role="status">{data.summary}</span>
+      <span class="summary" role="status"
+        >{data.summary}{#if data.group.collapsed && data.attentionCount}
+          · {data.attentionCount} need attention{/if}</span
+      >
       {#if !data.group.available}<button
           class="btn btn--soft"
           type="button"

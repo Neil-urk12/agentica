@@ -65,6 +65,17 @@ pub enum SessionCommand {
         session_id: String,
         attachment_id: String,
     },
+    Focus {
+        owner: SessionOwner,
+        session_id: String,
+        attachment_id: String,
+        focused: bool,
+    },
+    ClearAttention {
+        owner: SessionOwner,
+        session_id: String,
+        sequence: u64,
+    },
     Stop {
         owner: SessionOwner,
         session_id: String,
@@ -110,6 +121,8 @@ impl SessionCommand {
             | Self::Resize { owner, .. }
             | Self::Acknowledge { owner, .. }
             | Self::Detach { owner, .. }
+            | Self::Focus { owner, .. }
+            | Self::ClearAttention { owner, .. }
             | Self::Stop { owner, .. }
             | Self::Restart { owner, .. } => Some(owner),
         }
@@ -130,6 +143,12 @@ impl SessionCommand {
                 ..
             }
             | Self::Acknowledge {
+                owner,
+                session_id,
+                attachment_id,
+                ..
+            }
+            | Self::Focus {
                 owner,
                 session_id,
                 attachment_id,
@@ -192,13 +211,16 @@ impl SessionCommand {
                 process::dimensions(*rows, *cols)?;
             }
             Self::Subscribe { after, .. } if *after > (1 << 53) - 1 => return Err(invalid()),
-            Self::Acknowledge { sequence, .. } if *sequence > (1 << 53) - 1 => {
+            Self::Acknowledge { sequence, .. } | Self::ClearAttention { sequence, .. }
+                if *sequence > (1 << 53) - 1 =>
+            {
                 return Err(invalid())
             }
             _ => {}
         }
         match self {
             Self::Subscribe { session_id, .. }
+            | Self::ClearAttention { session_id, .. }
             | Self::Stop { session_id, .. }
             | Self::Restart { session_id, .. }
                 if !is_id(session_id) =>
@@ -219,4 +241,39 @@ pub struct SessionEvent {
     pub attachment_id: String,
     pub status: SessionStatus,
     pub output: OutputPage,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn attention_commands_validate_identity_controller_and_sequence() {
+        let id = crate::store::new_id().unwrap();
+        let owner = json!({"workspaceId": id, "canvasId": id, "tileId": id});
+        let parse = |command| {
+            SessionRequest::parse(
+                &serde_json::to_vec(&json!({"id": "test", "command": command})).unwrap(),
+            )
+        };
+        let focus = json!({"op": "focus", "owner": owner, "sessionId": id, "attachmentId": id, "focused": true});
+        assert!(parse(focus.clone()).unwrap().command.attachment().is_some());
+        for (field, value) in [
+            ("attachmentId", json!("invalid")),
+            ("focused", json!(1)),
+            ("sessionId", json!("invalid")),
+        ] {
+            let mut invalid = focus.clone();
+            invalid[field] = value;
+            assert!(parse(invalid).is_err());
+        }
+        let clear = json!({"op": "clearAttention", "owner": owner, "sessionId": id, "sequence": 2});
+        assert!(parse(clear.clone()).is_ok());
+        for sequence in [json!(-1), json!(1u64 << 53), json!(1.5)] {
+            let mut invalid = clear.clone();
+            invalid["sequence"] = sequence;
+            assert!(parse(invalid).is_err());
+        }
+    }
 }

@@ -208,6 +208,78 @@ async fn closed(socket: &mut Socket) {
 }
 
 #[tokio::test]
+async fn attention_survives_connection_loss_and_stays_out_of_saved_canvas_and_context() {
+    let host = Host::new().await;
+    let mut socket = host.authenticated().await;
+    let session = host.start(&mut socket).await;
+    let subscribed = call(
+        &mut socket,
+        json!({"op": "subscribe", "owner": host.owner, "sessionId": session, "after": 0}),
+    )
+    .await;
+    let attachment = subscribed["result"]["attachmentId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let focused = call(&mut socket, json!({"op": "focus", "owner": host.owner, "sessionId": session, "attachmentId": attachment, "focused": true})).await;
+    assert_eq!(focused["result"], json!({}));
+    socket.close(None).await.unwrap();
+    let mut socket = host.authenticated().await;
+    let mut attachment = None;
+    for _ in 0..100 {
+        let result = call(
+            &mut socket,
+            json!({"op": "subscribe", "owner": host.owner, "sessionId": session, "after": 0}),
+        )
+        .await;
+        if let Some(id) = result["result"]["attachmentId"].as_str() {
+            attachment = Some(id.to_owned());
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let attachment = attachment.expect("connection release resets controller and focus");
+    let command = b"printf '\\033]0;prompt\\007\\033]9;attention-private-marker\\007'\r";
+    let input = call(&mut socket, json!({"op": "input", "owner": host.owner, "sessionId": session, "attachmentId": attachment, "bytes": command.as_slice()})).await;
+    assert_eq!(input["result"], json!({}));
+    let mut attention = Value::Null;
+    for _ in 0..100 {
+        let result = call(&mut socket, json!({"op": "status", "owner": host.owner})).await;
+        attention = result["result"]["status"]["attention"].clone();
+        if attention["raised"] == true {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(attention["count"], 1, "title terminator is not a bell");
+    assert_eq!(attention["message"], "attention-private-marker");
+    let canvas = host
+        .rpc(
+            "canvas.open",
+            json!({"workspaceId": host.owner.workspace_id, "canvasId": host.owner.canvas_id}),
+        )
+        .await;
+    assert!(!canvas.to_string().contains("attention"));
+    let conversation = host.rpc("conversation.start", json!({"workspaceId": host.owner.workspace_id, "canvasId": host.owner.canvas_id, "turnId": "00000000-0000-4000-8000-000000000001", "prompt": "context check", "model": "openrouter/free", "anchor": {"x": 0, "y": 0}, "nodeIds": []})).await;
+    assert!(conversation.get("error").is_none(), "{conversation}");
+    assert!(!conversation
+        .to_string()
+        .contains("attention-private-marker"));
+    let stale_clear = call(
+        &mut socket,
+        json!({"op": "clearAttention", "owner": host.owner, "sessionId": session, "sequence": 0}),
+    )
+    .await;
+    assert_eq!(stale_clear["result"], json!({}));
+    let status = call(&mut socket, json!({"op": "status", "owner": host.owner})).await;
+    assert_eq!(status["result"]["status"]["attention"]["raised"], true);
+    let cleared = call(&mut socket, json!({"op": "clearAttention", "owner": host.owner, "sessionId": session, "sequence": attention["sequence"]})).await;
+    assert_eq!(cleared["result"], json!({}));
+    let status = call(&mut socket, json!({"op": "status", "owner": host.owner})).await;
+    assert_eq!(status["result"]["status"]["attention"]["raised"], false);
+}
+
+#[tokio::test]
 async fn websocket_requires_exact_origin_host_and_first_message_authentication() {
     let host = Host::new().await;
     for (origin, host_header, query) in [

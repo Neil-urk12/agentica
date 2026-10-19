@@ -95,6 +95,14 @@
       sessionRevision++;
     },
   );
+  const attentionEntries = $derived.by(() => {
+    void sessionRevision;
+    const workspace = editorState.workspace;
+    const document = editorState.document;
+    return workspace && document
+      ? sessions.attention(workspace.workspace.id, document.canvas.id)
+      : [];
+  });
   let projectDialog = $state<{ projectId?: string } | null>(null);
   let projectPath = $state("");
   let projectError = $state("");
@@ -798,8 +806,12 @@
   }
 
   function focusSelection() {
+    if (selectedId) focusObject(selectedId);
+  }
+
+  function focusObject(id: string) {
     const area = usable();
-    const node = nodes.find((n) => n.id === selectedId);
+    const node = nodes.find((n) => n.id === id);
     if (!area || !node) return;
     const parent = node.parentId
       ? nodes.find((n) => n.id === node.parentId)
@@ -994,6 +1006,9 @@
               group,
               editable,
               locatable: !running.length,
+              attentionCount: sessions
+                .attention(workspaceId, document.canvas.id)
+                .filter((entry) => entry.tile.projectId === group.id).length,
               summary: running.length
                 ? `${running.length} live · ${running.map((s) => s.state).join(", ")}`
                 : `${tiles.length} stopped ${tiles.length === 1 ? "tile" : "tiles"}`,
@@ -1968,6 +1983,9 @@
             onReset={() => zoomBy(1 / viewport.zoom)}
             onFit={fitCanvas}
             onFocus={focusSelection}
+            attention={attentionEntries}
+            projects={editorState.document.projectGroups}
+            onGo={focusObject}
           />
         {/if}
 

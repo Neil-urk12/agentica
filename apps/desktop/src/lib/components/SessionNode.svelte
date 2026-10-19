@@ -7,6 +7,7 @@
   } from "@agentica/protocol";
   import type { SessionManager } from "../sessions";
   import Icon from "./Icon.svelte";
+  import { attentionLabel } from "../session-attention";
   interface Props {
     data: {
       kind: "session";
@@ -138,7 +139,27 @@
         onclick={data.onRemove}><Icon name="delete_outline" size={17} /></button
       >
     </div>
+    {#if view.status?.attention.raised}
+      <div class="session-notice attention nodrag" data-terminal-controls>
+        <span>● {attentionLabel(view.status)}</span>
+        <button
+          class="btn btn--soft"
+          type="button"
+          aria-label={`Dismiss attention for ${title} in ${data.group.label}`}
+          onclick={() => void data.manager.dismiss(data.owner)}>Dismiss</button
+        >
+      </div>
+    {/if}
   </header>
+  {#if data.tile.kind === "cli-agent"}
+    <p class="session-notice">
+      Enable notifications in Codex to show them here. <a
+        href="https://github.com/Neil-urk12/agentica#session-attention"
+        target="_blank"
+        rel="noreferrer">Notification setup</a
+      >
+    </p>
+  {/if}
   {#if available && !live}<p class="session-notice" role="status">
       {available}
     </p>{/if}
@@ -265,6 +286,18 @@
     font-size: 12px;
     line-height: 17px;
     flex: none;
+  }
+  .attention {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    color: var(--ink);
+  }
+  .attention span {
+    flex: 1;
+    overflow-wrap: anywhere;
+    max-height: 64px;
+    overflow: auto;
   }
   footer {
     padding: 4px 10px;
