@@ -80,6 +80,12 @@ impl Scanner {
                 self.payload.clear();
                 continue;
             }
+            if matches!(self.state, State::StringEsc) && byte != b'\\' && !self.ignored_string {
+                self.notification = false;
+                self.payload.clear();
+                // The ESC aborts the OSC and starts a new escape sequence.
+                self.state = State::Escape;
+            }
             match self.state {
                 State::Ground => match byte {
                     7 => signal(Kind::Bell, None),
@@ -157,17 +163,12 @@ impl Scanner {
                 State::StringEsc => {
                     if byte == b'\\' {
                         self.finish(&mut signal);
-                    } else if self.ignored_string {
+                    } else {
                         self.state = if byte == 0x1b {
                             State::StringEsc
                         } else {
                             State::String
                         };
-                    } else {
-                        self.notification = false;
-                        self.payload.clear();
-                        // An unrecognized escape aborts the OSC string.
-                        self.state = State::Ground;
                     }
                 }
             }
@@ -285,6 +286,32 @@ mod tests {
                     vec![(Kind::Bell, None)],
                     "chunk {chunk}"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn interrupted_osc_preserves_following_escape_and_bell() {
+        for prefix in [b"\x1b]0;t".as_slice(), b"\x1b]9;old", b"\x1b]9"] {
+            for (suffix, expected) in [
+                (
+                    b"\x1b]9;msg\x07".as_slice(),
+                    vec![(Kind::Notification, Some("msg".into()))],
+                ),
+                (b"\x1b\x07", vec![(Kind::Bell, None)]),
+                (
+                    b"\x1b\x07]9;msg\x07",
+                    vec![(Kind::Bell, None), (Kind::Notification, Some("msg".into()))],
+                ),
+            ] {
+                let bytes = [prefix, suffix].concat();
+                for chunk in 1..=bytes.len() {
+                    assert_eq!(
+                        signals(&bytes, chunk),
+                        expected,
+                        "bytes {bytes:?}, chunk {chunk}"
+                    );
+                }
             }
         }
     }

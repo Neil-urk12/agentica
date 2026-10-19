@@ -12,6 +12,10 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-19
 
+- Recover interrupted OSC sequences without swallowing the next escape byte or
+  bell. Show Codex notification setup directly in tiles, provide the API-key URL
+  as copyable text in desktop Settings, and omit empty quotes from notification
+  labels. Align the attention design with Escape/CSI bell handling.
 - Show session attention in tile headers, collapsed projects, and canvas
   navigation, with Go and Dismiss controls. Scan BEL and OSC 9 in the backend so
   renderer disposal and browser refresh cannot lose signals; bounded latches

@@ -237,13 +237,15 @@
             </button>
           </div>
           <p class="setting__hint">
-            {#if providerKind === "openrouter"}Get an API key at <a
-                href="https://openrouter.ai/keys"
-                target="_blank"
-                rel="noreferrer">openrouter.ai/keys</a
-              >.
-            {/if}Settings and keys are stored locally on this device. The key is
-            sent only to the selected provider.
+            {#if providerKind === "openrouter"}{#if desktopMode}Get an API key
+                by opening <code>https://openrouter.ai/keys</code> in your browser.
+              {:else}Get an API key at <a
+                  href="https://openrouter.ai/keys"
+                  target="_blank"
+                  rel="noreferrer">openrouter.ai/keys</a
+                >.
+              {/if}{/if}Settings and keys are stored locally on this device. The
+            key is sent only to the selected provider.
           </p>
         </div>
       </div>
@@ -362,6 +364,7 @@
   }
 
   .setting__hint code {
+    user-select: text;
     font-size: 0.75rem;
     padding: 0.1rem 0.3rem;
     border-radius: 4px;

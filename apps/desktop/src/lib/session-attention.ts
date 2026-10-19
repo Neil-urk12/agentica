@@ -5,7 +5,9 @@ export function attentionLabel(status: SessionStatus): string {
     case "bell":
       return "Bell";
     case "notification":
-      return `Notification “${status.attention.message ?? ""}”`;
+      return status.attention.message
+        ? `Notification “${status.attention.message}”`
+        : "Notification";
     case "exited":
       return `Process exited${status.exitSignal ? ` (signal ${status.exitSignal})` : status.exitCode !== null ? ` (code ${status.exitCode})` : ""}`;
     case "failed":

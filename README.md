@@ -113,7 +113,7 @@ without expanding a collapsed project or clearing attention. Focus the terminal
 or choose **Dismiss** to clear it. Collapsed projects show member attention counts.
 
 Labels describe only received signals: **Bell**, **Notification** with quoted
-program text, **Process exited** with code/signal, or **Process failed** with an
+program text when provided, **Process exited** with code/signal, or **Process failed** with an
 error. They do not establish approval, thinking, turn completion, or task results.
 Title, directory, and progress escape sequences do not raise attention.
 
@@ -122,7 +122,8 @@ it resets when the session is restarted or the backend ends. Signals while the
 terminal is focused, and user-requested Stop/Restart/removal exits, do not raise
 attention. Notification text stays out of saved canvas content and conversations.
 
-To opt in to Codex notifications, add these settings to your Codex configuration:
+Codex tiles include expandable notification setup instructions. To opt in, add
+these settings to your Codex configuration:
 
 ```toml
 [tui]

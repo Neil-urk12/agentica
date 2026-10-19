@@ -152,13 +152,25 @@
     {/if}
   </header>
   {#if data.tile.kind === "cli-agent"}
-    <p class="session-notice">
-      Enable notifications in Codex to show them here. <a
-        href="https://github.com/Neil-urk12/agentica#session-attention"
-        target="_blank"
-        rel="noreferrer">Notification setup</a
-      >
-    </p>
+    <details class="session-notice nodrag nopan nowheel">
+      <summary>Codex notification setup</summary>
+      <p>
+        Add these settings to your Codex configuration (normally <code
+          >~/.codex/config.toml</code
+        >):
+      </p>
+      <pre><code
+          >{`[tui]
+notifications = true
+notification_method = "osc9"
+notification_condition = "always"`}</code
+        ></pre>
+      <p>
+        These global settings also affect Codex in other terminals, including
+        notifications while focused there. Agentica suppresses attention while
+        its terminal is focused.
+      </p>
+    </details>
   {/if}
   {#if available && !live}<p class="session-notice" role="status">
       {available}
@@ -292,6 +304,18 @@
     gap: 8px;
     align-items: center;
     color: var(--ink);
+  }
+  details.session-notice {
+    max-height: 180px;
+    overflow: auto;
+  }
+  summary {
+    cursor: pointer;
+  }
+  pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    user-select: text;
   }
   .attention span {
     flex: 1;

@@ -27,6 +27,8 @@ test("attention labels describe only received signals, independent of tile kind"
       ...details,
     });
   assert.equal(label("bell"), "Bell");
+  assert.equal(label("notification", ""), "Notification");
+  assert.equal(label("notification"), "Notification");
   assert.equal(
     label("notification", "Approval requested <script>"),
     "Notification “Approval requested <script>”",
