@@ -756,6 +756,9 @@ label {
 /* ----------------------------------------------------------------- topbar */
 
 .topbar {
+  /* Above the canvas, drawer, and inspector so the waiting queue opens over them. */
+  position: relative;
+  z-index: 30;
   display: flex;
   flex-wrap: wrap;
   align-items: center;

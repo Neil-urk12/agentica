@@ -12,6 +12,16 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-19
 
+- Move session attention out of the canvas zoom controls into a top-bar
+  "N waiting" queue (Ctrl+J / ⌘J). It lists every waiting session oldest first
+  with waited time, **Jump to**, and **Mark seen**, so attention can be triaged
+  at once instead of from a popover next to zoom. Tiles show an amber ring and a
+  reason strip with the same **Mark seen** (sequence-aware `clearAttention`).
+  Labels read "Waiting for you", "Stopped (exit code N)", and "Failed to start".
+- Replace the project group's header card with a label cut into the group
+  border, a ⋯ menu for Remove project and Locate folder, and separate status
+  items built from structured counts instead of a joined summary string.
+  `PROJECT_HEADER` stays 96 so persisted geometry validation does not change.
 - Recover interrupted OSC sequences without swallowing the next escape byte or
   bell. Show Codex notification setup directly in tiles, provide the API-key URL
   as copyable text in desktop Settings, and omit empty quotes from notification

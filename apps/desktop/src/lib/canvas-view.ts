@@ -32,6 +32,36 @@ export function compactSize(node: Pick<Box, "width" | "height">) {
 
 export type StatusTone = "neutral" | "busy" | "pending" | "ok" | "bad";
 
+/** Session counts shown on a project group, by state. */
+export type ProjectCounts = {
+  running: number;
+  starting: number;
+  stopping: number;
+  stopped: number;
+  waiting: number;
+};
+
+/** Separate status items for a project group; zero counts are omitted. */
+export function projectStatusItems(
+  counts: ProjectCounts,
+): { label: string; tone: StatusTone }[] {
+  const items: { label: string; tone: StatusTone }[] = [];
+  if (counts.running)
+    items.push({ label: `${counts.running} running`, tone: "ok" });
+  if (counts.starting)
+    items.push({ label: `${counts.starting} starting`, tone: "busy" });
+  if (counts.stopping)
+    items.push({ label: `${counts.stopping} stopping`, tone: "busy" });
+  if (counts.stopped)
+    items.push({ label: `${counts.stopped} stopped`, tone: "neutral" });
+  if (counts.waiting)
+    items.push({
+      label: `${counts.waiting} waiting for you`,
+      tone: "pending",
+    });
+  return items.length ? items : [{ label: "No sessions yet", tone: "neutral" }];
+}
+
 /** Readable header state derived from the persisted turn status. */
 export function turnStatus(
   status: string | undefined,
