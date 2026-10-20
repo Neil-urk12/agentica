@@ -12,13 +12,15 @@
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     MAX_REQUEST_TIMEOUT_SECONDS,
     MIN_REQUEST_TIMEOUT_SECONDS,
+    PROVIDER_PRESETS,
     getProviderConfig,
-    getProviderKind,
+    getProviderProfile,
     getCustomProvider,
     getRequestTimeoutSeconds,
-    saveProviderSetting,
+    savePresetSetting,
+    saveProviderProfile,
     saveRequestTimeoutSeconds,
-    type ProviderKind,
+    type ProviderProfile,
   } from "../provider";
   import {
     DEFAULT_MODEL,
@@ -82,7 +84,14 @@
 
   const initialProvider = getProviderConfig();
   let apiKey = $state(initialProvider.apiKey);
-  let providerKind = $state(getProviderKind());
+  let profile = $state<ProviderProfile>(getProviderProfile());
+  const providerKind = $derived(
+    profile === "openrouter" ? "openrouter" : "custom",
+  );
+  /** The named hosted provider, or null for OpenRouter and your own server. */
+  const preset = $derived(
+    PROVIDER_PRESETS.find((entry) => entry.id === profile) ?? null,
+  );
   let custom = $state(getCustomProvider());
   let model = $state(initialProvider.model);
   let requestTimeout = $state(String(getRequestTimeoutSeconds()));
@@ -121,6 +130,13 @@
             : "Couldn't reach the AI service. Check your internet connection.",
       };
     if (check?.result === "other") return { ok: false, text: check.detail };
+    if (preset)
+      return custom.apiKey.trim() && custom.model.trim()
+        ? { ok: true, text: `Using ${preset.name} with ${custom.model}.` }
+        : {
+            ok: false,
+            text: `Using ${preset.name}. Add its key below and a model in Advanced.`,
+          };
     if (providerKind === "custom")
       return customHost
         ? { ok: true, text: `Using your own AI server (${customHost}).` }
@@ -173,15 +189,19 @@
 
   function onKeyInput(value: string) {
     apiKey = value;
-    if (providerKind === "custom") saveProviderSetting("customApiKey", value);
-    else setOpenRouterApiKey(value);
+    if (providerKind === "custom") {
+      savePresetSetting("apiKey", value);
+      custom.apiKey = value;
+    } else setOpenRouterApiKey(value);
     flashSaved();
   }
 
   function onModelChange(value: string) {
     model = value;
-    if (providerKind === "custom") saveProviderSetting("customModel", value);
-    else setOpenRouterModel(value);
+    if (providerKind === "custom") {
+      savePresetSetting("model", value);
+      custom.model = value;
+    } else setOpenRouterModel(value);
     flashSaved();
   }
 
@@ -194,12 +214,13 @@
     modelInput?.focus();
   }
 
-  function changeProvider(value: ProviderKind) {
-    providerKind = value;
-    saveProviderSetting("provider", value);
+  /** Each provider keeps its own key and model, so switching never mixes them. */
+  function changeProvider(value: ProviderProfile) {
+    profile = value;
+    saveProviderProfile(value);
     custom = getCustomProvider();
-    apiKey = value === "custom" ? custom.apiKey : getOpenRouterApiKey();
-    model = value === "custom" ? custom.model : getOpenRouterModel();
+    apiKey = value === "openrouter" ? getOpenRouterApiKey() : custom.apiKey;
+    model = value === "openrouter" ? getOpenRouterModel() : custom.model;
     showKey = false;
     flashSaved();
   }
@@ -292,14 +313,18 @@
           <span class="setting__icon"><Icon name="key" size={20} /></span>
           <div class="setting__text">
             <h3 id="openrouter-api-key-label">
-              {providerKind === "custom"
-                ? "Your server's key"
-                : "Your OpenRouter key"}
+              {preset
+                ? `Your ${preset.name} key`
+                : providerKind === "custom"
+                  ? "Your server's key"
+                  : "Your OpenRouter key"}
             </h3>
             <p>
-              {providerKind === "custom"
-                ? "Leave empty if your server doesn't need one."
-                : "OpenRouter connects Agentica to AI models. Free models need a free account and key."}
+              {preset
+                ? `Create one in your ${preset.name} account. It is only sent to ${new URL(preset.baseUrl).host}.`
+                : providerKind === "custom"
+                  ? "Leave empty if your server doesn't need one."
+                  : "OpenRouter connects Agentica to AI models. Free models need a free account and key."}
             </p>
             <div class="setting__body">
               <div class="setting__input-row">
@@ -376,7 +401,9 @@
             type="button"
             onclick={() => openSection("advanced")}
           >
-            <Icon name="tune" size={16} />Change your server in Advanced
+            <Icon name="tune" size={16} />{preset
+              ? "Choose the model in Advanced"
+              : "Change your server in Advanced"}
           </button>
         {/if}
       </section>
@@ -430,24 +457,29 @@
               <select
                 id="ai-provider"
                 aria-labelledby="provider-label"
-                value={providerKind}
+                value={profile}
                 onchange={(event) =>
-                  changeProvider(event.currentTarget.value as ProviderKind)}
+                  changeProvider(event.currentTarget.value as ProviderProfile)}
               >
                 <option value="openrouter">OpenRouter (recommended)</option>
+                {#each PROVIDER_PRESETS as entry (entry.id)}
+                  <option value={entry.id}>{entry.name}</option>
+                {/each}
                 <option value="custom"
                   >My own AI server (OpenAI-compatible)</option
                 >
               </select>
               <p class="setting__hint">
-                Choose your own server to use a model on this computer or
-                another provider.
+                {#if preset}Uses <code>{preset.baseUrl}</code>. Each provider
+                  keeps its own key and model on this device.
+                {:else}Choose a hosted provider, or your own server to use a
+                  model on this computer.{/if}
               </p>
             </div>
           </div>
         </section>
 
-        {#if providerKind === "custom"}
+        {#if profile === "custom"}
           <section class="setting setting--stacked">
             <span class="setting__icon"><Icon name="link" size={20} /></span>
             <div class="setting__text">
@@ -461,7 +493,7 @@
                   placeholder="https://api.example.com/v1"
                   oninput={(event) => {
                     custom.baseUrl = event.currentTarget.value;
-                    saveProviderSetting("customBaseUrl", custom.baseUrl);
+                    savePresetSetting("baseUrl", custom.baseUrl);
                     flashSaved();
                   }}
                   autocomplete="off"
@@ -481,7 +513,7 @@
                     checked={custom.tools}
                     onchange={(event) => {
                       custom.tools = event.currentTarget.checked;
-                      saveProviderSetting("customTools", String(custom.tools));
+                      savePresetSetting("tools", String(custom.tools));
                       flashSaved();
                     }}
                   /> Let the AI suggest canvas edits (the model must support tool
@@ -503,19 +535,40 @@
                 bind:this={modelInput}
                 type="text"
                 value={model}
-                placeholder={providerKind === "custom"
-                  ? "Model ID"
-                  : DEFAULT_MODEL}
+                placeholder={preset
+                  ? preset.exampleModel
+                  : providerKind === "custom"
+                    ? "Model ID"
+                    : DEFAULT_MODEL}
                 oninput={(event) => onModelChange(event.currentTarget.value)}
                 autocomplete="off"
                 spellcheck="false"
               />
               <p class="setting__hint">
-                {#if providerKind === "custom"}The model name your server
+                {#if preset}A model ID from {preset.name}'s catalog, for example
+                  <code>{preset.exampleModel}</code>. {desktopMode
+                    ? `See ${preset.docsUrl}.`
+                    : ""}
+                {:else if providerKind === "custom"}The model name your server
                   expects.
                 {:else}Use <code>{DEFAULT_MODEL}</code> for free models, or any model
                   ID listed on OpenRouter.{/if}
               </p>
+              {#if preset}
+                <label class="setting__checkbox"
+                  ><input
+                    id="provider-tools"
+                    type="checkbox"
+                    checked={custom.tools}
+                    onchange={(event) => {
+                      custom.tools = event.currentTarget.checked;
+                      savePresetSetting("tools", String(custom.tools));
+                      flashSaved();
+                    }}
+                  /> Let the AI suggest canvas edits (the model must support tool
+                  calling)</label
+                >
+              {/if}
             </div>
           </div>
         </section>
