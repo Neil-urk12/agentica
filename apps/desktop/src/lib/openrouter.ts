@@ -1,6 +1,5 @@
 import {
   CanvasOperationJsonSchema,
-  MAX_FRAME_BYTES,
   type CanvasOperation,
   type RuntimeResult,
 } from "@agentica/protocol";
@@ -22,6 +21,8 @@ import {
 import { isTauri } from "@tauri-apps/api/core";
 
 export const DEFAULT_MODEL = "openrouter/free";
+/** Provider prompts are not runtime frames; the 16 KiB RPC cap is too small. */
+export const MAX_PROVIDER_REQUEST_BYTES = 256 * 1024;
 
 const KEY_STORAGE = "agentica.openrouterApiKey";
 const MODEL_STORAGE = "agentica.openrouterModel";
@@ -84,6 +85,14 @@ export interface OpenRouterChatResponse {
   };
 }
 
+function endpointHost(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return baseUrl;
+  }
+}
+
 export async function canvasToolSupport(
   model: string,
   signal?: AbortSignal,
@@ -142,6 +151,100 @@ function canvasToolDefinition(): HarnessToolDefinition {
   };
 }
 
+export interface ProviderConnectionTest {
+  ok: boolean;
+  status: number | null;
+  detail: string;
+  elapsedMs: number;
+}
+
+function providerErrorDetail(body: string): string {
+  try {
+    const data = JSON.parse(body) as {
+      detail?: unknown;
+      error?: { message?: unknown };
+    };
+    if (typeof data.detail === "string" && data.detail) return data.detail;
+    if (typeof data.error?.message === "string" && data.error.message)
+      return data.error.message;
+  } catch {
+    // Non-JSON error bodies are shown as received.
+  }
+  return body;
+}
+
+/** Send one tiny message so endpoint, key, and model problems surface early. */
+export async function testProviderConnection(
+  provider: ProviderConfig,
+  options?: { timeoutMs?: number },
+): Promise<ProviderConnectionTest> {
+  const config = validateProvider(provider);
+  const timeoutMs = options?.timeoutMs ?? 30_000;
+  const nativeHttp = config.kind === "custom" && isTauri();
+  const send = nativeHttp
+    ? (await import("@tauri-apps/plugin-http")).fetch
+    : fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () =>
+      controller.abort(
+        new DOMException("The connection test timed out.", "TimeoutError"),
+      ),
+    timeoutMs,
+  );
+  const started = performance.now();
+  try {
+    const response = await send(`${config.baseUrl}/chat/completions`, {
+      method: "POST",
+      signal: controller.signal,
+      redirect: "error",
+      ...(nativeHttp ? { maxRedirections: 0, connectTimeout: 15_000 } : {}),
+      headers: {
+        "Content-Type": "application/json",
+        ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+        ...(config.kind !== "custom"
+          ? { "HTTP-Referer": "https://agentica.app", "X-Title": "Agentica" }
+          : {}),
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [{ role: "user", content: "Reply with the single word OK." }],
+      }),
+    });
+    const elapsedMs = Math.round(performance.now() - started);
+    if (response.ok)
+      return {
+        ok: true,
+        status: response.status,
+        detail: "The endpoint replied.",
+        elapsedMs,
+      };
+    const body = await response.text().catch(() => "");
+    const received = providerErrorDetail(body);
+    const detail = (
+      config.apiKey.length >= 8
+        ? received.replaceAll(config.apiKey, "[redacted]")
+        : received
+    ).slice(0, 300);
+    return {
+      ok: false,
+      status: response.status,
+      detail: detail || `HTTP ${response.status}`,
+      elapsedMs,
+    };
+  } catch (error) {
+    const elapsedMs = Math.round(performance.now() - started);
+    const detail = controller.signal.aborted
+      ? `No response within ${Math.round(timeoutMs / 1000)} seconds. Check the endpoint and network${config.kind === "custom" && !nativeHttp ? ", including CORS support" : ""}.`
+      : error instanceof Error && error.message
+        ? error.message
+        : "The connection test failed.";
+    return { ok: false, status: null, detail, elapsedMs };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function runCanvasAgent(
   start: RuntimeResult<"conversation.start">,
   options: {
@@ -156,7 +259,10 @@ export async function runCanvasAgent(
   const provider = options.provider
     ? validateProvider(options.provider)
     : undefined;
-  const label = provider?.kind === "custom" ? "Provider" : "OpenRouter";
+  const label =
+    provider?.kind === "custom"
+      ? `Provider (${endpointHost(provider.baseUrl)})`
+      : "OpenRouter";
   const nativeHttp = provider?.kind === "custom" && isTauri();
   const send = nativeHttp
     ? (await import("@tauri-apps/plugin-http")).fetch
@@ -220,9 +326,9 @@ export async function runCanvasAgent(
           }
         : {}),
     });
-    if (new TextEncoder().encode(body).length > MAX_FRAME_BYTES)
+    if (new TextEncoder().encode(body).length > MAX_PROVIDER_REQUEST_BYTES)
       throw new Error(
-        "Conversation and canvas context exceed 16 KiB. Select fewer objects or use a new canvas; nothing was truncated.",
+        "Conversation and canvas context exceed 256 KiB. Select fewer objects or use a new canvas; nothing was truncated.",
       );
     const response = await send(
       `${provider?.baseUrl ?? "https://openrouter.ai/api/v1"}/chat/completions`,

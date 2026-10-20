@@ -191,7 +191,7 @@ export async function runCanvasAgentHarness(
     options.signal.addEventListener("abort", forwardAbort, { once: true });
     const seconds = Math.max(1, Math.round(limits.requestTimeoutMs / 1000));
     const unit = seconds === 1 ? "second" : "seconds";
-    const timeoutMessage = `The ${options.providerLabel} request exceeded ${seconds} ${unit} without a response. Nothing was applied; raise the agent timeout in Settings or retry when the provider responds.`;
+    const timeoutMessage = `The ${options.providerLabel} request exceeded ${seconds} ${unit} without a response. Nothing was applied; check that this device can reach the endpoint, raise the agent timeout in Settings, or retry.`;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {

@@ -14,12 +14,19 @@ propose text, shape, placement, and connection changes for review.
 
 ## Canvas conversation
 
-Open Settings to choose OpenRouter or a custom OpenAI-compatible provider. Custom
-providers accept a base URL (for example `https://api.example.com/v1` or
-`http://localhost:1234/v1`), API key, and model ID. Leave the key blank for endpoints
-that need no authentication. Enable canvas tools only for models that support
-function calling; disable them for text-only replies. OpenRouter checks its model
-catalog automatically. Each provider keeps separate settings and keys locally.
+Open Settings to choose OpenRouter, a named hosted provider (NVIDIA NIM, Groq,
+Together AI, Mistral AI, or DeepSeek), or a custom OpenAI-compatible provider.
+Named presets fill their hosted endpoint and keep a separate base URL, API key,
+model, and tools flag, so switching providers cannot send one provider's key to
+another. Custom providers accept any base URL (for example
+`https://api.example.com/v1` or `http://localhost:1234/v1`), API key, and model
+ID. Leave the key blank for endpoints that need no authentication. Enable canvas
+tools only for models that support function calling; disable them for text-only
+replies.OpenRouter checks its model
+catalog automatically. **Test connection** sends one small message and reports
+the endpoint's HTTP status, the model error, or a timeout, so misconfigured keys,
+retired model IDs, and unreachable endpoints surface before a canvas turn. Each
+provider keeps separate settings and keys locally.
 The desktop app sends custom requests through its native HTTP client, so providers
 do not need browser CORS support. Browser mode sends requests directly and requires
 CORS from the app's origin. Custom URLs support HTTPS, or HTTP at `localhost` and `127.0.0.1`.
@@ -43,9 +50,9 @@ or unresolved proposal can be active on a canvas. Cancel stops generation, and
 interrupted requests require an explicit retry.
 
 The first tool set supports text, labeled rectangles and ellipses, placement,
-and connectors. It does not generate images or execute code. Context and changes
-must fit the existing size limits; oversized requests fail visibly without
-truncation. If saving a generated response fails, keep the canvas open to retry
+and connectors. It does not generate images or execute code. Provider prompts are
+capped at 256 KiB (separate from the 16 KiB runtime RPC frames); oversized
+requests fail visibly without truncation. If saving a generated response fails, keep the canvas open to retry
 or copy the response for recovery. Basic manual editing needs no AI account.
 
 The canvas agent runs inside a fixed harness, so every provider shares the same

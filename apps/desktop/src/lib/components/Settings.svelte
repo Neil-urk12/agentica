@@ -8,13 +8,15 @@
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     MAX_REQUEST_TIMEOUT_SECONDS,
     MIN_REQUEST_TIMEOUT_SECONDS,
+    PROVIDER_PRESETS,
     getProviderConfig,
-    getProviderKind,
     getCustomProvider,
+    getProviderProfile,
     getRequestTimeoutSeconds,
-    saveProviderSetting,
+    savePresetSetting,
+    saveProviderProfile,
     saveRequestTimeoutSeconds,
-    type ProviderKind,
+    type ProviderProfile,
   } from "../provider";
   import {
     DEFAULT_MODEL,
@@ -22,6 +24,7 @@
     setOpenRouterApiKey,
     getOpenRouterModel,
     setOpenRouterModel,
+    testProviderConnection,
   } from "../openrouter";
 
   interface Props {
@@ -60,13 +63,21 @@
 
   const initialProvider = getProviderConfig();
   let apiKey = $state(initialProvider.apiKey);
-  let providerKind = $state(getProviderKind());
+  let profile = $state<ProviderProfile>(getProviderProfile());
+  const providerKind = $derived(
+    profile === "openrouter" ? ("openrouter" as const) : ("custom" as const),
+  );
+  const activePreset = $derived(
+    PROVIDER_PRESETS.find((preset) => preset.id === profile) ?? null,
+  );
   let custom = $state(getCustomProvider());
   let model = $state(initialProvider.model);
   let requestTimeout = $state(String(getRequestTimeoutSeconds()));
   let showKey = $state(false);
   let savedMessage = $state("");
   let saveTimeout: ReturnType<typeof setTimeout> | undefined;
+  let testingProvider = $state(false);
+  let providerTest = $state<{ ok: boolean; text: string } | null>(null);
 
   function flashSaved() {
     savedMessage = "Saved";
@@ -77,15 +88,17 @@
   }
 
   function onKeyInput(value: string) {
+    providerTest = null;
     apiKey = value;
-    if (providerKind === "custom") saveProviderSetting("customApiKey", value);
+    if (providerKind === "custom") savePresetSetting("apiKey", value);
     else setOpenRouterApiKey(value);
     flashSaved();
   }
 
   function onModelChange(value: string) {
+    providerTest = null;
     model = value;
-    if (providerKind === "custom") saveProviderSetting("customModel", value);
+    if (providerKind === "custom") savePresetSetting("model", value);
     else setOpenRouterModel(value);
     flashSaved();
   }
@@ -95,12 +108,37 @@
     flashSaved();
   }
 
-  function changeProvider(value: ProviderKind) {
-    providerKind = value;
-    saveProviderSetting("provider", value);
+  async function testConnection() {
+    testingProvider = true;
+    providerTest = null;
+    try {
+      const result = await testProviderConnection(getProviderConfig());
+      providerTest = {
+        ok: result.ok,
+        text: result.ok
+          ? `Connected in ${(result.elapsedMs / 1000).toFixed(1)}s (HTTP ${result.status}).`
+          : result.detail,
+      };
+    } catch (error) {
+      providerTest = {
+        ok: false,
+        text:
+          error instanceof Error
+            ? error.message
+            : "The connection test failed.",
+      };
+    } finally {
+      testingProvider = false;
+    }
+  }
+
+  function changeProvider(value: ProviderProfile) {
+    providerTest = null;
+    profile = value;
+    saveProviderProfile(value);
     custom = getCustomProvider();
-    apiKey = value === "custom" ? custom.apiKey : getOpenRouterApiKey();
-    model = value === "custom" ? custom.model : getOpenRouterModel();
+    apiKey = value === "openrouter" ? getOpenRouterApiKey() : custom.apiKey;
+    model = value === "openrouter" ? getOpenRouterModel() : custom.model;
     showKey = false;
     flashSaved();
   }
@@ -147,14 +185,24 @@
           <select
             id="ai-provider"
             aria-labelledby="provider-label"
-            value={providerKind}
+            value={profile}
             onchange={(event) =>
-              changeProvider(event.currentTarget.value as ProviderKind)}
+              changeProvider(event.currentTarget.value as ProviderProfile)}
           >
             <option value="openrouter">OpenRouter</option>
+            {#each PROVIDER_PRESETS as preset}
+              <option value={preset.id}>{preset.name}</option>
+            {/each}
             <option value="custom">Custom (OpenAI-compatible)</option>
           </select>
         </div>
+        {#if activePreset}
+          <p class="setting__hint">
+            Hosted endpoint: <code>{activePreset.baseUrl}</code>. Model IDs are
+            listed at <code>{activePreset.docsUrl}</code>; for example
+            <code>{activePreset.exampleModel}</code>.
+          </p>
+        {/if}
       </div>
     </section>
     {#if providerKind === "custom"}
@@ -169,8 +217,9 @@
               value={custom.baseUrl}
               placeholder="https://api.example.com/v1"
               oninput={(event) => {
+                providerTest = null;
                 custom.baseUrl = event.currentTarget.value;
-                saveProviderSetting("customBaseUrl", custom.baseUrl);
+                savePresetSetting("baseUrl", custom.baseUrl);
                 flashSaved();
               }}
               autocomplete="off"
@@ -191,7 +240,7 @@
                 checked={custom.tools}
                 onchange={(event) => {
                   custom.tools = event.currentTarget.checked;
-                  saveProviderSetting("customTools", String(custom.tools));
+                  savePresetSetting("tools", String(custom.tools));
                   flashSaved();
                 }}
               /> Enable canvas tools (requires function calling)</label
@@ -206,7 +255,7 @@
         <div class="setting__title-row">
           <h2 id="openrouter-api-key-label">
             {providerKind === "custom"
-              ? "Provider API Key"
+              ? `${activePreset?.name ?? "Provider"} API Key`
               : "OpenRouter API Key"}
           </h2>
           {#if savedMessage}
@@ -266,7 +315,9 @@
       <span class="setting__icon"><Icon name="smart_toy" size={20} /></span>
       <div class="setting__text">
         <h2 id="openrouter-model-label">
-          {providerKind === "custom" ? "Provider Model" : "OpenRouter Model"}
+          {providerKind === "custom"
+            ? `${activePreset?.name ?? "Provider"} Model`
+            : "OpenRouter Model"}
         </h2>
         <p>
           {providerKind === "custom"
@@ -279,14 +330,41 @@
             aria-labelledby="openrouter-model-label"
             type="text"
             value={model}
-            placeholder={providerKind === "custom" ? "Model ID" : DEFAULT_MODEL}
+            placeholder={providerKind === "custom"
+              ? (activePreset?.exampleModel ?? "Model ID")
+              : DEFAULT_MODEL}
             oninput={(event) => onModelChange(event.currentTarget.value)}
             autocomplete="off"
             spellcheck="false"
           />
+          <button
+            class="btn btn--soft"
+            type="button"
+            disabled={testingProvider || !model.trim()}
+            onclick={() => void testConnection()}
+          >
+            {testingProvider ? "Testing…" : "Test connection"}
+          </button>
+          {#if providerTest}
+            <p
+              class="setting__hint"
+              role="status"
+              class:setting__hint--bad={!providerTest.ok}
+            >
+              {providerTest.text}
+            </p>
+          {/if}
+          <p class="setting__hint">
+            Sends one small message to check the endpoint, key, and model.
+            Canvas tools are not tested.
+          </p>
           {#if providerKind === "openrouter"}<p class="setting__hint">
               Default: <code>openrouter/free</code> (auto-routes across all available
               free models).
+            </p>{:else if activePreset}<p class="setting__hint">
+              Example: <code>{activePreset.exampleModel}</code>. Model
+              availability changes; use an ID from
+              <code>{activePreset.docsUrl}</code>.
             </p>{/if}
         </div>
       </div>
@@ -393,6 +471,10 @@
     color: var(--muted);
     margin: 0;
     line-height: 1.4;
+  }
+
+  .setting__hint--bad {
+    color: var(--bad);
   }
 
   .setting__hint a {

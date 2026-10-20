@@ -7,6 +7,7 @@ import {
   checkedToolOperation,
 } from "../apps/desktop/src/lib/canvas-agent.ts";
 import {
+  MAX_PROVIDER_REQUEST_BYTES,
   canvasToolSupport,
   runCanvasAgent,
 } from "../apps/desktop/src/lib/openrouter.ts";
@@ -296,6 +297,24 @@ test("the canvas agent reports live request, staged-edit, and rejection progress
   });
 });
 
+test("provider prompts may exceed the runtime 16 KiB frame limit", async (t) => {
+  const input = start();
+  input.context.artifacts[0].text = "x".repeat(20_000);
+  t.mock.method(globalThis, "fetch", async (_url, request) => {
+    assert.ok(
+      request.body.length > MAX_FRAME_BYTES,
+      "the request crosses the old 16 KiB cap",
+    );
+    return result("Accepted the larger prompt.");
+  });
+  const response = await runCanvasAgent(input, options());
+  assert.equal(response.reply, "Accepted the larger prompt.");
+  assert.deepEqual(input.context, {
+    ...context,
+    artifacts: [{ ...context.artifacts[0], text: "x".repeat(20_000) }],
+  });
+});
+
 test("text-only models retain conversation replies and never receive canvas tools", async (t) => {
   t.mock.method(globalThis, "fetch", async (url, request) => {
     if (String(url).endsWith("/models"))
@@ -488,8 +507,8 @@ test("agent request limits, cancellation, and provider failures keep the canvas 
     { name: "AbortError" },
   );
   const large = start();
-  large.context.artifacts[0].text = "中".repeat(MAX_FRAME_BYTES);
-  await assert.rejects(runCanvasAgent(large, options()), /exceed 16 KiB/);
+  large.context.artifacts[0].text = "x".repeat(MAX_PROVIDER_REQUEST_BYTES);
+  await assert.rejects(runCanvasAgent(large, options()), /exceed 256 KiB/);
   t.mock.method(globalThis, "fetch", async () => ({ ok: false, status: 503 }));
   await assert.rejects(runCanvasAgent(start(), options()), /503/);
 });

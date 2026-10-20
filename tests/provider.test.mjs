@@ -4,10 +4,15 @@ import {
   DEFAULT_REQUEST_TIMEOUT_SECONDS,
   MAX_REQUEST_TIMEOUT_SECONDS,
   MIN_REQUEST_TIMEOUT_SECONDS,
+  PROVIDER_PRESETS,
+  getActivePreset,
   getProviderConfig,
   getCustomProvider,
+  getProviderProfile,
   getRequestTimeoutMs,
   getRequestTimeoutSeconds,
+  savePresetSetting,
+  saveProviderProfile,
   saveProviderSetting,
   saveRequestTimeoutSeconds,
   validateProvider,
@@ -16,6 +21,7 @@ import {
   runCanvasAgent,
   setOpenRouterApiKey,
   setOpenRouterModel,
+  testProviderConnection,
 } from "../apps/desktop/src/lib/openrouter.ts";
 
 const custom = () => ({
@@ -69,6 +75,67 @@ test("provider settings preserve separate credentials and models when switching"
   assert.equal(getProviderConfig().apiKey, "router-key");
   assert.equal(getProviderConfig().model, "router-model");
   assert.equal(getCustomProvider().apiKey, "custom-key");
+});
+
+test("named provider presets keep separate endpoints, keys, and models", (t) => {
+  assert.deepEqual(
+    PROVIDER_PRESETS.map((preset) => preset.id),
+    ["nvidia", "groq", "together", "mistral", "deepseek"],
+  );
+  const storage = new Map();
+  const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key) => storage.get(key) ?? null,
+      setItem: (key, value) => storage.set(key, value),
+    },
+  });
+  t.after(() => {
+    if (original) Object.defineProperty(globalThis, "localStorage", original);
+    else delete globalThis.localStorage;
+  });
+  assert.equal(getProviderProfile(), "openrouter");
+  saveProviderProfile("nvidia");
+  assert.equal(getProviderProfile(), "nvidia");
+  assert.equal(getActivePreset().name, "NVIDIA API (NIM)");
+  let config = getProviderConfig();
+  assert.equal(config.kind, "custom");
+  assert.equal(config.baseUrl, "https://integrate.api.nvidia.com/v1");
+  assert.equal(config.apiKey, "");
+  assert.equal(config.model, "");
+  savePresetSetting("apiKey", " nv-key ");
+  savePresetSetting("model", "meta/llama-3.3-70b-instruct");
+  savePresetSetting("tools", "false");
+  config = getProviderConfig();
+  assert.equal(config.apiKey, "nv-key");
+  assert.equal(config.model, "meta/llama-3.3-70b-instruct");
+  assert.equal(config.tools, false);
+
+  saveProviderProfile("groq");
+  assert.equal(getProviderConfig().apiKey, "");
+  assert.equal(getProviderConfig().baseUrl, "https://api.groq.com/openai/v1");
+  savePresetSetting("apiKey", "groq-key");
+  savePresetSetting("model", "openai/gpt-oss-120b");
+
+  saveProviderProfile("nvidia");
+  assert.equal(getProviderConfig().apiKey, "nv-key");
+  assert.equal(getProviderConfig().model, "meta/llama-3.3-70b-instruct");
+  assert.equal(getProviderConfig().tools, false);
+  saveProviderProfile("groq");
+  assert.equal(getProviderConfig().apiKey, "groq-key");
+  assert.equal(getProviderConfig().model, "openai/gpt-oss-120b");
+
+  saveProviderProfile("custom");
+  assert.equal(getProviderProfile(), "custom");
+  assert.equal(getActivePreset(), null);
+  assert.equal(getProviderConfig().baseUrl, "");
+  savePresetSetting("baseUrl", "http://localhost:11434/v1");
+  assert.equal(getProviderConfig().baseUrl, "http://localhost:11434/v1");
+
+  saveProviderProfile("openrouter");
+  assert.equal(getProviderProfile(), "openrouter");
+  assert.equal(getProviderConfig().kind, "openrouter");
 });
 
 test("agent request timeout defaults, clamps, and persists", (t) => {
@@ -269,9 +336,59 @@ test("custom provider validation fails before a network request and errors omit 
   await assert.rejects(
     runCanvasAgent(start(), options),
     (error) =>
-      /Provider request failed \(401\)/.test(error.message) &&
+      /Provider \([^)]*\) request failed \(401\)/.test(error.message) &&
       !error.message.includes("secret-key"),
   );
+});
+
+test("connection tests report success, provider details, and timeouts", async (t) => {
+  let reply = response({ content: "OK" });
+  let requested;
+  t.mock.method(globalThis, "fetch", async (url, request) => {
+    requested = {
+      url: String(url),
+      body: JSON.parse(request.body),
+      headers: request.headers,
+    };
+    return reply;
+  });
+  const ok = await testProviderConnection(custom());
+  assert.equal(ok.ok, true);
+  assert.equal(ok.status, 200);
+  assert.match(ok.detail, /replied/);
+  assert.equal(requested.url, "https://api.example.com/v1/chat/completions");
+  assert.equal(requested.body.model, "custom-model");
+  assert.equal(
+    requested.body.messages[0].content,
+    "Reply with the single word OK.",
+  );
+  assert.equal(requested.headers.Authorization, "Bearer custom-key");
+
+  reply = new Response(
+    JSON.stringify({
+      detail: "The model has been retired; key custom-key was rejected.",
+    }),
+    { status: 410 },
+  );
+  const retired = await testProviderConnection(custom());
+  assert.equal(retired.ok, false);
+  assert.equal(retired.status, 410);
+  assert.match(retired.detail, /retired/);
+  assert.match(retired.detail, /\[redacted\]/);
+  assert.ok(!retired.detail.includes("custom-key"));
+
+  t.mock.restoreAll();
+  t.mock.method(
+    globalThis,
+    "fetch",
+    (_url, { signal }) =>
+      new Promise((_, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason));
+      }),
+  );
+  const timedOut = await testProviderConnection(custom(), { timeoutMs: 10 });
+  assert.equal(timedOut.ok, false);
+  assert.match(timedOut.detail, /No response within/);
 });
 
 test("custom connection failures explain CORS while cancellation stays cancellable", async (t) => {

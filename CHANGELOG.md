@@ -22,6 +22,18 @@ released version and date. Keep validation evidence in the
   character replies, a 90-second per-request deadline, and caller cancellation.
   Malformed calls end the turn; rejected calls return bounded feedback for
   repair; the third identical rejected edit ends the turn.
+- Add named OpenAI-compatible provider presets for NVIDIA NIM, Groq, Together
+  AI, Mistral AI, and DeepSeek. Each keeps its own base URL, API key, model, and
+  tools flag, so switching endpoints cannot send one provider's key to another;
+  the custom endpoint remains available for anything else.
+- Replace the retired NVIDIA example model with a current catalog entry after
+  the preset pointed users at a model that returns HTTP 410.
+- Add **Test connection** in Settings. It sends one small message and reports
+  latency, HTTP status, the provider's error detail, or a timeout, so retired
+  models and unreachable endpoints no longer wait for the turn deadline.
+- Raise the provider prompt cap to a separate 256 KiB limit. The old 16 KiB
+  runtime-frame limit included a ~3 KiB tool schema and rejected ordinary
+  canvases and history before any request was sent; runtime RPC stays at 16 KiB.
 - Raise the default per-request agent deadline from 90 to 180 seconds and make
   it configurable in Settings (30–600 seconds), so slow free models are not cut
   off mid-generation. The timeout error now points to the setting.
