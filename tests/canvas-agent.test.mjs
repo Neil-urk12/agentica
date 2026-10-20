@@ -10,7 +10,10 @@ import {
   canvasToolSupport,
   runCanvasAgent,
 } from "../apps/desktop/src/lib/openrouter.ts";
-import { BUDGET } from "../apps/desktop/src/lib/canvas-harness.ts";
+import {
+  BUDGET,
+  agentProgressLabel,
+} from "../apps/desktop/src/lib/canvas-harness.ts";
 
 const id = (n) => `20000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const context = {
@@ -500,7 +503,8 @@ test("round exhaustion keeps staged edits as a partial proposal, or fails when n
   mock.mock.restore();
   t.mock.method(globalThis, "fetch", async () =>
     result(null, [
-      tool(++calls, { op: "updateText", nodeId: id(99), text: "No" }),
+      // Each rejected call differs, so the request limit is what ends the turn.
+      tool(++calls, { op: "updateText", nodeId: id(99), text: `No ${calls}` }),
     ]),
   );
   await assert.rejects(runCanvasAgent(start(), options()), /8-request limit/);
@@ -688,4 +692,120 @@ test("canvas text cannot close the untrusted data block", async (t) => {
 test("provider failures keep the canvas untouched", async (t) => {
   t.mock.method(globalThis, "fetch", async () => ({ ok: false, status: 503 }));
   await assert.rejects(runCanvasAgent(start(), options()), /503/);
+});
+
+test("progress reports each request, staged edit, and rejection", async (t) => {
+  let requests = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    requests += 1;
+    if (requests === 1)
+      return result(null, [
+        tool(1, { op: "updateText", nodeId: id(1), text: "Staged" }),
+        tool(2, { op: "updateText", nodeId: id(99), text: "Outside" }),
+      ]);
+    return result("Review the staged edit.");
+  });
+  const progress = [];
+  await runCanvasAgent(start(), {
+    ...options(),
+    onProgress: (entry) => progress.push(entry),
+  });
+  assert.deepEqual(progress[0], {
+    requests: 1,
+    maxRequests: 8,
+    stagedEdits: 0,
+    rejectedToolCalls: 0,
+    toolsEnabled: true,
+  });
+  assert.ok(
+    progress.some(
+      (entry) => entry.stagedEdits === 1 && entry.rejectedToolCalls === 1,
+    ),
+  );
+  assert.deepEqual(progress.at(-1), {
+    requests: 2,
+    maxRequests: 8,
+    stagedEdits: 1,
+    rejectedToolCalls: 1,
+    toolsEnabled: true,
+  });
+});
+
+test("progress labels stay compact and distinguish staged from rejected calls", () => {
+  const progress = (overrides) => ({
+    requests: 1,
+    maxRequests: 8,
+    stagedEdits: 0,
+    rejectedToolCalls: 0,
+    toolsEnabled: true,
+    ...overrides,
+  });
+  assert.equal(
+    agentProgressLabel(progress({})),
+    "Request 1 of 8 · 0 edits staged",
+  );
+  assert.equal(
+    agentProgressLabel(progress({ requests: 2, stagedEdits: 1 })),
+    "Request 2 of 8 · 1 edit staged",
+  );
+  assert.equal(
+    agentProgressLabel(progress({ stagedEdits: 3, rejectedToolCalls: 2 })),
+    "Request 1 of 8 · 3 edits staged · 2 rejected",
+  );
+  assert.equal(
+    agentProgressLabel(progress({ toolsEnabled: false })),
+    "Request 1 of 8",
+  );
+  assert.ok(
+    agentProgressLabel(progress({ requests: 12 })).startsWith("Request 8 of 8"),
+  );
+});
+
+test("too many calls in one response end the turn", async (t) => {
+  t.mock.method(globalThis, "fetch", async () =>
+    result(
+      null,
+      Array.from({ length: BUDGET.perResponse + 1 }, (_, n) =>
+        tool(n + 1, { op: "updateText", nodeId: id(1), text: `Edit ${n}` }),
+      ),
+    ),
+  );
+  await assert.rejects(
+    runCanvasAgent(start(), options()),
+    /at most 16 are allowed/,
+  );
+});
+
+test("the third identical rejected edit ends the turn and keeps earlier staged edits", async (t) => {
+  let requests = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    requests += 1;
+    if (requests === 1)
+      return result(null, [
+        tool(1, { op: "updateText", nodeId: id(1), text: "Kept" }),
+      ]);
+    // Repeating a call within one response counts once.
+    return result(null, [
+      tool(requests * 10, { op: "updateText", nodeId: id(99), text: "Again" }),
+      tool(requests * 10 + 1, {
+        op: "updateText",
+        nodeId: id(99),
+        text: "Again",
+      }),
+    ]);
+  });
+  const response = await runCanvasAgent(start(), options());
+  assert.equal(requests, 4, "rejections in responses 2, 3, and 4");
+  assert.equal(response.partial, "repeatedRejections");
+  assert.equal(response.operations.length, 1);
+  assert.match(response.reply, /repeated rejected edit limit/);
+  t.mock.method(globalThis, "fetch", async () =>
+    result(null, [
+      tool(++requests, { op: "updateText", nodeId: id(99), text: "x" }),
+    ]),
+  );
+  await assert.rejects(
+    runCanvasAgent(start(), options()),
+    /repeated the same rejected canvas edit 3 times/,
+  );
 });

@@ -12,6 +12,19 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-22
 
+#### Live harness progress and two more turn guards
+
+- Report harness progress while a turn generates: the composer shows the
+  current request, the staged edit count, and rejected calls (for example
+  "Request 2 of 8 · 1 edit staged · 1 rejected"). `runCanvasTurn` takes an
+  `onProgress` callback and the progress clears when the turn ends.
+- Add two limits to the harness budget: at most 16 tool calls per response,
+  and a stop when the model repeats an identical rejected call for the third
+  time (repeats inside one response count once). Both end the turn like the
+  other budgets, so edits staged earlier stay a partial proposal.
+- Tests cover progress events, the label, both new limits, and keep the
+  existing tool-call and request limits reachable.
+
 - Added native git pre-commit hooks via `.githooks/pre-commit` and configured
   `core.hooksPath` via `pnpm prepare`. Hooks execute fast checks (`oxfmt`,
   `oxlint`, and `cargo fmt`) to catch formatting and lint errors before commit.

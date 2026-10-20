@@ -2485,6 +2485,14 @@ span.card-more {
   color: var(--ink);
 }
 
+.composer__progress {
+  margin: 0;
+  font-size: var(--type-meta);
+  line-height: 1.4;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
 .composer__row {
   display: flex;
   align-items: flex-end;

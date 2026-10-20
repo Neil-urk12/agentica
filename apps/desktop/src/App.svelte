@@ -58,6 +58,10 @@
     type SettingsSection,
   } from "./lib/components/Settings.svelte";
   import { runCanvasAgent, canvasToolSupport } from "./lib/openrouter";
+  import {
+    agentProgressLabel,
+    type CanvasAgentProgress,
+  } from "./lib/canvas-harness";
   import { getProviderConfig, validateProvider } from "./lib/provider";
   import WorkspacePicker from "./lib/components/WorkspacePicker.svelte";
   import CanvasPicker from "./lib/components/CanvasPicker.svelte";
@@ -205,6 +209,7 @@
   let tool = $state<Tool>("select");
   let toolbarOpen = $state(false);
   let generating = $state(false);
+  let agentProgress = $state<CanvasAgentProgress | null>(null);
   let promptError = $state("");
   let toolsNotice = $state("");
   let conversationAbort: AbortController | undefined;
@@ -671,6 +676,7 @@
       : ("canvas" as const);
     let turnId: string | undefined;
     promptError = "";
+    agentProgress = null;
     generating = true;
     const controller = new AbortController();
     conversationAbort = controller;
@@ -717,6 +723,7 @@
         signal: controller.signal,
         tools,
         provider,
+        onProgress: (progress) => (agentProgress = progress),
         read: (nodeIds) =>
           editor.readConversation({
             ...origin,
@@ -757,6 +764,7 @@
       return !!turnId;
     } finally {
       generating = false;
+      agentProgress = null;
       if (conversationAbort === controller) conversationAbort = undefined;
     }
   }
@@ -2378,6 +2386,9 @@
           <Composer
             {toolbarOpen}
             loading={generating}
+            progress={generating && agentProgress
+              ? agentProgressLabel(agentProgress)
+              : ""}
             disabled={!connected ||
               !editorState.document ||
               !!activeTurn ||

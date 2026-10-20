@@ -48,6 +48,12 @@ must fit the existing size limits; oversized requests fail visibly without
 truncation. If saving a generated response fails, keep the canvas open to retry
 or copy the response for recovery. Basic manual editing needs no AI account.
 
+While a turn runs, the composer reports the current request (for example,
+"Request 2 of 8"), how many edits are staged, and any rejected calls. Besides
+its request, tool-call, size, and time limits, the harness accepts at most 16
+tool calls per response and ends the turn when the model repeats the same
+rejected edit a third time; edits staged before then remain a partial proposal.
+
 ## Project groups and native sessions
 
 Choose **Open project** to place an existing folder on the canvas as a project

@@ -16,6 +16,10 @@ import {
 export const BUDGET = Object.freeze({
   rounds: 8,
   toolCalls: 32,
+  /** Tool calls the model may request in one response. */
+  perResponse: 16,
+  /** Identical rejected calls tolerated before the turn stops. */
+  repeatedRejections: 3,
   requestBytes: 128 * 1024,
   toolArgBytes: 16 * 1024,
   ms: 120_000,
@@ -24,10 +28,32 @@ export type Budget = typeof BUDGET;
 const BUDGET_NAMES: Record<keyof Budget, string> = {
   rounds: "model request",
   toolCalls: "tool call",
+  perResponse: "tool calls per response",
+  repeatedRejections: "repeated rejected edit",
   requestBytes: "request size",
   toolArgBytes: "tool argument size",
   ms: "time",
 };
+
+/** Live counters shown while a turn generates. */
+export interface CanvasAgentProgress {
+  requests: number;
+  maxRequests: number;
+  stagedEdits: number;
+  rejectedToolCalls: number;
+  toolsEnabled: boolean;
+}
+
+/** One compact line for the composer, for example "Request 2 of 8 · 1 edit staged". */
+export function agentProgressLabel(progress: CanvasAgentProgress): string {
+  const request = `Request ${Math.min(progress.requests, progress.maxRequests)} of ${progress.maxRequests}`;
+  if (!progress.toolsEnabled) return request;
+  const edits = `${progress.stagedEdits} ${progress.stagedEdits === 1 ? "edit" : "edits"} staged`;
+  const rejected = progress.rejectedToolCalls
+    ? ` · ${progress.rejectedToolCalls} rejected`
+    : "";
+  return `${request} · ${edits}${rejected}`;
+}
 
 /** Read rejections the model caused and can recover from; anything else ends the turn. */
 const MODEL_READ_ERRORS = new Set([
@@ -63,6 +89,8 @@ export type HarnessDeps = {
   post(body: string, signal: AbortSignal): Promise<ChatReply>;
   read(nodeIds: string[]): Promise<RuntimeResult<"conversation.read">>;
   budget?: Budget;
+  /** Called whenever a request starts or an edit is staged or rejected. */
+  onProgress?: (progress: CanvasAgentProgress) => void;
 };
 
 export type TurnResult = {
@@ -145,10 +173,24 @@ export async function runCanvasTurn(
   let lastToolError = "";
   let lastText = "";
   const callIds = new Set<string>();
+  let requests = 0;
+  let rejectedToolCalls = 0;
+  /** Identical rejected calls, keyed by tool name and arguments. */
+  const rejections = new Map<string, number>();
+  const report = () =>
+    deps.onProgress?.({
+      requests,
+      maxRequests: budget.rounds,
+      stagedEdits: operations.length,
+      rejectedToolCalls,
+      toolsEnabled: deps.tools,
+    });
 
   async function loop(): Promise<TurnResult> {
     for (let round = 0; round < budget.rounds; round++) {
       signal.throwIfAborted();
+      requests = round + 1;
+      report();
       const body = JSON.stringify({
         ...deps.request,
         messages,
@@ -205,6 +247,11 @@ export async function runCanvasTurn(
           "toolCalls",
           `The model exceeded its ${budget.toolCalls}-tool-call limit.`,
         );
+      if (calls.length > budget.perResponse)
+        throw new Exhausted(
+          "perResponse",
+          `The model requested ${calls.length} canvas edits in one response; at most ${budget.perResponse} are allowed.`,
+        );
       toolCalls += calls.length;
       if (message.content?.trim()) lastText = message.content.trim();
       messages.push({
@@ -212,6 +259,8 @@ export async function runCanvasTurn(
         content: message.content ?? null,
         tool_calls: calls,
       });
+      // Identical calls in one response are a bad batch, not a retry loop.
+      const rejectedThisResponse = new Set<string>();
       for (const call of calls) {
         signal.throwIfAborted();
         if (
@@ -229,10 +278,26 @@ export async function runCanvasTurn(
             "The model returned an invalid or unsupported tool call.",
           );
         callIds.add(call.id);
+        const outcome = (await runTool(call.function)) as { status?: string };
+        if (outcome?.status === "rejected") {
+          rejectedToolCalls += 1;
+          const key = `${call.function.name}\u0000${call.function.arguments}`;
+          if (!rejectedThisResponse.has(key)) {
+            rejectedThisResponse.add(key);
+            const repeats = (rejections.get(key) ?? 0) + 1;
+            rejections.set(key, repeats);
+            if (repeats >= budget.repeatedRejections)
+              throw new Exhausted(
+                "repeatedRejections",
+                `The model repeated the same rejected canvas edit ${repeats} times. Nothing was applied.${lastToolError ? ` Last rejected edit: ${lastToolError}` : ""}`,
+              );
+          }
+        }
+        report();
         messages.push({
           role: "tool",
           tool_call_id: call.id,
-          content: data(await runTool(call.function)),
+          content: data(outcome),
         });
       }
     }

@@ -193,6 +193,7 @@ export async function runCanvasAgent(
     apiKey?: string;
     provider?: ProviderConfig;
     budget?: Budget;
+    onProgress?: HarnessDeps["onProgress"];
   },
 ): Promise<TurnResult> {
   const provider = options.provider
@@ -213,6 +214,7 @@ export async function runCanvasAgent(
     tools: options.tools,
     read: options.read,
     budget: options.budget,
+    onProgress: options.onProgress,
     label: provider?.kind === "custom" ? "Provider" : "OpenRouter",
     request: {
       model: provider?.model ?? start.turn.model,
