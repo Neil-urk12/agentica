@@ -9,10 +9,15 @@
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
   import {
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    MAX_REQUEST_TIMEOUT_SECONDS,
+    MIN_REQUEST_TIMEOUT_SECONDS,
     getProviderConfig,
     getProviderKind,
     getCustomProvider,
+    getRequestTimeoutSeconds,
     saveProviderSetting,
+    saveRequestTimeoutSeconds,
     type ProviderKind,
   } from "../provider";
   import {
@@ -80,6 +85,7 @@
   let providerKind = $state(getProviderKind());
   let custom = $state(getCustomProvider());
   let model = $state(initialProvider.model);
+  let requestTimeout = $state(String(getRequestTimeoutSeconds()));
   let showKey = $state(false);
   let savedMessage = $state("");
   let saveTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -158,6 +164,11 @@
     } catch {
       if (!controller.signal.aborted) check = { result: "unreachable" };
     }
+  }
+
+  function onRequestTimeoutChange(value: string) {
+    requestTimeout = String(saveRequestTimeoutSeconds(value));
+    flashSaved();
   }
 
   function onKeyInput(value: string) {
@@ -504,6 +515,34 @@
                   expects.
                 {:else}Use <code>{DEFAULT_MODEL}</code> for free models, or any model
                   ID listed on OpenRouter.{/if}
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="setting setting--stacked">
+          <span class="setting__icon"><Icon name="timer" size={20} /></span>
+          <div class="setting__text">
+            <h3 id="request-timeout-label">Agent time limit</h3>
+            <div class="setting__body">
+              <input
+                id="request-timeout"
+                aria-labelledby="request-timeout-label"
+                aria-describedby="request-timeout-hint"
+                type="number"
+                min={MIN_REQUEST_TIMEOUT_SECONDS}
+                max={MAX_REQUEST_TIMEOUT_SECONDS}
+                step="10"
+                value={requestTimeout}
+                onchange={(event) =>
+                  onRequestTimeoutChange(event.currentTarget.value)}
+              />
+              <p class="setting__hint" id="request-timeout-hint">
+                Seconds the AI may spend answering one prompt before it stops,
+                between
+                {MIN_REQUEST_TIMEOUT_SECONDS} and {MAX_REQUEST_TIMEOUT_SECONDS}.
+                Defaults to {DEFAULT_REQUEST_TIMEOUT_SECONDS}; slow free models
+                may need more. Edits already proposed are kept for review.
               </p>
             </div>
           </div>

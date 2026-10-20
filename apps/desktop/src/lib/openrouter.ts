@@ -1,11 +1,16 @@
 import type { RuntimeResult } from "@agentica/protocol";
 import {
+  BUDGET,
   runCanvasTurn,
   type Budget,
   type HarnessDeps,
   type TurnResult,
 } from "./canvas-harness.ts";
-import { validateProvider, type ProviderConfig } from "./provider.ts";
+import {
+  getRequestTimeoutMs,
+  validateProvider,
+  type ProviderConfig,
+} from "./provider.ts";
 import { isTauri } from "@tauri-apps/api/core";
 
 export const DEFAULT_MODEL = "openrouter/free";
@@ -199,6 +204,8 @@ export async function runCanvasAgent(
   const provider = options.provider
     ? validateProvider(options.provider)
     : undefined;
+  // The turn's time limit comes from Settings unless a caller fixes a budget.
+  const budget = options.budget ?? { ...BUDGET, ms: getRequestTimeoutMs() };
   const nativeHttp = provider?.kind === "custom" && isTauri();
   const apiKey = (
     provider?.apiKey ??
@@ -213,7 +220,7 @@ export async function runCanvasAgent(
     signal: options.signal,
     tools: options.tools,
     read: options.read,
-    budget: options.budget,
+    budget,
     onProgress: options.onProgress,
     label: provider?.kind === "custom" ? "Provider" : "OpenRouter",
     request: {

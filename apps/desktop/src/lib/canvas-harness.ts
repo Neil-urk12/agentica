@@ -24,7 +24,8 @@ export const BUDGET = Object.freeze({
   toolArgBytes: 16 * 1024,
   ms: 120_000,
 });
-export type Budget = typeof BUDGET;
+/** Every limit is a number, so callers can supply their own values. */
+export type Budget = { readonly [K in keyof typeof BUDGET]: number };
 const BUDGET_NAMES: Record<keyof Budget, string> = {
   rounds: "model request",
   toolCalls: "tool call",
@@ -361,7 +362,7 @@ export async function runCanvasTurn(
     const exhausted = timeout.signal.aborted
       ? new Exhausted(
           "ms",
-          `The agent ran past its ${budget.ms / 1000}-second limit. Ask for a smaller change; nothing was applied.`,
+          `The agent ran past its ${budget.ms / 1000}-second limit. Ask for a smaller change, or raise the agent time limit in Settings > Advanced; nothing was applied.`,
         )
       : error;
     if (!(exhausted instanceof Exhausted)) throw error;

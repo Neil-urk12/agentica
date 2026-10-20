@@ -17,6 +17,47 @@ function stored(key: string, fallback = ""): string {
   }
 }
 
+export const DEFAULT_REQUEST_TIMEOUT_SECONDS = 180;
+export const MIN_REQUEST_TIMEOUT_SECONDS = 30;
+export const MAX_REQUEST_TIMEOUT_SECONDS = 600;
+
+function clampRequestTimeout(seconds: number): number {
+  return Math.min(
+    MAX_REQUEST_TIMEOUT_SECONDS,
+    Math.max(MIN_REQUEST_TIMEOUT_SECONDS, Math.round(seconds)),
+  );
+}
+
+/** Time limit for one agent turn; slow free models often need more. */
+export function getRequestTimeoutSeconds(): number {
+  const raw = stored("requestTimeoutSeconds");
+  if (!raw) return DEFAULT_REQUEST_TIMEOUT_SECONDS;
+  const seconds = Number(raw);
+  return Number.isFinite(seconds)
+    ? clampRequestTimeout(seconds)
+    : DEFAULT_REQUEST_TIMEOUT_SECONDS;
+}
+
+export function getRequestTimeoutMs(): number {
+  return getRequestTimeoutSeconds() * 1000;
+}
+
+/** Persist a clamped limit and return the stored value. Blank resets it. */
+export function saveRequestTimeoutSeconds(value: number | string): number {
+  const text = String(value).trim();
+  const parsed = Number(text);
+  const seconds =
+    text !== "" && Number.isFinite(parsed)
+      ? clampRequestTimeout(parsed)
+      : DEFAULT_REQUEST_TIMEOUT_SECONDS;
+  try {
+    localStorage.setItem("agentica.requestTimeoutSeconds", String(seconds));
+  } catch {
+    // Storage may be unavailable, as with existing provider settings.
+  }
+  return seconds;
+}
+
 export function saveProviderSetting(
   key:
     | "provider"

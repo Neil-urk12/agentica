@@ -12,6 +12,16 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-22
 
+#### Configurable agent time limit
+
+- Raise the canvas agent's turn time limit from 2 minutes to 180 seconds by
+  default and make it adjustable in **Settings > Advanced** (30–600 seconds),
+  so slow free models are not cut off mid-generation. It is stored with the
+  other provider settings, and the time-limit error points to the setting.
+  Edits staged before the limit still become a partial proposal.
+- Tests cover the default, clamping, invalid values, and that a turn uses the
+  stored limit.
+
 #### Live harness progress and two more turn guards
 
 - Report harness progress while a turn generates: the composer shows the

@@ -809,3 +809,30 @@ test("the third identical rejected edit ends the turn and keeps earlier staged e
     /repeated the same rejected canvas edit 3 times/,
   );
 });
+
+test("the turn time limit comes from Settings unless a budget is passed", async (t) => {
+  const storage = new Map([["agentica.requestTimeoutSeconds", "30"]]);
+  const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: { getItem: (key) => storage.get(key) ?? null, setItem() {} },
+  });
+  t.after(() => {
+    if (original) Object.defineProperty(globalThis, "localStorage", original);
+    else delete globalThis.localStorage;
+  });
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  t.mock.method(globalThis, "fetch", hang);
+  const turn = runCanvasAgent(start(), options());
+  let settled = false;
+  turn.then(
+    () => (settled = true),
+    () => (settled = true),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  t.mock.timers.tick(29_999);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false, "the turn is still running before 30 s");
+  t.mock.timers.tick(1);
+  await assert.rejects(turn, /30-second limit.*Settings/);
+});

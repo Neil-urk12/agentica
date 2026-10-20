@@ -53,6 +53,8 @@ While a turn runs, the composer reports the current request (for example,
 its request, tool-call, size, and time limits, the harness accepts at most 16
 tool calls per response and ends the turn when the model repeats the same
 rejected edit a third time; edits staged before then remain a partial proposal.
+The whole turn's time limit defaults to 180 seconds and can be changed in
+**Settings > Advanced > Agent time limit** (30–600 seconds) for slow models.
 
 ## Project groups and native sessions
 
