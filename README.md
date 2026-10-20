@@ -52,7 +52,8 @@ The canvas agent runs inside a fixed harness, so every provider shares the same
 budgets. A turn allows at most eight provider requests and 32 tool calls (16 per
 response) through the one `canvas_edit` tool. Malformed, duplicate, or oversized
 calls end the turn; tool arguments are capped at 16 KiB, replies at 10,000
-characters, and each request has a 90-second deadline. A rejected edit is
+characters, and each request has a 180-second deadline, adjustable in Settings
+between 30 and 600 seconds. A rejected edit is
 returned to the model for correction, and the third identical rejected edit ends
 the turn. Cancel aborts the in-flight request. Nothing is applied until **Apply**.
 While a turn runs, the composer reports the current request (for example,

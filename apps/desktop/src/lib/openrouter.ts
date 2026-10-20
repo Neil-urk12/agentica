@@ -14,7 +14,11 @@ import {
   type HarnessToolDefinition,
 } from "./canvas-harness.ts";
 import { checkedToolOperation, stageOperations } from "./canvas-agent.ts";
-import { validateProvider, type ProviderConfig } from "./provider.ts";
+import {
+  getRequestTimeoutMs,
+  validateProvider,
+  type ProviderConfig,
+} from "./provider.ts";
 import { isTauri } from "@tauri-apps/api/core";
 
 export const DEFAULT_MODEL = "openrouter/free";
@@ -282,6 +286,7 @@ export async function runCanvasAgent(
     toolsEnabled: options.tools,
     signal: options.signal,
     providerLabel: label,
+    limits: { requestTimeoutMs: getRequestTimeoutMs() },
     onEvent: (event) => {
       if (event.type === "request") {
         requests = event.index;

@@ -259,7 +259,8 @@ test("a per-request deadline stops a provider that never answers", async () => {
     ),
   ).catch((failure) => failure);
   assert.equal(error.code, "TIMEOUT");
-  assert.match(error.message, /exceeded 1 seconds without a response/);
+  assert.match(error.message, /exceeded 1 second without a response/);
+  assert.match(error.message, /raise the agent timeout in Settings/);
 });
 
 test("caller cancellation stays an abort and no request is made", async () => {

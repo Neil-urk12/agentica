@@ -5,10 +5,15 @@
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
   import {
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    MAX_REQUEST_TIMEOUT_SECONDS,
+    MIN_REQUEST_TIMEOUT_SECONDS,
     getProviderConfig,
     getProviderKind,
     getCustomProvider,
+    getRequestTimeoutSeconds,
     saveProviderSetting,
+    saveRequestTimeoutSeconds,
     type ProviderKind,
   } from "../provider";
   import {
@@ -58,6 +63,7 @@
   let providerKind = $state(getProviderKind());
   let custom = $state(getCustomProvider());
   let model = $state(initialProvider.model);
+  let requestTimeout = $state(String(getRequestTimeoutSeconds()));
   let showKey = $state(false);
   let savedMessage = $state("");
   let saveTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -81,6 +87,11 @@
     model = value;
     if (providerKind === "custom") saveProviderSetting("customModel", value);
     else setOpenRouterModel(value);
+    flashSaved();
+  }
+
+  function onRequestTimeoutChange(value: string) {
+    requestTimeout = String(saveRequestTimeoutSeconds(value));
     flashSaved();
   }
 
@@ -278,6 +289,32 @@
               free models).
             </p>{/if}
         </div>
+      </div>
+    </section>
+
+    <section class="setting setting--stacked">
+      <span class="setting__icon"><Icon name="timer" size={20} /></span>
+      <div class="setting__text">
+        <h2 id="request-timeout-label">Agent request timeout</h2>
+        <p>How long to wait for one model response before stopping the turn.</p>
+        <div class="setting__body">
+          <input
+            id="request-timeout"
+            aria-labelledby="request-timeout-label"
+            type="number"
+            min={MIN_REQUEST_TIMEOUT_SECONDS}
+            max={MAX_REQUEST_TIMEOUT_SECONDS}
+            step="10"
+            value={requestTimeout}
+            onchange={(event) =>
+              onRequestTimeoutChange(event.currentTarget.value)}
+          />
+        </div>
+        <p class="setting__hint">
+          Seconds between {MIN_REQUEST_TIMEOUT_SECONDS} and
+          {MAX_REQUEST_TIMEOUT_SECONDS}. Defaults to
+          {DEFAULT_REQUEST_TIMEOUT_SECONDS}; slow free models may need more.
+        </p>
       </div>
     </section>
 

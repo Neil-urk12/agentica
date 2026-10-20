@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  DEFAULT_REQUEST_TIMEOUT_SECONDS,
+  MAX_REQUEST_TIMEOUT_SECONDS,
+  MIN_REQUEST_TIMEOUT_SECONDS,
   getProviderConfig,
   getCustomProvider,
+  getRequestTimeoutMs,
+  getRequestTimeoutSeconds,
   saveProviderSetting,
+  saveRequestTimeoutSeconds,
   validateProvider,
 } from "../apps/desktop/src/lib/provider.ts";
 import {
@@ -63,6 +69,41 @@ test("provider settings preserve separate credentials and models when switching"
   assert.equal(getProviderConfig().apiKey, "router-key");
   assert.equal(getProviderConfig().model, "router-model");
   assert.equal(getCustomProvider().apiKey, "custom-key");
+});
+
+test("agent request timeout defaults, clamps, and persists", (t) => {
+  assert.equal(DEFAULT_REQUEST_TIMEOUT_SECONDS, 180);
+  assert.equal(MIN_REQUEST_TIMEOUT_SECONDS, 30);
+  assert.equal(MAX_REQUEST_TIMEOUT_SECONDS, 600);
+  const storage = new Map();
+  const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key) => storage.get(key) ?? null,
+      setItem: (key, value) => storage.set(key, value),
+    },
+  });
+  t.after(() => {
+    if (original) Object.defineProperty(globalThis, "localStorage", original);
+    else delete globalThis.localStorage;
+  });
+  assert.equal(getRequestTimeoutSeconds(), DEFAULT_REQUEST_TIMEOUT_SECONDS);
+  assert.equal(getRequestTimeoutMs(), DEFAULT_REQUEST_TIMEOUT_SECONDS * 1000);
+  assert.equal(saveRequestTimeoutSeconds("45"), 45);
+  assert.equal(getRequestTimeoutSeconds(), 45);
+  assert.equal(saveRequestTimeoutSeconds("5"), MIN_REQUEST_TIMEOUT_SECONDS);
+  assert.equal(saveRequestTimeoutSeconds("9999"), MAX_REQUEST_TIMEOUT_SECONDS);
+  assert.equal(
+    saveRequestTimeoutSeconds("not-a-number"),
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
+  );
+  assert.equal(
+    saveRequestTimeoutSeconds("  "),
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
+  );
+  storage.set("agentica.requestTimeoutSeconds", "corrupt");
+  assert.equal(getRequestTimeoutSeconds(), DEFAULT_REQUEST_TIMEOUT_SECONDS);
 });
 
 test("provider validation normalizes base paths and rejects unsafe or incomplete settings", () => {

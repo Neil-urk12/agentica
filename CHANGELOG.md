@@ -22,6 +22,9 @@ released version and date. Keep validation evidence in the
   character replies, a 90-second per-request deadline, and caller cancellation.
   Malformed calls end the turn; rejected calls return bounded feedback for
   repair; the third identical rejected edit ends the turn.
+- Raise the default per-request agent deadline from 90 to 180 seconds and make
+  it configurable in Settings (30–600 seconds), so slow free models are not cut
+  off mid-generation. The timeout error now points to the setting.
 - Show live harness progress in the composer while a turn generates: the
   current request, staged edit count, and rejected calls. It updates from harness
   events and clears when the turn ends or is cancelled.
