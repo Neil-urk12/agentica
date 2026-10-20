@@ -250,6 +250,52 @@ test("the agent stages multi-round tools, returns generated IDs, and includes re
   assert.equal(requests.length, 3);
 });
 
+test("the canvas agent reports live request, staged-edit, and rejection progress", async (t) => {
+  let requests = 0;
+  t.mock.method(globalThis, "fetch", async (_url, request) => {
+    const body = JSON.parse(request.body);
+    requests++;
+    if (requests === 1)
+      return result(null, [
+        tool(1, { op: "updateText", nodeId: id(1), text: "Staged" }),
+        tool(2, { op: "updateText", nodeId: id(99), text: "Outside" }),
+      ]);
+    assert.equal(
+      JSON.parse(body.messages.at(-1).content).status,
+      "rejected",
+      "the invalid call still reaches the model as feedback",
+    );
+    return result("Review the staged edit.");
+  });
+  const progress = [];
+  await runCanvasAgent(start(), {
+    ...options(),
+    onProgress: (entry) => progress.push(entry),
+  });
+  assert.deepEqual(progress[0], {
+    requests: 1,
+    maxRequests: 8,
+    stagedEdits: 0,
+    rejectedToolCalls: 0,
+    toolsEnabled: true,
+  });
+  assert.ok(
+    progress.some(
+      (entry) =>
+        entry.requests === 1 &&
+        entry.stagedEdits === 1 &&
+        entry.rejectedToolCalls === 1,
+    ),
+  );
+  assert.deepEqual(progress.at(-1), {
+    requests: 2,
+    maxRequests: 8,
+    stagedEdits: 1,
+    rejectedToolCalls: 1,
+    toolsEnabled: true,
+  });
+});
+
 test("text-only models retain conversation replies and never receive canvas tools", async (t) => {
   t.mock.method(globalThis, "fetch", async (url, request) => {
     if (String(url).endsWith("/models"))

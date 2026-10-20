@@ -16,6 +16,8 @@
     /** What the next request actually transmits. */
     details?: string[];
     notice?: string;
+    /** Live generation counters, such as "Request 2 of 8 · 1 edit staged". */
+    progress?: string;
     onCancel?: () => void;
   }
 
@@ -30,6 +32,7 @@
     provider = "",
     details = [],
     notice = "",
+    progress = "",
     onCancel,
   }: Props = $props();
 
@@ -80,6 +83,9 @@
       </ul>
       {#if notice}<p>{notice}</p>{/if}
     </div>
+  {/if}
+  {#if loading && progress}
+    <p class="composer__progress" aria-live="polite">{progress}</p>
   {/if}
   <div class="composer__row">
     <button

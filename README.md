@@ -48,6 +48,16 @@ must fit the existing size limits; oversized requests fail visibly without
 truncation. If saving a generated response fails, keep the canvas open to retry
 or copy the response for recovery. Basic manual editing needs no AI account.
 
+The canvas agent runs inside a fixed harness, so every provider shares the same
+budgets. A turn allows at most eight provider requests and 32 tool calls (16 per
+response) through the one `canvas_edit` tool. Malformed, duplicate, or oversized
+calls end the turn; tool arguments are capped at 16 KiB, replies at 10,000
+characters, and each request has a 90-second deadline. A rejected edit is
+returned to the model for correction, and the third identical rejected edit ends
+the turn. Cancel aborts the in-flight request. Nothing is applied until **Apply**.
+While a turn runs, the composer reports the current request (for example,
+"Request 2 of 8"), how many edits are staged, and any rejected calls.
+
 ## Project groups and native sessions
 
 Choose **Open project** to place an existing folder on the canvas as a project

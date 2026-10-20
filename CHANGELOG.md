@@ -10,6 +10,24 @@ released version and date. Keep validation evidence in the
 
 ## Unreleased
 
+### 2026-10-21
+
+#### Bound the canvas agent behind an explicit harness
+
+- Extract the canvas agent loop from the OpenRouter adapter into
+  `apps/desktop/src/lib/canvas-harness.ts`. A provider now only translates one
+  request into a completion, so adding a provider cannot bypass a limit.
+- Enforce per turn: eight provider requests, 32 tool calls, at most 16 calls per
+  response, one `canvas_edit` tool, unique call IDs, 16 KiB arguments, 10,000
+  character replies, a 90-second per-request deadline, and caller cancellation.
+  Malformed calls end the turn; rejected calls return bounded feedback for
+  repair; the third identical rejected edit ends the turn.
+- Show live harness progress in the composer while a turn generates: the
+  current request, staged edit count, and rejected calls. It updates from harness
+  events and clears when the turn ends or is cancelled.
+- Add `tests/agent-harness.test.mjs` covering each guard rail against a fake
+  provider. Existing canvas tool, provider, and request-limit tests still pass.
+
 ### 2026-10-19
 
 - Move session attention out of the canvas zoom controls into a top-bar
