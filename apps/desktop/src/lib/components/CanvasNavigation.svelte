@@ -6,6 +6,11 @@
     zoom: number;
     canFocus: boolean;
     disabled?: boolean;
+    canUndo: boolean;
+    canRedo: boolean;
+    apple: boolean;
+    onUndo: () => void;
+    onRedo: () => void;
     onZoom: (factor: number) => void;
     onReset: () => void;
     onFit: () => void;
@@ -15,12 +20,19 @@
     zoom,
     canFocus,
     disabled = false,
+    canUndo,
+    canRedo,
+    apple,
+    onUndo,
+    onRedo,
     onZoom,
     onReset,
     onFit,
     onFocus,
   }: Props = $props();
   const percent = $derived(Math.round(zoom * 100));
+  const undoKeys = $derived(apple ? "⌘Z" : "Ctrl+Z");
+  const redoKeys = $derived(apple ? "⇧⌘Z" : "Ctrl+Y");
 </script>
 
 <div
@@ -29,6 +41,24 @@
   aria-label="Canvas navigation"
   aria-orientation="vertical"
 >
+  <button
+    class="canvas-nav__btn"
+    type="button"
+    title={`Undo (${undoKeys})`}
+    aria-label="Undo"
+    aria-keyshortcuts={apple ? "Meta+Z" : "Control+Z"}
+    disabled={disabled || !canUndo}
+    onclick={onUndo}><Icon name="undo" size={18} /></button
+  >
+  <button
+    class="canvas-nav__btn canvas-nav__btn--group-end"
+    type="button"
+    title={`Redo (${redoKeys})`}
+    aria-label="Redo"
+    aria-keyshortcuts={apple ? "Shift+Meta+Z" : "Control+Y Control+Shift+Z"}
+    disabled={disabled || !canRedo}
+    onclick={onRedo}><Icon name="redo" size={18} /></button
+  >
   <button
     class="canvas-nav__btn"
     type="button"

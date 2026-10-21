@@ -42,6 +42,14 @@ Prompts and replies remain editable canvas text: double-click or focus the text
 and press Enter to edit it. Escape or Ctrl/Cmd+Enter ends editing. Text and
 geometric shapes can be moved and resized with selection controls.
 
+**Undo** and **Redo** (Ctrl+Z and Ctrl+Y or Ctrl+Shift+Z; ⌘Z and ⇧⌘Z on macOS)
+reverse moves, resizes, and text edits on the open canvas. A whole drag or a
+burst of typing is one step, and undone changes are autosaved like any other
+edit. While a text field has focus, the shortcuts use that field's own undo.
+Creating, deleting, connecting, applied proposals, and panning or zooming are
+not undoable. History belongs to the open canvas and is cleared when you leave
+it; a step for an object deleted since is skipped.
+
 Proposed changes use dashed outlines and a **Proposed** label. Choose **Apply**
 beside the reply to commit the whole proposal, or **Discard** to keep the reply
 without changing existing objects. Pending proposals survive reopening; changed

@@ -2111,6 +2111,149 @@ test("dragging a reopened canvas pans from its saved viewport", async () => {
   }
 });
 
+test("Ctrl+Z undoes an accidental drag in the rendered app and saves it", async () => {
+  const backend = await startBackend();
+  key = backend.connectionKey;
+  let browser;
+  const rpc = async (method, params) => {
+    const reply = await send(port, {
+      body: JSON.stringify({
+        protocolVersion: 1,
+        id: crypto.randomUUID(),
+        method,
+        params,
+      }),
+    });
+    assert.equal(reply.status, 200);
+    const response = RuntimeResponseSchema.parse(JSON.parse(reply.text));
+    assert.equal(response.error, undefined, JSON.stringify(response));
+    return ResultSchemas[method].parse(response.result);
+  };
+  try {
+    const { workspace } = await rpc("workspace.create", {
+      name: "Undo history",
+    });
+    const { canvas } = await rpc("canvas.create", {
+      workspaceId: workspace.id,
+      title: "Undo canvas",
+    });
+    const reference = { workspaceId: workspace.id, canvasId: canvas.id };
+    const { node } = await rpc("node.createText", {
+      ...reference,
+      expectedRevision: 1,
+      x: 120,
+      y: 120,
+      width: 240,
+      height: 160,
+      text: "Move me",
+    });
+    const savedX = async () =>
+      (await rpc("canvas.open", reference)).nodes.find(
+        (item) => item.id === node.id,
+      ).x;
+
+    browser = await launchBrowser();
+    await browser.send(
+      "Page.navigate",
+      { url: `http://127.0.0.1:${port}/` },
+      browser.sessionId,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('#connection-key')`,
+      "the connection form",
+    );
+    await evaluate(
+      browser,
+      `(() => { const input = document.querySelector('#connection-key'); input.value = ${JSON.stringify(key)}; input.dispatchEvent(new Event('input', { bubbles: true })); })()`,
+    );
+    await clickAt(
+      browser,
+      await boxOf(browser, ".connbar button[type='submit']"),
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('.connbar--ok')`,
+      "the connected status",
+    );
+    for (const label of ["Undo history", "Undo canvas"]) {
+      const card = `[...document.querySelectorAll('.cards .card')].find((item) => item.textContent.includes(${JSON.stringify(label)}))`;
+      await waitFor(
+        browser,
+        `${card} && !(${card}).disabled`,
+        `the ${label} card`,
+      );
+      await evaluate(
+        browser,
+        `(${card}).focus(); (${card}).scrollIntoView({ block: 'center' })`,
+      );
+      await clickAt(browser, await boxByText(browser, ".cards .card", label));
+    }
+    const nodeSelector = `.svelte-flow__node[data-id="${node.id}"]`;
+    await waitFor(
+      browser,
+      `document.querySelector(${JSON.stringify(nodeSelector)})?.getBoundingClientRect().height > 0 && document.querySelector(${JSON.stringify(nodeSelector)}).classList.contains('draggable')`,
+      "the note to render and become draggable",
+    );
+    assert.equal(
+      await evaluate(
+        browser,
+        `document.querySelector('[aria-label="Undo"]').disabled`,
+      ),
+      true,
+      "nothing to undo yet",
+    );
+    const start = await boxOf(browser, nodeSelector);
+    await dragBetween(browser, start, { x: start.x + 150, y: start.y + 60 });
+    const moved = await boxOf(browser, nodeSelector);
+    // The first pointer step only crosses the drag threshold.
+    assert.ok(moved.x - start.x > 100, JSON.stringify({ start, moved }));
+    const movedX = Math.round(120 + moved.x - start.x);
+    const deadline = Date.now() + 5000;
+    while ((await savedX()) === 120 && Date.now() < deadline) await delay(50);
+    assert.ok(Math.abs((await savedX()) - movedX) < 2, "the drag autosaves");
+
+    // Focus the canvas, not a text field, then press Ctrl+Z.
+    await evaluate(browser, `document.activeElement?.blur()`);
+    for (const type of ["keyDown", "keyUp"])
+      await browser.send(
+        "Input.dispatchKeyEvent",
+        {
+          type,
+          key: "z",
+          code: "KeyZ",
+          windowsVirtualKeyCode: 90,
+          modifiers: 2,
+        },
+        browser.sessionId,
+      );
+    await waitFor(
+      browser,
+      `Math.abs(document.querySelector(${JSON.stringify(nodeSelector)}).getBoundingClientRect().left + document.querySelector(${JSON.stringify(nodeSelector)}).getBoundingClientRect().width / 2 - ${start.x}) < 2`,
+      "the note to return to its original place",
+    );
+    const undoDeadline = Date.now() + 5000;
+    while ((await savedX()) !== 120 && Date.now() < undoDeadline)
+      await delay(50);
+    assert.equal(await savedX(), 120, "the undo is saved");
+
+    // The Redo button moves it back.
+    await clickAt(browser, await boxOf(browser, '[aria-label="Redo"]'));
+    await waitFor(
+      browser,
+      `Math.abs(document.querySelector(${JSON.stringify(nodeSelector)}).getBoundingClientRect().left + document.querySelector(${JSON.stringify(nodeSelector)}).getBoundingClientRect().width / 2 - ${moved.x}) < 2`,
+      "the note to move again on redo",
+    );
+  } catch (error) {
+    if (browser)
+      error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({text:document.body.innerText.slice(-1000)})")}`;
+    throw error;
+  } finally {
+    await browser?.close();
+    await stopBackend(backend.child);
+  }
+});
+
 test("picked files are copied, previewed, and shared with the next prompt", async () => {
   const backend = await startBackend();
   key = backend.connectionKey;
