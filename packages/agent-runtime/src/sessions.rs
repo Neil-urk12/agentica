@@ -1020,6 +1020,29 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
+    fn a_process_that_escapes_the_session_does_not_block_stop() {
+        let root = tempfile::tempdir().unwrap();
+        let supervisor = Active(SessionSupervisor::new().unwrap());
+        let mut spec = shell(root.path());
+        spec.executable = "/bin/bash".into();
+        // setsid leaves the session cleanup signals but keeps the terminal open.
+        spec.argv = vec!["-c".into(), "setsid -f sleep 3; sleep 30".into()];
+        let status = supervisor.0.start(spec.clone(), "escaped", 24, 80).unwrap();
+        running(&supervisor.0, &spec.owner);
+        thread::sleep(std::time::Duration::from_millis(300));
+        supervisor
+            .0
+            .request_stop(&spec.owner, &status.session_id)
+            .unwrap();
+        let exit = supervisor
+            .0
+            .wait_stopped(&spec.owner, &status.session_id)
+            .unwrap();
+        assert_eq!(exit.state, ProcessState::Exited);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
     fn exited_status_includes_all_final_output_pages() {
         let root = tempfile::tempdir().unwrap();
         let supervisor = Active(SessionSupervisor::new().unwrap());

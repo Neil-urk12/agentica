@@ -96,6 +96,10 @@ released version and date. Keep validation evidence in the
   16 KiB request limit. A project and its changed tiles always share one
   request, because the runtime rejects any request that leaves a tile outside
   its project.
+- Stopping a terminal waits at most 500 ms for its final output. A process that
+  left the session (`setsid`) can hold the terminal open after cleanup, which
+  previously kept the tile "Stopping" and blocked restart, delete, and quit.
+  Output arriving after exit is dropped.
 - Redesigned the workspace picker as a full start screen for less technical
   users: one "What are you working on?" name field, saved workspaces as tiles,
   plain-language copy, and a labelled Settings button. Connection details appear
