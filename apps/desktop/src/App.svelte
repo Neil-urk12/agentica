@@ -7,6 +7,7 @@
   import ProjectNode from "./lib/components/ProjectNode.svelte";
   import SessionNode from "./lib/components/SessionNode.svelte";
   import Modal from "./lib/components/Modal.svelte";
+  import ViewportSync from "./lib/components/ViewportSync.svelte";
   import "@xterm/xterm/css/xterm.css";
   import {
     FILE_LIMITS,
@@ -2151,6 +2152,7 @@
             onmove={(_, next) => editor.setViewport(next)}
           >
             <Background patternColor={dark ? "#2c2c30" : "#d9dbe4"} gap={24} />
+            <ViewportSync />
           </SvelteFlow>
         {/key}
 

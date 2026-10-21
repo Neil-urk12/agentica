@@ -150,7 +150,7 @@ it to a clean Windows x86_64 test environment without Node, Rust, or this checko
 
 `pnpm build:backend` now builds the UI at build time and embeds it in the release
 executable using `--features bundled-frontend`. Plain Cargo builds without that
-feature remain RPC-only development builds. The [Linux report](m0-11-linux.md)
+feature remain RPC-only development builds. The Linux M0-11 report (kept outside this repository)
 records executed production checks; it does not establish Windows compatibility.
 
 Copy the production executable out of the checkout and start it with only Windows

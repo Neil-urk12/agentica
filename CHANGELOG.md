@@ -10,6 +10,49 @@ released version and date. Keep validation evidence in the
 
 ## Unreleased
 
+### 2026-10-22
+
+#### Panning starts from the current view
+
+- Fix the first drag after opening a canvas snapping back to the origin.
+  Svelte Flow seeds its d3-zoom pan state only when the pane mounts, before the
+  saved viewport is restored, and later writes to the bound viewport moved the
+  rendered canvas without updating that state. A `ViewportSync` child now keeps
+  d3-zoom in step with the bound viewport, which also fixes drags after the zoom
+  buttons, fit, and jump-to. A rendered browser test covers both cases.
+
+#### Native sessions on Windows
+
+- Run shell and Codex tiles on Windows 10 1809 or later through ConPTY. The
+  shell is PowerShell 7 from PATH, then Windows PowerShell, with a visible
+  `cmd.exe` fallback. Codex resolves through PATH and PATHEXT from absolute
+  directories only; an npm `codex.cmd` launcher runs through `cmd.exe /d /c`
+  with constant arguments, and paths containing `%` or `"` are refused rather
+  than interpolated.
+- Assign each launcher to its own kill-on-close Job Object before it can start
+  other programs. Stop closes the pseudoconsole (the console hangup), waits
+  750 ms, then terminates the job, so windowless descendants with their own
+  console are also stopped. An abrupt backend exit closes the job handle and
+  ends the session's processes.
+- Answer ConPTY's startup cursor-position query in the backend, because the
+  pseudoconsole blocks until it is answered and a tile may not be attached.
+- Launch with the plain form of the canonical project path, since many programs
+  mishandle `\\?\` working directories. Windows reports exit codes only; the
+  exit signal is always empty.
+- Automated tests on Windows 11 cover PowerShell input, resize, restart, job
+  cleanup of a detached child, `cmd.exe` exit codes and final output, and failed
+  launches. Interactive Codex use and the WebSocket integration suite remain
+  Linux-only.
+
+#### Repository upkeep
+
+- Add a GitHub Actions workflow running frontend checks, builds, Rust format and
+  Clippy, and Rust and Node tests on Ubuntu 24.04 and Windows Server 2025.
+- Stop tracking a local agent chat transcript and ignore `freebuff-chat-*.md`.
+- Update the architecture overview to the implemented persistence, sessions,
+  conversations, and file import, and remove links to documents that are not in
+  the repository.
+
 ### 2026-10-21
 
 #### Add images, PDFs, Word documents, and text files to the canvas
@@ -399,7 +442,7 @@ released version and date. Keep validation evidence in the
   validated/authenticated RPC, exact Origin/Host checks, deadlines, key rotation,
   and explicit reconnect remain enforced. Same-origin RPC still requires the key;
   CSP, no-store, nosniff, and no-referrer headers protect the delivered shell.
-- The [Linux M0-11 report](docs/development/m0-11-linux.md) records empty-PATH
+- The Linux M0-11 report (kept outside this repository) records empty-PATH
   delivery from a copied release executable, real browser save/reopen and
   failure/reconnect recovery, and an unsigned Tauri RPM prefix install/run with
   native save/close/relaunch/reopen. RPM is the Fedora prototype format; GTK 3,
@@ -411,7 +454,7 @@ released version and date. Keep validation evidence in the
 #### Progress and validation
 
 - M0-09 interactive Linux validation passes on Fedora 44 x86_64. The
-  [evidence report](docs/development/m0-09-linux.md) records an actual Tauri
+  evidence report (kept outside this repository) records an actual Tauri
   release window and headed browser: text/canvas interaction, autosave/reopen,
   visible storage/transport failures, dirty-window close protection, shutdown,
   abrupt termination, detached tab closure, key rotation, and explicit reconnect.
@@ -500,7 +543,7 @@ released version and date. Keep validation evidence in the
   commands (M0-07), and shared UI editing/autosave/reopen (M0-08) are implemented.
   The writer lock (M0-05) is tested on Linux;
   Windows execution is pending.
-- The [Linux x86_64 verification record](docs/development/verification.md)
+- The Linux x86_64 verification record (kept outside this repository)
   reports passing frontend checks, Rust unit and HTTP integration tests,
   formatting/static checks, release binary builds, browser smoke checks, and
   architecture-diagram checks. These are previously recorded results, not new
@@ -522,7 +565,7 @@ released version and date. Keep validation evidence in the
   Windows execution remains unverified.
 - **M1–M6: Planned.** Artifact editing, Codex integration, PTYs/previews,
   orchestration, recovery/import-export, and public-alpha packaging remain
-  future work. See the [roadmap](ROADMAP.md) for milestone gates.
+  future work.
 
 ### 2026-10-10
 

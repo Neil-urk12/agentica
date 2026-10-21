@@ -43,6 +43,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
