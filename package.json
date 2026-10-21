@@ -10,6 +10,7 @@
     "pnpm": ">=11 <12"
   },
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks || true",
     "dev": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop tauri dev",
     "dev:backend": "cargo run --locked -p agentica-runtime --bin agentica-backend",
     "dev:web": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop dev",

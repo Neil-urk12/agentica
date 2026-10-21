@@ -12,6 +12,9 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-22
 
+- Added native git pre-commit hooks via `.githooks/pre-commit` and configured
+  `core.hooksPath` via `pnpm prepare`. Hooks execute fast checks (`oxfmt`,
+  `oxlint`, and `cargo fmt`) to catch formatting and lint errors before commit.
 - Added a canvas agent harness with runtime-checked reads. Security still rests on
   the runtime: the agent loop runs in the webview, where anything that can run
   code can call `/rpc` directly, so loop checks only give the model fast feedback.
