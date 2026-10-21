@@ -15,6 +15,38 @@ export type CanvasDocument = RuntimeResult<"canvas.open">;
 type Placement = CanvasDocument["nodes"][number];
 type Viewport = CanvasDocument["canvas"]["viewport"];
 type Artifact = CanvasDocument["artifacts"][number];
+type LayoutNode = Pick<Placement, "id" | "x" | "y" | "width" | "height">;
+type LayoutGroup = Pick<
+  ProjectGroup,
+  "id" | "x" | "y" | "width" | "height" | "collapsed"
+>;
+type LayoutTile = Pick<
+  SessionTile,
+  "id" | "projectId" | "x" | "y" | "width" | "height"
+>;
+interface CanvasLayout {
+  viewport: Viewport;
+  nodes: LayoutNode[];
+  projectGroups?: LayoutGroup[];
+  sessionTiles?: LayoutTile[];
+}
+interface CanvasLayoutBatch {
+  nodes: LayoutNode[];
+  projectGroups: LayoutGroup[];
+  sessionTiles: LayoutTile[];
+}
+interface CanvasLayoutChanges extends CanvasLayoutBatch {
+  viewport: boolean;
+}
+const emptyLayoutBatch = (): CanvasLayoutBatch => ({
+  nodes: [],
+  projectGroups: [],
+  sessionTiles: [],
+});
+const layoutHasItems = (batch: CanvasLayoutBatch) =>
+  batch.nodes.length > 0 ||
+  batch.projectGroups.length > 0 ||
+  batch.sessionTiles.length > 0;
 
 /** One drawing to persist: where its node sits and what it contains. */
 export interface DrawingSegment {
@@ -86,7 +118,7 @@ export class Editor {
    * created on the server yet is a draft: `canvas.save` only updates existing
    * nodes, so a pending node is left out until `node.createDrawing` returns.
    */
-  private layout(document: CanvasDocument) {
+  private layout(document: CanvasDocument): CanvasLayout {
     const pending = new Set(
       document.artifacts
         .filter((artifact) => !this.savedArtifacts.has(artifact.id))
@@ -133,6 +165,266 @@ export class Editor {
           }
         : {}),
     };
+  }
+
+  /** Objects whose geometry or viewport differs from the last saved layout. */
+  private layoutChanges(snapshot: CanvasLayout): CanvasLayoutChanges {
+    const saved = JSON.parse(this.savedLayout) as CanvasLayout;
+    const nodes = new Map(saved.nodes.map((node) => [node.id, node]));
+    const groups = new Map(
+      (saved.projectGroups ?? []).map((group) => [group.id, group]),
+    );
+    const tiles = new Map(
+      (saved.sessionTiles ?? []).map((tile) => [tile.id, tile]),
+    );
+    return {
+      viewport:
+        JSON.stringify(snapshot.viewport) !== JSON.stringify(saved.viewport),
+      nodes: snapshot.nodes.filter(
+        (node) => JSON.stringify(nodes.get(node.id)) !== JSON.stringify(node),
+      ),
+      projectGroups: (snapshot.projectGroups ?? []).filter(
+        (group) =>
+          JSON.stringify(groups.get(group.id)) !== JSON.stringify(group),
+      ),
+      sessionTiles: (snapshot.sessionTiles ?? []).filter(
+        (tile) => JSON.stringify(tiles.get(tile.id)) !== JSON.stringify(tile),
+      ),
+    };
+  }
+
+  /** One `canvas.save` request for a batch, with each object's revision. */
+  private canvasSaveRequest(
+    workspaceId: string,
+    canvasId: string,
+    viewport: Viewport,
+    batch: CanvasLayoutBatch,
+    canvasRevision: number,
+    groupRevision: (id: string) => number,
+    tileRevision: (id: string) => number,
+  ) {
+    return {
+      workspaceId,
+      canvasId,
+      expectedRevision: canvasRevision,
+      viewport,
+      nodes: batch.nodes,
+      ...(batch.projectGroups.length
+        ? {
+            projectGroups: batch.projectGroups.map((group) => ({
+              ...group,
+              expectedRevision: groupRevision(group.id),
+            })),
+          }
+        : {}),
+      ...(batch.sessionTiles.length
+        ? {
+            sessionTiles: batch.sessionTiles.map((tile) => ({
+              ...tile,
+              expectedRevision: tileRevision(tile.id),
+            })),
+          }
+        : {}),
+    };
+  }
+
+  /** Upper bound on the serialized size of one `canvas.save` request. */
+  private canvasSaveBytes(
+    workspaceId: string,
+    canvasId: string,
+    viewport: Viewport,
+    batch: CanvasLayoutBatch,
+  ): number {
+    return new TextEncoder().encode(
+      JSON.stringify({
+        protocolVersion: 1,
+        id: "00000000-0000-4000-8000-000000000000",
+        method: "canvas.save",
+        params: this.canvasSaveRequest(
+          workspaceId,
+          canvasId,
+          viewport,
+          batch,
+          Number.MAX_SAFE_INTEGER,
+          () => Number.MAX_SAFE_INTEGER,
+          () => Number.MAX_SAFE_INTEGER,
+        ),
+      }),
+    ).length;
+  }
+
+  /** Split changed objects so every `canvas.save` request fits one frame. */
+  private layoutBatches(
+    workspaceId: string,
+    canvasId: string,
+    snapshot: CanvasLayout,
+    changes: CanvasLayoutChanges,
+  ): CanvasLayoutBatch[] {
+    const batches: CanvasLayoutBatch[] = [];
+    let batch = emptyLayoutBatch();
+    const fits = (candidate: CanvasLayoutBatch) =>
+      this.canvasSaveBytes(
+        workspaceId,
+        canvasId,
+        snapshot.viewport,
+        candidate,
+      ) <= MAX_FRAME_BYTES;
+    const grouped = new Set(changes.projectGroups.map((group) => group.id));
+    // The runtime checks after each request that every tile fits its project,
+    // so a project travels with its changed tiles: a shrink and the tile moves
+    // that make room for it must commit together.
+    const units: CanvasLayoutBatch[] = [
+      ...changes.nodes.map((node) => ({
+        ...emptyLayoutBatch(),
+        nodes: [node],
+      })),
+      ...changes.projectGroups.map((group) => ({
+        ...emptyLayoutBatch(),
+        projectGroups: [group],
+        sessionTiles: changes.sessionTiles.filter(
+          (tile) => tile.projectId === group.id,
+        ),
+      })),
+      ...changes.sessionTiles
+        .filter((tile) => !grouped.has(tile.projectId))
+        .map((tile) => ({ ...emptyLayoutBatch(), sessionTiles: [tile] })),
+    ];
+    for (const unit of units) {
+      const candidate = {
+        nodes: [...batch.nodes, ...unit.nodes],
+        projectGroups: [...batch.projectGroups, ...unit.projectGroups],
+        sessionTiles: [...batch.sessionTiles, ...unit.sessionTiles],
+      };
+      if (layoutHasItems(batch) && !fits(candidate)) {
+        batches.push(batch);
+        batch = unit;
+      } else {
+        batch = candidate;
+      }
+    }
+    if (layoutHasItems(batch)) batches.push(batch);
+    else if (changes.viewport) batches.push(emptyLayoutBatch());
+    return batches;
+  }
+
+  /** Apply one committed batch to the comparable saved layout. */
+  private applyLayoutBatch(
+    saved: CanvasLayout,
+    viewport: Viewport,
+    batch: CanvasLayoutBatch,
+  ): CanvasLayout {
+    const nodes = new Map(saved.nodes.map((node) => [node.id, node]));
+    for (const node of batch.nodes) nodes.set(node.id, node);
+    const groups = new Map(
+      (saved.projectGroups ?? []).map((group) => [group.id, group]),
+    );
+    for (const group of batch.projectGroups) groups.set(group.id, group);
+    const tiles = new Map(
+      (saved.sessionTiles ?? []).map((tile) => [tile.id, tile]),
+    );
+    for (const tile of batch.sessionTiles) tiles.set(tile.id, tile);
+    // The saved layout is already sorted by id, and Map#set keeps that order,
+    // so a retry can compare layouts byte for byte.
+    return {
+      viewport,
+      nodes: [...nodes.values()],
+      ...(groups.size ? { projectGroups: [...groups.values()] } : {}),
+      ...(tiles.size ? { sessionTiles: [...tiles.values()] } : {}),
+    };
+  }
+
+  /**
+   * Persist only changed objects, in frame-sized requests. Each request commits
+   * one batch, so a failure keeps the confirmed batches and retries the rest.
+   */
+  private async saveLayout(
+    workspaceId: string,
+    current: CanvasDocument,
+    snapshot: CanvasLayout,
+  ) {
+    const batches = this.layoutBatches(
+      workspaceId,
+      current.canvas.id,
+      snapshot,
+      this.layoutChanges(snapshot),
+    );
+    if (!batches.length) {
+      this.savedLayout = JSON.stringify(snapshot);
+      this.attemptedLayout = "";
+      return;
+    }
+    let progress = JSON.parse(this.savedLayout) as CanvasLayout;
+    let revision = current.canvas.revision;
+    for (const batch of batches) {
+      // Revisions come from the save-start document: each object appears in one
+      // batch, so earlier batches cannot have changed its revision.
+      const groupRevisions = new Map(
+        batch.projectGroups.map((group) => [
+          group.id,
+          current.projectGroups.find((item) => item.id === group.id)!.revision,
+        ]),
+      );
+      const tileRevisions = new Map(
+        batch.sessionTiles.map((tile) => [
+          tile.id,
+          current.sessionTiles.find((item) => item.id === tile.id)!.revision,
+        ]),
+      );
+      progress = this.applyLayoutBatch(progress, snapshot.viewport, batch);
+      // A lost reply may have committed exactly this batch.
+      this.attemptedLayout = JSON.stringify(progress);
+      const result = await this.call(
+        this.key(),
+        false,
+        "canvas.save",
+        this.canvasSaveRequest(
+          workspaceId,
+          current.canvas.id,
+          snapshot.viewport,
+          batch,
+          revision,
+          (id) => groupRevisions.get(id)!,
+          (id) => tileRevisions.get(id)!,
+        ),
+      );
+      this.savedLayout = JSON.stringify(progress);
+      this.attemptedLayout = "";
+      revision = result.revision;
+      const latest = this.state.document!;
+      this.publish({
+        document: {
+          ...latest,
+          canvas: { ...latest.canvas, revision: result.revision },
+          ...(batch.projectGroups.length
+            ? {
+                projectGroups: latest.projectGroups.map((group) =>
+                  groupRevisions.has(group.id)
+                    ? {
+                        ...group,
+                        revision: groupRevisions.get(group.id)! + 1,
+                      }
+                    : group,
+                ),
+              }
+            : {}),
+          ...(batch.sessionTiles.length
+            ? {
+                sessionTiles: latest.sessionTiles.map((tile) =>
+                  tileRevisions.has(tile.id)
+                    ? {
+                        ...tile,
+                        revision: tileRevisions.get(tile.id)! + 1,
+                      }
+                    : tile,
+                ),
+              }
+            : {}),
+        },
+      });
+    }
+    // Every batch committed: the snapshot is now the saved baseline.
+    this.savedLayout = JSON.stringify(snapshot);
+    this.attemptedLayout = "";
   }
 
   private publish(update: Partial<EditorState> = {}) {
@@ -965,7 +1257,7 @@ export class Editor {
     result: RuntimeResult<"node.createDrawing">,
   ) {
     this.savedArtifacts.set(result.artifact.id, content(result.artifact));
-    const saved = JSON.parse(this.savedLayout) as ReturnType<Editor["layout"]>;
+    const saved = JSON.parse(this.savedLayout) as CanvasLayout;
     saved.nodes = [
       ...saved.nodes,
       {
@@ -1078,68 +1370,8 @@ export class Editor {
         }
         const current = this.state.document!;
         const snapshot = this.layout(current);
-        const serialized = JSON.stringify(snapshot);
-        if (serialized !== this.savedLayout) {
-          this.attemptedLayout = serialized;
-          const { projectGroups, sessionTiles, ...baseLayout } = snapshot;
-          const result = await this.call(this.key(), false, "canvas.save", {
-            workspaceId,
-            canvasId: current.canvas.id,
-            expectedRevision: current.canvas.revision,
-            ...baseLayout,
-            ...(projectGroups
-              ? {
-                  projectGroups: projectGroups.map((group) => ({
-                    ...group,
-                    expectedRevision: current.projectGroups.find(
-                      (item) => item.id === group.id,
-                    )!.revision,
-                  })),
-                }
-              : {}),
-            ...(sessionTiles
-              ? {
-                  sessionTiles: sessionTiles.map((tile) => ({
-                    ...tile,
-                    expectedRevision: current.sessionTiles.find(
-                      (item) => item.id === tile.id,
-                    )!.revision,
-                  })),
-                }
-              : {}),
-          });
-          this.savedLayout = serialized;
-          this.attemptedLayout = "";
-          const latest = this.state.document!;
-          this.publish({
-            document: {
-              ...latest,
-              canvas: { ...latest.canvas, revision: result.revision },
-              ...((current.projectGroups ?? []).length
-                ? {
-                    projectGroups: latest.projectGroups.map((group) => ({
-                      ...group,
-                      revision:
-                        current.projectGroups.find(
-                          (item) => item.id === group.id,
-                        )!.revision + 1,
-                    })),
-                  }
-                : {}),
-              ...((current.sessionTiles ?? []).length
-                ? {
-                    sessionTiles: latest.sessionTiles.map((tile) => ({
-                      ...tile,
-                      revision:
-                        current.sessionTiles.find(
-                          (item) => item.id === tile.id,
-                        )!.revision + 1,
-                    })),
-                  }
-                : {}),
-            },
-          });
-        }
+        if (JSON.stringify(snapshot) !== this.savedLayout)
+          await this.saveLayout(workspaceId, current, snapshot);
       }
     } catch (error) {
       this.fail(error);
