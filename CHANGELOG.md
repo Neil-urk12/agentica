@@ -10,6 +10,14 @@ released version and date. Keep validation evidence in the
 
 ## Unreleased
 
+### 2026-10-22
+
+- Fixed a restored review composer attaching inline under any hunk with the same
+  header. Persisted composers keep only a fingerprint, so the text-match check
+  was skipped. The composer now stays detached until refresh finds a hunk with
+  the same header and fingerprint, then recovers that hunk's text. Comments
+  saved from an unmatched composer start Outdated.
+
 ### 2026-10-21
 
 - Redesigned the workspace picker as a full start screen for less technical
@@ -47,6 +55,31 @@ released version and date. Keep validation evidence in the
 - Preserve a feedback composer's original file and hunk across refreshes, mark
   only submitted comments Sent after a paste, and keep drafts and paste controls
   accessible when the working tree becomes clean or unavailable.
+- Persist Changes review feedback. Comments, their order, Sent/Outdated flags,
+  original file/hunk anchors, and exact unfinished composer text autosave to
+  workspace storage (schema v7, records owned by `changes_tile`) and restore
+  after a browser reload, backend restart, or app restart. Records are saved one
+  at a time through `changes.review.load`/`changes.review.save` against an
+  independent review revision, because a whole-review snapshot can exceed the
+  16 KiB RPC envelope and a stale whole-state write could erase newer edits.
+  Hunk anchors store a SHA-256 fingerprint instead of the hunk body for the same
+  reason. Restored unsent comments are revalidated against current Git output:
+  changed or missing hunks become Outdated, and failed or truncated checks show
+  Unverified; neither discards nor moves the comment.
+- Show **Saving…/Saved/Couldn't save** (or **Couldn't load**) with Retry in
+  both Changes layouts. A revision conflict keeps local feedback and offers a
+  copy-then-reload recovery instead of overwriting newer stored feedback.
+- Leaving a canvas or closing the desktop window now flushes feedback first and
+  asks before discarding edits that could not be saved. Browser unload warns
+  only for unsaved review edits, so saved but unsent feedback no longer
+  triggers a warning. A tile whose feedback failed to load never blocks leaving,
+  because it holds no local edits.
+- Removing a Changes tile or project still warns about unsent feedback,
+  including saved feedback in tiles that were never opened; if that feedback
+  cannot be loaded, removal asks for explicit confirmation rather than being
+  blocked. Stored feedback is deleted with its owner, and late saves cannot
+  recreate it. Sent means pasted, not run; retrying a failed Sent save never
+  pastes again.
 
 ### 2026-10-20
 

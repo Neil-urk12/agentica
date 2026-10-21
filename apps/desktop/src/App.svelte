@@ -112,7 +112,7 @@
       ? sessions.attention(workspace.workspace.id, document.canvas.id)
       : [];
   });
-  // Read-only Git review state per Changes tile; drafts live only in memory.
+  // Git review state per Changes tile; feedback autosaves to workspace storage.
   const changes = new ChangesManager(
     (method, params) =>
       callRuntime(
@@ -1410,6 +1410,22 @@
       return false;
     }
     if (editorState.dirty && !editorState.error) await editor.save();
+    const document = editorState.document;
+    const workspaceId = editorState.workspace?.workspace.id;
+    if (!(await changes.flush())) {
+      if (
+        !window.confirm(
+          "Feedback could not be saved. Discard unsaved feedback edits and leave this canvas?",
+        )
+      ) {
+        closeNotice =
+          "Feedback could not be saved. Keep this canvas open and retry or copy your feedback.";
+        return false;
+      }
+      // Reopening reloads the last saved feedback from storage.
+      if (document && workspaceId)
+        changes.forgetScope(workspaceId, document.canvas.id);
+    }
     return !editorState.dirty;
   }
 
@@ -1431,7 +1447,7 @@
       !editorState.dirty &&
       !editorState.saving &&
       !pendingReply &&
-      !changes.pending()
+      !changes.unsaved()
     )
       return;
     event.preventDefault();
@@ -1547,14 +1563,33 @@
     if (!document || !workspaceId) return;
     const group = document.projectGroups.find((g) => g.id === id);
     const tile = document.sessionTiles.find((t) => t.id === id);
-    // Feedback drafts are memory-only; removing their tile discards them.
+    // Hydrate even hidden tiles before counting feedback lost by removal.
     const reviewIds = document.sessionTiles
       .filter(
         (t) => t.kind === "changes" && (t.id === id || t.projectId === id),
       )
       .map((t) => t.id);
+    let unchecked = false;
+    for (const tileId of reviewIds) {
+      const review = document.sessionTiles.find((t) => t.id === tileId)!;
+      const state = changes.get(tileId, {
+        workspaceId,
+        canvasId: document.canvas.id,
+        projectId: review.projectId,
+      });
+      await state.hydrate();
+      unchecked ||= !state.hydrated;
+    }
     const unsent = changes.pending(reviewIds);
     if (
+      unchecked &&
+      !window.confirm(
+        "Saved feedback in the Changes tile could not be checked and will be deleted with it. Remove anyway?",
+      )
+    )
+      return;
+    if (
+      !unchecked &&
       unsent &&
       !window.confirm(
         `Discard ${unsent} unsent feedback item${unsent === 1 ? "" : "s"} in the Changes tile?`,
@@ -1598,7 +1633,16 @@
     const workspaceId = editorState.workspace?.workspace.id;
     const tile = document?.sessionTiles.find((t) => t.id === tileId);
     const state = changes.peek(tileId);
-    if (!document || !workspaceId || !tile || !state || pasting) return;
+    if (
+      !document ||
+      !workspaceId ||
+      !tile ||
+      !state ||
+      pasting ||
+      !state.hydrated ||
+      state.loading
+    )
+      return;
     const targets = sessions.pasteTargets(
       workspaceId,
       document.canvas.id,
@@ -1691,11 +1735,11 @@
               "Keep this window open until changes are saved. Copy unsaved edits for recovery if saving fails.";
             return;
           }
-          const unsent = changes.pending();
+          const savedFeedback = await changes.flush();
           if (
-            unsent &&
+            !savedFeedback &&
             !window.confirm(
-              `Discard ${unsent} unsent feedback item${unsent === 1 ? "" : "s"} and close this window?`,
+              "Feedback could not be saved. Discard unsaved feedback edits and close this window?",
             )
           )
             return;

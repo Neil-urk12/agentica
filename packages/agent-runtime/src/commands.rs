@@ -13,6 +13,8 @@ use crate::store::{delete_workspace, is_id, list_workspaces, new_id, RuntimeErro
 mod conversation;
 #[path = "projects.rs"]
 mod projects;
+#[path = "review.rs"]
+mod review;
 
 // Limits shared with packages/protocol/src/index.ts.
 const MAX_LABEL: usize = 120;
@@ -31,6 +33,8 @@ const MAX_POINTS: usize = 10_000;
 const MAX_STROKE_WIDTH: f64 = 64.0;
 
 pub(crate) const METHODS: &[&str] = &[
+    "changes.review.load",
+    "changes.review.save",
     "conversation.start",
     "conversation.finish",
     "conversation.resolve",
@@ -421,6 +425,14 @@ impl Runtime {
 
     pub(crate) fn call(&mut self, method: &str, params: Value) -> Result<Value, RuntimeError> {
         match method {
+            "changes.review.load" | "changes.review.save" => {
+                let workspace_id = params
+                    .get("workspaceId")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| invalid("workspaceId is required."))?
+                    .to_owned();
+                self.transact(&workspace_id, |tx| review::call(tx, method, params))
+            }
             "project.open" | "project.locate" | "project.createTile" | "project.delete"
             | "project.deleteTile" => {
                 let workspace_id = params

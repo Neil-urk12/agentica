@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { createServer, request } from "node:http";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
@@ -50,10 +50,10 @@ const ping = {
   method: "runtime.ping",
 };
 
-async function startBackend() {
+async function startBackend(childEnv = env) {
   // An empty PATH proves the compiled backend does not launch Node or Cargo.
   const child = spawn(binary, {
-    env,
+    env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";
@@ -1804,5 +1804,219 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
     if (customServer)
       await new Promise((resolve) => customServer.close(resolve));
     await stopBackend(backend.child);
+  }
+});
+
+test("review feedback survives browser reload and backend restart with original anchors", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "agentica-review-"));
+  const git = (...args) =>
+    assert.equal(spawnSync("git", args, { cwd: repo }).status, 0, args[0]);
+  writeFileSync(join(repo, "a.txt"), "one\ntwo\nthree\n");
+  git("init", "-q");
+  git("add", ".");
+  git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init");
+  writeFileSync(join(repo, "a.txt"), "one\nTWO\nthree\n");
+  // Changes needs Git on the backend PATH.
+  const gitPath = spawnSync("sh", ["-c", "command -v git"]).stdout.toString();
+  const gitEnv = { ...env, PATH: dirname(gitPath.trim()) };
+  let backend = await startBackend(gitEnv);
+  key = backend.connectionKey;
+  let browser;
+  const call = async (_key, _connect, method, params) => {
+    const reply = await send(port, {
+      body: JSON.stringify(
+        RuntimeRequestSchema.parse({
+          protocolVersion: 1,
+          id: crypto.randomUUID(),
+          method,
+          params,
+        }),
+      ),
+      timeout: 15000,
+    });
+    const response = RuntimeResponseSchema.parse(JSON.parse(reply.text));
+    if (response.error)
+      throw new Error(`${response.error.code}: ${response.error.message}`);
+    return ResultSchemas[method].parse(response.result);
+  };
+  const editor = new Editor(
+    call,
+    () => key,
+    () => {},
+  );
+  const tile = ".changes--tile";
+  const saved = (root) =>
+    `!!document.querySelector('${root} .notices [role=status]')?.textContent.includes('Feedback: Saved') && !!document.querySelector('.pill')?.textContent.includes('All changes saved')`;
+  const run = (script) => evaluate(browser, script);
+  const click = (selector) =>
+    run(`document.querySelector(${JSON.stringify(selector)}).click()`);
+  const type = (selector, text) =>
+    run(`(() => {
+      const field = document.querySelector(${JSON.stringify(selector)});
+      field.value = ${JSON.stringify(text)};
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    })()`);
+  const drafts = (root) =>
+    run(
+      `JSON.stringify([...document.querySelectorAll('${root} .draft')].map((d) => [d.querySelector('p'), ...d.querySelectorAll('.badge')].map((e) => e.textContent.trim()).join(' ')))`,
+    ).then(JSON.parse);
+  const openApp = async () => {
+    await browser.send(
+      "Page.navigate",
+      { url: `http://127.0.0.1:${port}/` },
+      browser.sessionId,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector("#connection-key")`,
+      "the connection form",
+    );
+    await run(`(() => {
+      const input = document.querySelector("#connection-key");
+      input.value = ${JSON.stringify(key)};
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    })()`);
+    await clickAt(
+      browser,
+      await boxOf(browser, ".connbar button[type='submit']"),
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector(".connbar--ok")`,
+      "the connected status",
+    );
+    for (const label of ["Review restore", "Review canvas"]) {
+      const item = ".tiles .tile__open, .cards .card";
+      await waitFor(
+        browser,
+        `[...document.querySelectorAll(${JSON.stringify(item)})].some((card) => card.textContent.includes(${JSON.stringify(label)}))`,
+        `the ${label} card`,
+      );
+      await clickAt(browser, await boxByText(browser, item, label));
+    }
+    await waitFor(
+      browser,
+      `!!document.querySelector('[aria-label="Show Changes"]')`,
+      "the project's Changes control",
+    );
+    await click('[aria-label="Show Changes"]');
+    await waitFor(
+      browser,
+      `${saved(tile)} && !!document.querySelector('${tile} .hunk')`,
+      "the review to load",
+    );
+  };
+  try {
+    await editor.createWorkspace("Review restore");
+    const workspaceId = editor.state.workspace.workspace.id;
+    await editor.createCanvas("Review canvas");
+    const canvasId = editor.state.document.canvas.id;
+    await editor.openProject(repo);
+    const projectId = editor.state.document.projectGroups.at(-1).id;
+    await editor.addSessionTile(projectId, "changes");
+    const tileId = editor.state.document.sessionTiles.at(-1).id;
+    assert.equal(editor.state.error, "");
+    await editor.closeWorkspace();
+
+    browser = await launchBrowser();
+    await openApp();
+    const composer = `#comment-tile-${tileId}`;
+    const add = `${tile} .composer .btn--primary`;
+    await click(`${tile} .hunk-head button`);
+    await type(composer, "Hunk note");
+    await click(add);
+    await click(`${tile} .file-bar button`);
+    await type(composer, "File note");
+    await click(add);
+    await click(`${tile} .file-bar button`);
+    await type(composer, "  unfinished\n ");
+    await waitFor(
+      browser,
+      `${saved(tile)} && document.querySelectorAll('${tile} .draft').length === 2`,
+      "comments and composer text to save",
+    );
+
+    // Browser reload restores from storage, not page memory.
+    await openApp();
+    assert.deepEqual((await drafts(tile)).sort(), ["File note", "Hunk note"]);
+    assert.equal(
+      await run(`document.querySelector('${composer}').value`),
+      "  unfinished\n ",
+    );
+
+    // Restart with a changed hunk; Sent stands in for a Codex paste.
+    await stopBackend(backend.child);
+    writeFileSync(join(repo, "a.txt"), "one\nTwo\nthree\n");
+    backend = await startBackend(gitEnv);
+    key = backend.connectionKey;
+    await editor.openWorkspace(workspaceId);
+    const scope = { workspaceId, canvasId, projectId, tileId };
+    const records = [];
+    let page = await call(0, 0, "changes.review.load", scope);
+    const revision = page.revision;
+    while (page.record) {
+      records.push(page.record);
+      if (!page.next) break;
+      page = await call(0, 0, "changes.review.load", {
+        ...scope,
+        after: page.next,
+        expectedRevision: revision,
+      });
+    }
+    assert.equal(records.length, 3);
+    const hunkRecord = records.find((r) => r.comment === "Hunk note");
+    assert.match(hunkRecord.hunk.fingerprint, /^[0-9a-f]{64}$/);
+    assert.equal(hunkRecord.hunk.range, "@@ -1,3 +1,3 @@");
+    await call(0, 0, "changes.review.save", {
+      ...scope,
+      expectedRevision: revision,
+      record: { ...records.find((r) => r.comment === "File note"), sent: true },
+    });
+    await editor.closeWorkspace();
+
+    await openApp();
+    await waitFor(
+      browser,
+      `[...document.querySelectorAll('${tile} .draft')].some((d) => d.textContent.includes('Hunk note') && d.textContent.includes('Outdated'))`,
+      "the changed hunk comment to be Outdated",
+    );
+    assert.deepEqual((await drafts(tile)).sort(), [
+      "File note Sent",
+      "Hunk note Outdated",
+    ]);
+    assert.equal(
+      await run(`document.querySelector('${composer}').value`),
+      "  unfinished\n ",
+    );
+    await click(`${tile} .foot .btn--primary`);
+    const preview = await run(
+      `document.querySelector('${tile} .preview pre').textContent`,
+    );
+    assert.match(
+      preview,
+      /\[Outdated anchor\]\n {3}@@ -1,3 \+1,3 @@\n {3}Hunk note/,
+    );
+    assert.doesNotMatch(preview, /File note|unfinished/);
+
+    // The expanded layout shares the same restored state and announcement.
+    await click(`#changes-expand-${tileId}`);
+    await waitFor(
+      browser,
+      `${saved(".changes--overlay")} && document.querySelector('#comment-overlay-${tileId}')?.value === '  unfinished\\n '`,
+      "the expanded review",
+    );
+    assert.deepEqual((await drafts(".changes--overlay .panel")).sort(), [
+      "File note Sent",
+      "Hunk note Outdated",
+    ]);
+  } catch (error) {
+    if (browser)
+      error.message += `\nRendered state: ${await evaluate(browser, "document.querySelector('.changes')?.innerText ?? document.body.innerText.slice(-2000)")}`;
+    throw error;
+  } finally {
+    editor.dispose();
+    await browser?.close();
+    await stopBackend(backend.child);
+    rmSync(repo, { recursive: true, force: true });
   }
 });

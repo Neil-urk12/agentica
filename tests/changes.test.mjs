@@ -9,7 +9,11 @@ import { feedbackMessage } from "../apps/desktop/src/lib/changes.ts";
 // Exercise the real rune state and component without a browser or generated files.
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
-    if (specifier === "./changes" || specifier === "../changes")
+    if (
+      specifier === "./changes" ||
+      specifier === "../changes" ||
+      specifier === "./review-persistence"
+    )
       specifier += ".ts";
     return nextResolve(specifier, context);
   },
@@ -53,14 +57,38 @@ const hunk = (line, text) => ({
   lines: [["+", text]],
 });
 
-async function setup() {
-  const disk = {
+async function setup(savedDisk) {
+  const disk = savedDisk ?? {
     status: { state: "ready", entries: [entry("a.ts"), entry("b.ts")] },
     diff: { kind: "text", hunks: [hunk(1, "original")] },
   };
+  disk.records ??= new Map();
+  disk.revision ??= 1;
   const calls = [];
   const manager = new ChangesManager(async (method, params) => {
     calls.push({ method, ...params });
+    if (disk.fail && method.startsWith("changes.review")) throw disk.fail;
+    if (method === "changes.review.load") {
+      if (params.expectedRevision && params.expectedRevision !== disk.revision)
+        throw Object.assign(new Error("Review changed"), { code: "CONFLICT" });
+      const records = [...disk.records.values()]
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .filter((r) => !params.after || r.id > params.after);
+      return {
+        revision: disk.revision,
+        record: records[0] ?? null,
+        next: records.length > 1 ? records[0].id : null,
+      };
+    }
+    if (method === "changes.review.save") {
+      if (params.expectedRevision !== disk.revision)
+        throw Object.assign(new Error("Review changed"), { code: "CONFLICT" });
+      if (disk.beforeSave) await disk.beforeSave();
+      if (params.deleteId) disk.records.delete(params.deleteId);
+      if (params.record)
+        disk.records.set(params.record.id, structuredClone(params.record));
+      return { revision: ++disk.revision };
+    }
     return method === "changes.status"
       ? disk.status
       : { diff: disk.diffs?.[params.path] ?? disk.diff };
@@ -242,7 +270,7 @@ test("refresh checks unselected hunk anchors once per file without changing sele
   );
 });
 
-test("native close protects saved drafts and composer text before session shutdown", async () => {
+test("native close flushes drafts and composer text before session shutdown", async () => {
   const source = readFileSync(
     new URL("../apps/desktop/src/App.svelte", import.meta.url),
     "utf8",
@@ -288,7 +316,7 @@ test("native close protects saved drafts and composer text before session shutdo
         manager,
         {
           confirm(message) {
-            assert.match(message, /unsent feedback/);
+            assert.match(message, /unsaved feedback/);
             calls.push("confirm");
             return discard;
           },
@@ -296,15 +324,166 @@ test("native close protects saved drafts and composer text before session shutdo
       );
       assert.deepEqual(
         calls,
-        kind === "none"
-          ? ["session_shutdown", "destroy"]
-          : discard
-            ? ["confirm", "session_shutdown", "destroy"]
-            : ["confirm"],
+        ["session_shutdown", "destroy"],
         `${kind}, discard=${discard}`,
       );
     }
   }
+  for (const discard of [false, true]) {
+    const { state, manager, disk } = await setup();
+    state.compose("file");
+    state.composeText = "Unsaved";
+    disk.fail = new Error("Disk offline");
+    const calls = [];
+    await close(
+      { preventDefault() {} },
+      { dirty: false, saving: false },
+      false,
+      false,
+      "",
+      async (command) => calls.push(command),
+      () => ({
+        async destroy() {
+          calls.push("destroy");
+        },
+      }),
+      manager,
+      {
+        confirm(message) {
+          assert.match(message, /unsaved feedback/);
+          calls.push("confirm");
+          return discard;
+        },
+      },
+    );
+    assert.deepEqual(
+      calls,
+      discard ? ["confirm", "session_shutdown", "destroy"] : ["confirm"],
+    );
+    assert.equal(state.composeText, "Unsaved");
+  }
+});
+
+const appSource = readFileSync(
+  new URL("../apps/desktop/src/App.svelte", import.meta.url),
+  "utf8",
+);
+const AsyncFn = Object.getPrototypeOf(async function () {}).constructor;
+const appFunction = (name, ...params) =>
+  new AsyncFn(
+    ...params,
+    stripTypeScriptTypes(
+      appSource.match(
+        new RegExp(
+          `async function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n  \\}\\n`,
+        ),
+      )[0],
+    ).replace(/^[^{]*\{|\}\s*$/g, ""),
+  );
+
+test("in-app navigation flushes feedback and keeps it unless discarded", async () => {
+  const settle = appFunction(
+    "settle",
+    "generating",
+    "pendingReply",
+    "editorState",
+    "editor",
+    "changes",
+    "window",
+  );
+  const run = (manager, confirm) =>
+    settle(
+      false,
+      false,
+      {
+        dirty: false,
+        document: { canvas: { id: "canvas" } },
+        workspace: { workspace: { id: "workspace" } },
+      },
+      {},
+      manager,
+      { confirm },
+    );
+  const ok = await setup();
+  save(ok.state, "Saved before leaving");
+  assert.equal(await run(ok.manager, () => assert.fail("no prompt")), true);
+  assert.equal(ok.disk.records.size, 1);
+  for (const discard of [false, true]) {
+    const { state, manager, disk } = await setup();
+    save(state, "Unsaved");
+    disk.fail = new Error("Disk offline");
+    assert.equal(await run(manager, () => discard), discard);
+    assert.equal(manager.peek("changes") === state, !discard);
+    assert.equal(state.drafts[0].comment, "Unsaved");
+  }
+});
+
+test("removal warns about saved and unloaded feedback and retains it when cancelled", async () => {
+  const removeObject = appFunction(
+    "removeObject",
+    "id",
+    "editorState",
+    "changes",
+    "editor",
+    "window",
+    "requestRemoval",
+  );
+  const document = {
+    canvas: { id: "canvas" },
+    projectGroups: [],
+    sessionTiles: [{ id: "changes", kind: "changes", projectId: "project" }],
+  };
+  const run = async (manager, answer) => {
+    const prompts = [];
+    const deleted = [];
+    await removeObject(
+      "changes",
+      { document, workspace: { workspace: { id: "workspace" } } },
+      manager,
+      { deleteSessionTile: async (id) => deleted.push(id) },
+      { confirm: (m) => (prompts.push(m), answer) },
+      async () => assert.fail("Changes tiles have no sessions"),
+    );
+    return { prompts, deleted };
+  };
+  // Saved (acknowledged) feedback still warns, even before its tile was opened.
+  const saved = await setup();
+  save(saved.state, "Persisted");
+  await saved.state.flush();
+  saved.state.dispose();
+  const fresh = await setup(saved.disk);
+  fresh.manager.forget("changes");
+  let result = await run(fresh.manager, false);
+  assert.match(result.prompts[0], /Discard 1 unsent feedback item/);
+  assert.deepEqual(result.deleted, []);
+  assert.equal(fresh.disk.records.size, 1);
+  result = await run(fresh.manager, true);
+  assert.deepEqual(result.deleted, ["changes"]);
+  // Unloadable feedback is never deleted silently.
+  const offline = await setup(saved.disk);
+  offline.manager.forget("changes");
+  offline.disk.fail = new Error("Offline");
+  result = await run(offline.manager, false);
+  assert.match(result.prompts[0], /could not be checked/);
+  assert.deepEqual(result.deleted, []);
+});
+
+test("saves racing successful deletion settle without resurrecting state", async () => {
+  const { state, disk, manager } = await setup();
+  let release;
+  disk.beforeSave = async () => {
+    await new Promise((r) => (release = r));
+    throw new Error("Owner deleted");
+  };
+  save(state, "In flight");
+  const saving = state.flush();
+  await new Promise((r) => setTimeout(r));
+  manager.forget("changes");
+  release();
+  assert.equal(await saving, true);
+  assert.equal(state.saveError, "");
+  assert.equal(manager.peek("changes"), undefined);
+  assert.equal(manager.unsaved(), false);
 });
 
 test("refresh cannot move an open comment onto another file", async () => {
@@ -368,6 +547,171 @@ test("paste completion marks only submitted IDs, leaving newer feedback unsent",
 });
 
 const targets = [{ owner: { tileId: "codex" }, label: "Codex" }];
+
+test("restart restores ordered feedback, Sent flags and exact composer text", async () => {
+  const { state, disk } = await setup();
+  state.compose(0);
+  state.composeText = "First hunk";
+  state.saveDraft();
+  save(state, "Second file");
+  state.markSent([state.drafts[0].id]);
+  state.compose(0);
+  state.composeText = "  unfinished\n ";
+  assert.equal(await state.flush(), true);
+  state.dispose();
+  const reopened = (await setup(disk)).state;
+  assert.deepEqual(
+    reopened.drafts.map((r) => [r.comment, r.sent]),
+    [
+      ["First hunk", true],
+      ["Second file", false],
+    ],
+  );
+  assert.equal(reopened.composeText, "  unfinished\n ");
+  assert.equal(reopened.composing.path, "a.ts");
+  // Recovered from the matching fingerprint once the diff loads.
+  assert.equal(reopened.composing.hunk.text, "+original");
+  assert.match(reopened.composing.hunk.fingerprint, /^[a-f0-9]{64}$/);
+  reopened.saveDraft();
+  assert.equal(await reopened.flush(), true);
+  assert.equal(disk.records.has("composer"), false);
+  assert.equal(disk.records.size, 3);
+  reopened.dispose();
+});
+
+test("restored hunk fingerprints revalidate across changed and unavailable Git", async () => {
+  const { state, disk } = await setup();
+  state.compose(0);
+  state.composeText = "Original anchor";
+  state.saveDraft();
+  await state.flush();
+  state.dispose();
+  disk.diff = { kind: "text", hunks: [hunk(1, "replacement")] };
+  const reopened = (await setup(disk)).state;
+  assert.equal(reopened.drafts[0].outdated, true);
+  assert.equal(reopened.drafts[0].unverified, false);
+  await reopened.flush();
+  reopened.dispose();
+  disk.status = { state: "folderUnavailable" };
+  const unavailable = (await setup(disk)).state;
+  assert.equal(unavailable.drafts[0].comment, "Original anchor");
+  assert.equal(unavailable.drafts[0].outdated, true);
+  unavailable.dispose();
+});
+
+test("failed hydration never overwrites saved records; retry restores them", async () => {
+  const { state, disk } = await setup();
+  save(state, "Keep on disk");
+  await state.flush();
+  state.dispose();
+  disk.fail = new Error("Offline");
+  const reopened = (await setup(disk)).state;
+  assert.equal(reopened.hydrated, false);
+  reopened.compose("file");
+  reopened.composeText = "Cannot replace unknown data";
+  // Nothing local to save, so leaving is not blocked.
+  assert.equal(await reopened.flush(), true);
+  assert.equal(reopened.dirty, false);
+  assert.equal(disk.records.size, 1);
+  disk.fail = null;
+  await reopened.retrySave();
+  assert.equal(reopened.drafts[0].comment, "Keep on disk");
+  reopened.dispose();
+});
+
+test("failed and oversized saves retain local edits; retry saves without paste", async () => {
+  const { state, disk, manager, calls } = await setup();
+  state.compose("file");
+  state.composeText = "Keep locally";
+  disk.fail = new Error("Disk unavailable");
+  assert.equal(await state.flush(), false);
+  assert.equal(manager.unsaved(), true);
+  assert.equal(state.composeText, "Keep locally");
+  disk.fail = null;
+  assert.equal(await state.retrySave(), true);
+  assert.equal(manager.unsaved(), false);
+  state.composeText = "😀".repeat(1001);
+  assert.equal(await state.flush(), false);
+  assert.equal(state.composeText.length, 2002);
+  state.composeText = "Fits again";
+  assert.equal(await state.retrySave(), true);
+  assert.equal(disk.records.get("composer").comment, "Fits again");
+  assert.ok(calls.every((c) => c.method.startsWith("changes.")));
+  state.dispose();
+});
+
+test("late acknowledgements do not mark newer typing Saved", async () => {
+  const { state, disk } = await setup();
+  let started, release;
+  const waiting = new Promise((r) => (started = r));
+  const gate = new Promise((r) => (release = r));
+  disk.beforeSave = async () => {
+    started();
+    await gate;
+    disk.beforeSave = null;
+  };
+  state.compose("file");
+  state.composeText = "Old";
+  const saving = state.flush();
+  await waiting;
+  state.composeText = "Newer";
+  assert.equal(state.dirty, true);
+  release();
+  assert.equal(await saving, true);
+  assert.equal(disk.records.get("composer").comment, "Newer");
+  assert.equal(state.dirty, false);
+  state.dispose();
+});
+
+test("conflicts preserve local text and newer persisted feedback", async () => {
+  const { state, disk } = await setup();
+  state.compose("file");
+  state.composeText = "Original";
+  await state.flush();
+  disk.records.get("composer").comment = "Other client";
+  disk.revision++;
+  state.composeText = "My local edit";
+  assert.equal(await state.flush(), false);
+  assert.equal(state.conflicted, true);
+  assert.match(state.recoveryText(), /My local edit/);
+  assert.equal(await state.retrySave(), undefined);
+  assert.equal(disk.records.get("composer").comment, "Other client");
+  await state.reloadReview();
+  assert.equal(state.composeText, "Other client");
+  state.dispose();
+});
+
+test("paste status save failures retry persistence without replaying delivery", async () => {
+  const { state, disk, calls } = await setup();
+  save(state, "Pasted");
+  await state.flush();
+  state.markSent([state.drafts[0].id]);
+  disk.fail = new Error("Disk offline");
+  assert.equal(await state.flush(), false);
+  assert.equal(state.unsent, 0);
+  disk.fail = null;
+  await state.retrySave();
+  assert.equal([...disk.records.values()][0].sent, true);
+  assert.ok(calls.every((c) => c.method.startsWith("changes.")));
+  state.dispose();
+});
+
+test("clearing composer and Sent comments remains cleared after restart", async () => {
+  const { state, disk } = await setup();
+  save(state, "Sent");
+  state.markSent([state.drafts[0].id]);
+  state.compose("file");
+  state.composeText = "Cancel this";
+  await state.flush();
+  state.cancelCompose();
+  state.clearSent();
+  await state.flush();
+  state.dispose();
+  const reopened = (await setup(disk)).state;
+  assert.equal(reopened.drafts.length, 0);
+  assert.equal(reopened.composing, null);
+  reopened.dispose();
+});
 function view(state, layout) {
   return render(ChangesView, {
     props: {
@@ -413,5 +757,27 @@ for (const layout of ["tile", "overlay"]) {
     assert.equal(state.drafts[0].path, "a.ts");
     assert.equal(state.drafts[0].hunk.text, "+original");
     assert.equal(state.drafts[0].outdated, true);
+  });
+
+  test(`${layout}: a restored composer attaches inline only when its fingerprint matches`, async () => {
+    const { state, disk } = await setup();
+    state.compose(0);
+    state.composeText = "Restored feedback";
+    await state.flush();
+    state.dispose();
+    const inline = (await setup(disk)).state;
+    const html = view(inline, layout);
+    assert.ok(html.search(/class="composer/) > html.search(/class="file-bar/));
+    inline.dispose();
+    disk.diff = { kind: "text", hunks: [hunk(1, "replacement")] };
+    const reopened = (await setup(disk)).state;
+    assert.equal(reopened.composing.hunk.text, undefined);
+    const detached = view(reopened, layout);
+    assert.ok(
+      detached.search(/class="composer/) < detached.search(/class="file-bar/),
+    );
+    reopened.saveDraft();
+    assert.equal(reopened.drafts.at(-1).outdated, true);
+    reopened.dispose();
   });
 }

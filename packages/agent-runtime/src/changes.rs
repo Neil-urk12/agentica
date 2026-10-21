@@ -27,7 +27,7 @@ const MAX_LINES: usize = 10_000;
 const MAX_ENTRIES: usize = 2_000;
 const BINARY_PROBE: usize = 8_000;
 
-/// True when a raw request names a `changes.*` method; the envelope is validated later.
+/// Git reads bypass the writer; review persistence uses the normal runtime lock.
 pub fn is_changes_request(bytes: &[u8]) -> bool {
     serde_json::from_slice::<Value>(bytes)
         .ok()
@@ -35,7 +35,7 @@ pub fn is_changes_request(bytes: &[u8]) -> bool {
             value
                 .get("method")?
                 .as_str()
-                .map(|method| method.starts_with("changes."))
+                .map(|method| METHODS.contains(&method))
         })
         .unwrap_or(false)
 }

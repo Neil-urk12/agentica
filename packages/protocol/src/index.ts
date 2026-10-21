@@ -327,7 +327,69 @@ export const ChangesDiffSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("failed"), ...Message.shape }),
 ]);
 export type ChangesDiff = z.infer<typeof ChangesDiffSchema>;
+// Review records are paged individually to stay within the 16 KiB RPC envelope.
+export const REVIEW_LIMITS = {
+  records: 201,
+  comment: 4000,
+  path: 4096,
+  header: 1024,
+  range: 256,
+  recordBytes: 12 * 1024,
+} as const;
+const reviewString = (max: number) =>
+  z
+    .string()
+    .refine(
+      (s) => new TextEncoder().encode(s).length <= max,
+      `Must fit in ${max} UTF-8 bytes`,
+    );
+const ReviewId = z.union([IdSchema, z.literal("composer")]);
+export const ReviewRecordSchema = z
+  .strictObject({
+    id: ReviewId,
+    order: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    path: reviewString(REVIEW_LIMITS.path).refine(
+      (s) => s.length > 0 && !s.includes("\0"),
+    ),
+    section: ChangeSectionSchema,
+    hunk: z
+      .strictObject({
+        header: reviewString(REVIEW_LIMITS.header),
+        range: reviewString(REVIEW_LIMITS.range),
+        fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+      })
+      .nullable(),
+    comment: reviewString(REVIEW_LIMITS.comment),
+    sent: z.boolean(),
+    outdated: z.boolean(),
+  })
+  .refine(
+    (r) =>
+      new TextEncoder().encode(JSON.stringify(r)).length <=
+      REVIEW_LIMITS.recordBytes,
+    "Feedback record is too large; shorten or copy the text",
+  );
+export type ReviewRecord = z.infer<typeof ReviewRecordSchema>;
+const ReviewScope = { ...CanvasRef, projectId: IdSchema, tileId: IdSchema };
 const ParamSchemas = {
+  "changes.review.load": z
+    .strictObject({
+      ...ReviewScope,
+      after: ReviewId.optional(),
+      expectedRevision: Revision.optional(),
+    })
+    .refine(
+      (p) => !p.after || p.expectedRevision !== undefined,
+      "Paged reads require expectedRevision",
+    ),
+  "changes.review.save": z
+    .strictObject({
+      ...ReviewScope,
+      expectedRevision: Revision,
+      record: ReviewRecordSchema.optional(),
+      deleteId: ReviewId.optional(),
+    })
+    .refine((p) => !!p.record || !!p.deleteId, "Provide a record or deleteId"),
   "conversation.start": z.strictObject({
     ...TurnRef,
     prompt: Text.refine((s) => s.trim().length > 0),
@@ -597,6 +659,12 @@ export const ResultSchemas = {
   }),
   "changes.status": ChangesStatusSchema,
   "changes.diff": z.strictObject({ diff: ChangesDiffSchema }),
+  "changes.review.load": z.strictObject({
+    revision: Revision,
+    record: ReviewRecordSchema.nullable(),
+    next: ReviewId.nullable(),
+  }),
+  "changes.review.save": z.strictObject({ revision: Revision }),
   "canvas.open": z
     .strictObject({
       canvas: z.strictObject({

@@ -39,6 +39,7 @@
       state.diff?.kind === "text"
       ? state.diff.hunks.findIndex(
           (hunk) =>
+            // Restored composers gain text only after validateDrafts checks the fingerprint.
             hunk.header === anchor.hunk!.header &&
             hunkText(hunk) === anchor.hunk!.text,
         )
@@ -63,7 +64,13 @@
   const target = $derived(
     targets.find((t) => t.owner.tileId === state.target) ?? targets[0],
   );
-  const canPaste = $derived(!!target && state.unsent > 0 && !pasting);
+  const canPaste = $derived(
+    !!target &&
+      state.unsent > 0 &&
+      !pasting &&
+      state.hydrated &&
+      !state.loading,
+  );
   const sent = $derived(state.drafts.some((draft) => draft.sent));
   const emptyText = $derived.by(() => {
     const status = state.status;
@@ -89,7 +96,7 @@
       // Close only the editor, not review mode.
       event.preventDefault();
       event.stopPropagation();
-      state.composing = null;
+      state.cancelCompose();
     } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       state.saveDraft();
@@ -129,7 +136,7 @@
       <button
         class="btn btn--soft"
         type="button"
-        onclick={() => (state.composing = null)}>Cancel</button
+        onclick={() => state.cancelCompose()}>Cancel</button
       >
       <button
         class="btn btn--primary"
@@ -146,9 +153,15 @@
     <div class="draft" class:sent={draft.sent}>
       <p>{draft.comment}</p>
       <span class="badges">
-        {#if draft.sent}<span class="badge">Sent</span>{/if}
+        {#if draft.sent}<span
+            class="badge"
+            title="Pasted into Codex; running it is not confirmed">Sent</span
+          >{/if}
         {#if draft.outdated && !draft.sent}<span class="badge badge--warn"
             >Outdated</span
+          >{/if}
+        {#if draft.unverified && !draft.outdated && !draft.sent}<span
+            class="badge badge--warn">Unverified</span
           >{/if}
         <button
           class="icon-btn"
@@ -176,6 +189,7 @@
       <button
         class="btn btn--soft"
         type="button"
+        disabled={!state.hydrated}
         onclick={() => state.compose("file")}>Comment on file</button
       >
     </div>
@@ -197,6 +211,7 @@
               <button
                 class="btn btn--soft"
                 type="button"
+                disabled={!state.hydrated}
                 aria-label={`Comment on hunk ${hunkRange(hunk.header)}`}
                 onclick={() => state.compose(index)}>+ Comment</button
               >
@@ -270,6 +285,51 @@
 
 <div class={`changes changes--${layout}`}>
   <div class="notices">
+    <p class="notice" role="status">
+      Feedback: {state.hydrating
+        ? "Loading…"
+        : state.saveError
+          ? state.hydrated
+            ? "Couldn't save"
+            : "Couldn't load"
+          : state.dirty || state.saving
+            ? "Saving…"
+            : state.hydrated
+              ? "Saved"
+              : "Not loaded"}
+    </p>
+    {#if state.saveError}
+      <p class="notice" role="alert">{state.saveError}</p>
+      {#if state.conflicted}
+        <label
+          >Copy local feedback before reloading<textarea
+            readonly
+            value={state.recoveryText()}
+            aria-label="Local feedback recovery"></textarea></label
+        >
+        <button
+          class="btn btn--soft"
+          type="button"
+          onclick={() => {
+            if (
+              window.confirm(
+                "Reload saved feedback and discard local edits? Copy your feedback first.",
+              )
+            )
+              void state.reloadReview();
+          }}>Reload saved feedback</button
+        >
+      {:else}
+        <button
+          class="btn btn--soft"
+          type="button"
+          onclick={() => void state.retrySave()}
+          >{state.hydrated
+            ? "Retry feedback save"
+            : "Retry loading feedback"}</button
+        >
+      {/if}
+    {/if}
     {#if state.error}<p class="notice" role="alert">{state.error}</p>{/if}
     {#if state.notice}<p class="notice notice--ok" role="status">
         {state.notice}
@@ -330,7 +390,7 @@
       <button
         class="btn btn--primary"
         type="button"
-        disabled={!state.unsent}
+        disabled={!state.unsent || !state.hydrated || state.loading}
         aria-expanded={state.previewing}
         onclick={() => (state.previewing = !state.previewing)}
         >Preview &amp; paste</button

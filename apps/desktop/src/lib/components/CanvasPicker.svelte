@@ -125,7 +125,10 @@
                 <div class="card card--confirm">
                   <span class="card__body">
                     <strong>Delete “{canvas.title}”?</strong>
-                    <small>Its text is removed from this device.</small>
+                    <small
+                      >Its content and saved review feedback are removed from
+                      this device.</small
+                    >
                   </span>
                   <button
                     class="btn btn--danger"

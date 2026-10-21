@@ -12,7 +12,67 @@ import {
   RuntimeRequestSchema,
   SessionRequestSchema,
   SessionAttentionSchema,
+  ReviewRecordSchema,
+  MAX_FRAME_BYTES,
 } from "@agentica/protocol";
+
+test("review records and method contracts are bounded within RPC frames", () => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const record = {
+    id,
+    order: 1,
+    path: "😀".repeat(250),
+    section: "unstaged",
+    hunk: {
+      header: "@@ -1 +1 @@",
+      range: "@@ -1 +1 @@",
+      fingerprint: "ab".repeat(32),
+    },
+    comment: "\u0001".repeat(1800),
+    sent: false,
+    outdated: false,
+  };
+  const scope = { workspaceId: id, canvasId: id, projectId: id, tileId: id };
+  const request = {
+    protocolVersion: 1,
+    id: "review",
+    method: "changes.review.save",
+    params: { ...scope, expectedRevision: 1, record, deleteId: "composer" },
+  };
+  assert.equal(RuntimeRequestSchema.safeParse(request).success, true);
+  assert.ok(Buffer.byteLength(JSON.stringify(request)) < MAX_FRAME_BYTES);
+  assert.ok(
+    Buffer.byteLength(
+      JSON.stringify({
+        protocolVersion: 1,
+        id: "review",
+        result: { revision: 1, record, next: null },
+      }),
+    ) < MAX_FRAME_BYTES,
+  );
+  for (const invalid of [
+    { ...record, comment: "😀".repeat(1001) },
+    { ...record, path: "" },
+    { ...record, order: -1 },
+    { ...record, hunk: undefined },
+    { ...record, comment: "\u0001".repeat(4000) },
+  ])
+    assert.equal(ReviewRecordSchema.safeParse(invalid).success, false);
+  for (const params of [
+    { ...scope, after: id },
+    { ...scope, expectedRevision: 0 },
+    { ...scope, record: null },
+  ])
+    assert.equal(
+      RuntimeRequestSchema.safeParse({
+        protocolVersion: 1,
+        id: "review",
+        method: "changes.review.load",
+        params,
+      }).success,
+      false,
+    );
+});
 
 test("attention is bounded plain text and controls require identities and safe sequences", () => {
   const clear = {

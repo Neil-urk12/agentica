@@ -226,7 +226,8 @@
                   aria-label="Confirm delete"
                 >
                   <span
-                    >Delete “{label}” and everything in it from this computer?</span
+                    >Delete “{label}” and everything in it, including saved
+                    review feedback, from this computer?</span
                   >
                   <span class="tile__actions">
                     <button
