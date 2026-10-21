@@ -964,4 +964,66 @@ mod tests {
             ("drawing", String::new())
         );
     }
+
+    #[test]
+    fn a_reply_survives_another_tab_closing_the_workspace() {
+        // Tabs share one runtime; `call` stands in for either tab.
+        let temp = tempfile::tempdir().unwrap();
+        let mut runtime = crate::Runtime::new(Some(temp.path().to_owned()));
+        let mut call = |method: &str, params: Value| -> Result<Value, Value> {
+            let response = runtime.handle_request(
+                &serde_json::to_vec(&json!({"protocolVersion": 1, "id": "tabs",
+                    "method": method, "params": params}))
+                .unwrap(),
+            );
+            match response.get("error") {
+                Some(error) => Err(error.clone()),
+                None => Ok(response["result"].clone()),
+            }
+        };
+        let workspace =
+            call("workspace.create", json!({"name": "Tabs"})).unwrap()["workspace"]["id"].clone();
+        let canvas = call(
+            "canvas.create",
+            json!({"workspaceId": workspace, "title": "Canvas"}),
+        )
+        .unwrap()["canvas"]["id"]
+            .clone();
+        let reference = json!({"workspaceId": workspace, "canvasId": canvas});
+        let [a, b] = [(1, 0.0), (2, 400.0)].map(|(revision, x)| {
+            call(
+                "node.createText",
+                json!({"workspaceId": workspace, "canvasId": canvas, "expectedRevision": revision,
+                    "x": x, "y": 0, "width": 200, "height": 100, "text": "Note"}),
+            )
+            .unwrap()["node"]["id"]
+                .clone()
+        });
+        let turn = new_id().unwrap();
+        call(
+            "conversation.start",
+            json!({"workspaceId": workspace, "canvasId": canvas, "turnId": turn,
+                "prompt": "Link them", "model": "test", "nodeIds": [a, b],
+                "anchor": {"x": 0, "y": 400}}),
+        )
+        .unwrap();
+
+        // Another tab opening a second workspace leaves this one open.
+        call("workspace.create", json!({"name": "Other"})).unwrap();
+        call("canvas.open", reference.clone()).unwrap();
+        // Another tab closing it refuses this tab's request until it reopens,
+        // as Retry save does; the reply still generating is kept.
+        call("workspace.close", json!({"workspaceId": workspace})).unwrap();
+        let finish = json!({"workspaceId": workspace, "canvasId": canvas, "turnId": turn,
+            "reply": "Linked", "status": "complete", "error": "",
+            "operations": [{"op": "connect", "edgeId": new_id().unwrap(),
+                "sourceNodeId": a, "targetNodeId": b}]});
+        assert_eq!(
+            call("conversation.finish", finish.clone()).unwrap_err()["code"],
+            "WORKSPACE_NOT_OPEN"
+        );
+        call("workspace.open", json!({"workspaceId": workspace})).unwrap();
+        let finished = call("conversation.finish", finish).unwrap();
+        assert_eq!(finished["turn"]["status"], "pending");
+    }
 }

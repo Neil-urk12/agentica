@@ -570,7 +570,7 @@
     {
       "method": "canvas.open",
       "params": { "workspaceId": "$workspaceId", "canvasId": "$canvasId" },
-      "error": "WORKSPACE_NOT_OPEN"
+      "expect": { "canvas": { "id": "$canvasId" } }
     },
     {
       "method": "workspace.close",
