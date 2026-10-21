@@ -114,6 +114,8 @@ released version and date. Keep validation evidence in the
 - Workspace listing and deletion roll back a write interrupted by a crash
   (listing only while no writer holds the workspace), instead of reporting the
   workspace as unreadable and refusing deletion.
+- Note cards become read-only while the editor is busy, matching the inspector,
+  so keystrokes are no longer silently dropped.
 - Redesigned the workspace picker as a full start screen for less technical
   users: one "What are you working on?" name field, saved workspaces as tiles,
   plain-language copy, and a labelled Settings button. Connection details appear

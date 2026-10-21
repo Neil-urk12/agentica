@@ -122,6 +122,7 @@
       aria-label={`Edit ${label.toLowerCase()} text`}
       value={data.text}
       maxlength={LIMITS.text}
+      readonly={!data.editable}
       oninput={(event) => data.onEdit?.(event.currentTarget.value)}
       onblur={() => (editing = false)}
       onkeydown={(event) => {
