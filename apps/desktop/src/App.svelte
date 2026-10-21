@@ -9,6 +9,7 @@
   import Modal from "./lib/components/Modal.svelte";
   import "@xterm/xterm/css/xterm.css";
   import {
+    FILE_LIMITS,
     LIMITS,
     PROJECT_HEADER,
     PROJECT_PADDING,
@@ -44,7 +45,17 @@
   import CanvasToolbar from "./lib/components/CanvasToolbar.svelte";
   import DrawingNode from "./lib/components/DrawingNode.svelte";
   import DesignNode from "./lib/components/DesignNode.svelte";
+  import FileNode from "./lib/components/FileNode.svelte";
   import TextNode from "./lib/components/TextNode.svelte";
+  import {
+    FILE_ACCEPT,
+    extractFileText,
+    fileKindLabel,
+    fileMime,
+    formatFileSize,
+    openCanvasFile,
+    readCanvasFile,
+  } from "./lib/files";
   import {
     exchangePosition,
     stageOperations,
@@ -83,6 +94,7 @@
   const nodeTypes = {
     design: DesignNode,
     drawing: DrawingNode,
+    file: FileNode,
     text: TextNode,
     project: ProjectNode,
     session: SessionNode,
@@ -178,6 +190,11 @@
   let reviewError = $state("");
   let resolving = $state(false);
   let fitNotice = $state("");
+  let fileInput = $state<HTMLInputElement>();
+  let dropActive = $state(false);
+  let importing = $state(false);
+  let importProgress = $state(0);
+  let importName = $state("");
   const hasSelection = $derived(
     nodes.some((n) => n.selected && !n.id.startsWith("preview-")),
   );
@@ -284,6 +301,9 @@
   const htmlArtifact = $derived(
     artifact?.type === "html" ? artifact : undefined,
   );
+  const fileArtifact = $derived(
+    artifact?.type === "file" ? artifact : undefined,
+  );
   const isDrawingTool = $derived(
     tool === "draw" || tool === "rectangle" || tool === "ellipse",
   );
@@ -299,9 +319,11 @@
           ? (artifact.drawing.shapes[0]?.kind ?? "path")
           : artifact?.type === "html"
             ? "design"
-            : artifact?.purpose === "instruction"
-              ? "instruction"
-              : "text";
+            : artifact?.type === "file"
+              ? "file"
+              : artifact?.purpose === "instruction"
+                ? "instruction"
+                : "text";
       const turn = editorState.turns.find(
         (t) => t.promptNodeId === node.id || t.replyNodeId === node.id,
       );
@@ -313,13 +335,15 @@
           ? "Instruction note"
           : kind === "design"
             ? "Design"
-            : kind === "text"
-              ? "Text"
-              : kind === "rectangle"
-                ? "Rectangle"
-                : kind === "ellipse"
-                  ? "Ellipse"
-                  : "Drawing";
+            : kind === "file" && artifact?.type === "file"
+              ? artifact.name
+              : kind === "text"
+                ? "Text"
+                : kind === "rectangle"
+                  ? "Rectangle"
+                  : kind === "ellipse"
+                    ? "Ellipse"
+                    : "Drawing";
       return { id: node.id, kind, label: `${name} ${index + 1}` };
     });
     return [
@@ -747,6 +771,17 @@
     const node = document?.nodes.find((item) => item.id === nodeId);
     const source = document?.artifacts.find((a) => a.id === node?.artifactId);
     if (!node || !source) return;
+    if (source.type === "file") {
+      reader = {
+        title: source.name,
+        subtitle: `${fileKindLabel(source.mime)} · ${formatFileSize(source.size)} · read-only`,
+        text:
+          source.text ||
+          "No text could be extracted from this file. Open it with the system app to read it.",
+        markdown: false,
+      };
+      return;
+    }
     if (source.type === "html") {
       reader = {
         title: "Design source",
@@ -789,6 +824,107 @@
       markdown: true,
       startEditing,
     };
+  }
+
+  /** A drag carries files rather than in-app text or canvas objects. */
+  function carriesFiles(event: DragEvent) {
+    // `types` is an array in Chromium but a DOMStringList in Firefox.
+    return Array.from(event.dataTransfer?.types ?? []).includes("Files");
+  }
+
+  /**
+   * A file dropped outside the canvas must not replace the app with the file.
+   * The canvas handles its own drop before this window listener runs.
+   */
+  function blockFileDrop(event: DragEvent) {
+    if (carriesFiles(event)) event.preventDefault();
+  }
+
+  /** Only the canvas takes file drops; everywhere else ignores them. */
+  function dragFilesOver(event: DragEvent) {
+    if (!canEdit || !carriesFiles(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    dropActive = true;
+  }
+
+  function leaveFileDrag(event: DragEvent) {
+    // Moving over a child also fires dragleave; stay active inside the canvas.
+    if (
+      event.relatedTarget instanceof Node &&
+      canvasEl?.contains(event.relatedTarget)
+    )
+      return;
+    dropActive = false;
+  }
+
+  function dropFiles(event: DragEvent) {
+    if (!carriesFiles(event)) return;
+    event.preventDefault();
+    dropActive = false;
+    if (!canEdit || !canvasEl) return;
+    const flow = toFlow(
+      { x: event.clientX, y: event.clientY },
+      canvasEl.getBoundingClientRect(),
+    );
+    void importFiles(event.dataTransfer?.files ?? null, flow);
+  }
+
+  /**
+   * Copy picked or dropped files into the workspace and place them near the
+   * viewport centre or at the drop point. Text is extracted before upload so
+   * the agent can read it.
+   */
+  async function importFiles(files: FileList | null, at?: Point) {
+    const picked = files ? [...files] : [];
+    // One import at a time keeps progress and uploads in a single order.
+    if (!picked.length || importing || !editorState.document || !canEdit)
+      return;
+    const area = usable();
+    const centre = area
+      ? areaCentre(viewport, area)
+      : {
+          x: (340 - viewport.x) / viewport.zoom,
+          y: (300 - viewport.y) / viewport.zoom,
+        };
+    const anchor = at ?? centre;
+    importing = true;
+    promptError = "";
+    try {
+      let index = 0;
+      for (const file of picked) {
+        const mime = fileMime(file);
+        if (!mime) {
+          promptError = `${file.name} is not a supported file type. Use an image, PDF, Word document, or text file.`;
+          continue;
+        }
+        if (file.size > FILE_LIMITS.maxBytes) {
+          promptError = `${file.name} is larger than 8 MB.`;
+          continue;
+        }
+        importName = file.name;
+        importProgress = 0;
+        const text = await extractFileText(file, mime);
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        await editor.addFile(
+          { name: file.name, mime, size: file.size, text, bytes },
+          {
+            x: anchor.x - 190 + index * 32,
+            y: anchor.y - 150 + index * 32,
+          },
+          (fraction) => (importProgress = fraction),
+        );
+        index += 1;
+      }
+    } catch (error) {
+      promptError =
+        error instanceof Error ? error.message : "The file could not be added.";
+    } finally {
+      importing = false;
+      importProgress = 0;
+      importName = "";
+      if (fileInput) fileInput.value = "";
+    }
   }
 
   /**
@@ -982,7 +1118,9 @@
               ? "drawing"
               : artifact.type === "html"
                 ? "design"
-                : "text",
+                : artifact.type === "file"
+                  ? "file"
+                  : "text",
           position: { x: node.x, y: node.y },
           width: node.width,
           height: node.height,
@@ -1001,7 +1139,31 @@
               ? { drawing: artifact.drawing }
               : artifact.type === "html"
                 ? { html: artifact.html }
-                : { text: artifact.text, purpose: artifact.purpose }),
+                : artifact.type === "file"
+                  ? {
+                      name: artifact.name,
+                      mime: artifact.mime,
+                      size: artifact.size,
+                      text: artifact.text,
+                      load: () =>
+                        readCanvasFile(
+                          connectionKey.trim(),
+                          editorState.workspace!.workspace.id,
+                          artifact.id,
+                        ),
+                      onOpen: () =>
+                        void openCanvasFile(
+                          connectionKey.trim(),
+                          editorState.workspace!.workspace.id,
+                          artifact.id,
+                        ).catch((error: unknown) => {
+                          promptError =
+                            error instanceof Error
+                              ? error.message
+                              : "The file could not be opened.";
+                        }),
+                    }
+                  : { text: artifact.text, purpose: artifact.purpose }),
             preview,
             editable: editable && !preview,
             connectable: currentTool === "arrow" && !preview,
@@ -1024,7 +1186,13 @@
             onResize: (width: number, height: number) =>
               editor.placeNode(node.id, { width, height }),
             onRetry: () => turn && void handlePromptSubmit(turn.prompt),
-            onRead: preview ? undefined : () => openNodeReader(node.id),
+            onRead: preview
+              ? undefined
+              : artifact.type === "file"
+                ? artifact.text
+                  ? () => openNodeReader(node.id)
+                  : undefined
+                : () => openNodeReader(node.id),
           },
         };
       };
@@ -1640,7 +1808,12 @@
   </Modal>
 {/if}
 
-<svelte:window onbeforeunload={beforeUnload} onkeydown={onKeydown} />
+<svelte:window
+  onbeforeunload={beforeUnload}
+  onkeydown={onKeydown}
+  ondragover={blockFileDrop}
+  ondrop={blockFileDrop}
+/>
 
 {#snippet connectionControls()}
   {#if stage === "workspace" || !connected}
@@ -1863,6 +2036,14 @@
         <span>{closeNotice}</span>
       </div>
     {/if}
+    {#if importing}
+      <div class="banner" role="status">
+        <Icon name="upload_file" size={18} />
+        <span>
+          Importing {importName || "file"}… {Math.round(importProgress * 100)}%
+        </span>
+      </div>
+    {/if}
     {#if promptError}
       <div class="banner banner--error" role="alert">
         <Icon name="error" size={18} />
@@ -1912,7 +2093,24 @@
         class:canvas--pan={tool === "pan"}
         aria-label="Canvas workspace"
         bind:this={canvasEl}
+        ondragover={dragFilesOver}
+        ondragleave={leaveFileDrag}
+        ondrop={dropFiles}
       >
+        <input
+          hidden
+          type="file"
+          multiple
+          accept={FILE_ACCEPT}
+          bind:this={fileInput}
+          onchange={(event) => void importFiles(event.currentTarget.files)}
+        />
+        {#if canEdit && dropActive}
+          <div class="canvas__drop" aria-hidden="true">
+            <Icon name="upload_file" size={28} />
+            <span>Drop files to copy them onto the canvas</span>
+          </div>
+        {/if}
         {#key editorState.document?.canvas.id}
           <SvelteFlow
             bind:nodes
@@ -2051,6 +2249,15 @@
               <Icon name="add_box" size={18} />
               Write on the canvas
             </button>
+            <button
+              class="btn btn--soft"
+              type="button"
+              disabled={!canEdit || importing}
+              onclick={() => fileInput?.click()}
+            >
+              <Icon name="upload_file" size={18} />
+              Add a file
+            </button>
           </div>
         {/if}
 
@@ -2073,9 +2280,11 @@
               {tool}
               color={strokeColor}
               width={strokeWidth}
+              fileDisabled={!canEdit || importing}
               onSelect={selectTool}
               onColor={(value) => (strokeColor = value)}
               onWidth={(value) => (strokeWidth = value)}
+              onFile={() => fileInput?.click()}
             />
           {/if}
           {#if pendingReply || (activeTurn?.status === "generating" && !generating)}
@@ -2146,15 +2355,17 @@
               "Your prompt. Project folders, session tiles and terminal output are excluded.",
               hasSelection
                 ? contextIds.length
-                  ? `The ${contextIds.length} selected ${contextIds.length === 1 ? "object" : "objects"}: position, size, text or drawing, and connections between them.`
+                  ? `The ${contextIds.length} selected ${contextIds.length === 1 ? "object" : "objects"}: position, size, text, extracted file text, and connections between them.`
                   : "No selected notes or drawings. Native sessions are excluded."
-                : "Canvas notes, drawings and conversation cards: position, size, text or drawing, and connections.",
+                : "Canvas notes, drawings, files, and conversation cards: position, size, text, extracted file text, and connections.",
               "Up to 8 earlier prompts and replies from this canvas, with their outcomes.",
               "Select objects before sending to limit what is shared.",
             ]}
             notice={toolsNotice}
             onCancel={() => conversationAbort?.abort()}
             onToggleToolbar={() => (toolbarOpen = !toolbarOpen)}
+            onAddFile={() => fileInput?.click()}
+            addFileDisabled={!canEdit || importing}
             onSubmit={handlePromptSubmit}
           />
         </div>
@@ -2205,6 +2416,58 @@
                     <Icon name="code" size={16} />Read HTML source
                   </button>
                 </div>
+              </div>
+            {/if}
+            {#if fileArtifact}
+              <div class="field">
+                <span class="field__label">File</span>
+                <p class="muted">
+                  {fileArtifact.name} · {fileKindLabel(fileArtifact.mime)} · {formatFileSize(
+                    fileArtifact.size,
+                  )}
+                </p>
+                <p class="muted">
+                  Copied into this workspace. Selected file text is included in
+                  the next prompt for the agent.
+                </p>
+                <div class="inspector__actions">
+                  <button
+                    class="btn btn--soft"
+                    type="button"
+                    onclick={() => {
+                      if (!editorState.document) return;
+                      void openCanvasFile(
+                        connectionKey.trim(),
+                        editorState.workspace!.workspace.id,
+                        fileArtifact.id,
+                      ).catch((error: unknown) => {
+                        promptError =
+                          error instanceof Error
+                            ? error.message
+                            : "The file could not be opened.";
+                      });
+                    }}
+                  >
+                    <Icon name="open_in_new" size={16} />{desktopMode
+                      ? "Open with system app"
+                      : "Download a copy"}
+                  </button>
+                  {#if fileArtifact.text}
+                    <button
+                      class="btn btn--soft"
+                      type="button"
+                      onclick={() => openNodeReader(selected.id)}
+                    >
+                      <Icon name="open_in_full" size={16} />Read extracted text
+                    </button>
+                  {/if}
+                </div>
+                {#if !fileArtifact.text}
+                  <p class="muted">
+                    No text could be extracted; images and legacy Word files are
+                    preview-only.
+                  </p>
+                {/if}
               </div>
             {/if}
             {#if textArtifact}

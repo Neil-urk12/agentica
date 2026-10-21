@@ -5,6 +5,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "session_request",
             "session_subscribe",
             "session_shutdown",
+            "open_file",
         ]),
     ))?;
     Ok(())

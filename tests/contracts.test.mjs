@@ -8,6 +8,8 @@ import {
   AgentStartSchema,
   RunEventPageSchema,
   MAX_EVENT_PAGE_BYTES,
+  FileArtifactSchema,
+  FILE_LIMITS,
   ResultSchemas,
   RuntimeRequestSchema,
   SessionRequestSchema,
@@ -299,6 +301,118 @@ test("normalized run events enforce correlation, bounds, and cancellation orderi
   assert.equal(RunEventPageSchema.safeParse(page).success, true);
   page.events.at(-1).event.text += "x";
   assert.equal(RunEventPageSchema.safeParse(page).success, false);
+});
+
+test("file artifacts and upload requests keep binary content bounded and typed", () => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const artifact = {
+    id,
+    type: "file",
+    schemaVersion: 1,
+    revision: 1,
+    name: "brief.pdf",
+    mime: "application/pdf",
+    size: 1024,
+    text: "Extracted summary",
+  };
+  assert.equal(FileArtifactSchema.safeParse(artifact).success, true);
+  for (const mutate of [
+    (value) => {
+      value.mime = "application/x-msdownload";
+    },
+    (value) => {
+      value.name = "";
+    },
+    (value) => {
+      value.name = "x".repeat(FILE_LIMITS.name + 1);
+    },
+    (value) => {
+      value.size = FILE_LIMITS.maxBytes + 1;
+    },
+    (value) => {
+      value.size = 1.5;
+    },
+    (value) => {
+      value.text = "x".repeat(FILE_LIMITS.text + 1);
+    },
+  ]) {
+    const invalid = structuredClone(artifact);
+    mutate(invalid);
+    assert.equal(FileArtifactSchema.safeParse(invalid).success, false);
+  }
+
+  const request = (method, params) => ({
+    protocolVersion: 1,
+    id: "file",
+    method,
+    params,
+  });
+  assert.equal(
+    RuntimeRequestSchema.safeParse(
+      request("file.chunk", {
+        workspaceId: id,
+        uploadId: id,
+        offset: 0,
+        data: "aGVsbG8=",
+      }),
+    ).success,
+    true,
+  );
+  for (const data of [
+    "not base64!",
+    "aGVsbG8",
+    "x".repeat(FILE_LIMITS.chunkData + 1),
+  ]) {
+    assert.equal(
+      RuntimeRequestSchema.safeParse(
+        request("file.chunk", {
+          workspaceId: id,
+          uploadId: id,
+          offset: 0,
+          data,
+        }),
+      ).success,
+      false,
+    );
+  }
+  assert.equal(
+    RuntimeRequestSchema.safeParse(
+      request("file.begin", {
+        workspaceId: id,
+        canvasId: id,
+        name: "notes.txt",
+        mime: "text/plain",
+        size: 4,
+        text: "note",
+      }),
+    ).success,
+    true,
+  );
+  assert.equal(
+    RuntimeRequestSchema.safeParse(
+      request("file.finish", {
+        workspaceId: id,
+        canvasId: id,
+        expectedRevision: 1,
+        uploadId: id,
+        x: 0,
+        y: 0,
+        width: 40,
+        height: 40,
+      }),
+    ).success,
+    true,
+  );
+  assert.equal(
+    ResultSchemas["file.read"].safeParse({
+      artifactId: id,
+      name: "brief.pdf",
+      mime: "application/pdf",
+      size: 1024,
+      data: "aGVsbG8=",
+    }).success,
+    true,
+  );
 });
 
 test("operation and agent scope bounds reject oversized and duplicate identities", () => {
