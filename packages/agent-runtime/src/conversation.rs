@@ -85,6 +85,16 @@ enum Operation {
         #[serde(default)]
         label: String,
     },
+    #[serde(rename = "createHtml")]
+    CreateHtml {
+        node_id: String,
+        artifact_id: String,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        html: String,
+    },
     #[serde(rename = "updateText")]
     UpdateText { node_id: String, text: String },
     #[serde(rename = "updateShape")]
@@ -150,25 +160,32 @@ fn insert_node(
     artifact_id: &str,
     g: &Geometry,
     body: &str,
-    drawing: bool,
+    kind: &str,
 ) -> Result<(), RuntimeError> {
     id("nodeId", node_id)?;
     id("artifactId", artifact_id)?;
     g.check()?;
     let content_id = new_id()?;
-    let kind = if drawing { "drawing" } else { "text" };
-    if drawing {
-        tx.execute(
+    match kind {
+        "drawing" => tx.execute(
             "INSERT INTO drawing_content(id, body) VALUES (?1, ?2)",
             (&content_id, body),
-        )?;
-    } else {
-        text(body)?;
-        tx.execute(
-            "INSERT INTO text_content(id, body, purpose) VALUES (?1, ?2, 'note')",
-            (&content_id, body),
-        )?;
-    }
+        )?,
+        "html" => {
+            html(body)?;
+            tx.execute(
+                "INSERT INTO text_content(id, body, purpose) VALUES (?1, ?2, 'note')",
+                (&content_id, body),
+            )?
+        }
+        _ => {
+            text(body)?;
+            tx.execute(
+                "INSERT INTO text_content(id, body, purpose) VALUES (?1, ?2, 'note')",
+                (&content_id, body),
+            )?
+        }
+    };
     tx.execute("INSERT INTO artifact(id, type, schema_version, revision, content_store, content_id) VALUES (?1, ?2, 1, 1, 'sqlite', ?3)", (artifact_id, kind, &content_id))?;
     tx.execute("INSERT INTO canvas_node(id, canvas_id, kind, artifact_id, x, y, width, height) VALUES (?1, ?2, 'artifact', ?3, ?4, ?5, ?6, ?7)", (node_id, canvas_id, artifact_id, g.x, g.y, g.width, g.height))?;
     Ok(())
@@ -334,7 +351,32 @@ fn apply_operations(
                         height,
                     },
                     &text,
-                    false,
+                    "text",
+                )?;
+                created.insert(node_id);
+            }
+            Operation::CreateHtml {
+                node_id,
+                artifact_id,
+                x,
+                y,
+                width,
+                height,
+                html: body,
+            } => {
+                insert_node(
+                    tx,
+                    canvas_id,
+                    &node_id,
+                    &artifact_id,
+                    &Geometry {
+                        x,
+                        y,
+                        width,
+                        height,
+                    },
+                    &body,
+                    "html",
                 )?;
                 created.insert(node_id);
             }
@@ -356,7 +398,7 @@ fn apply_operations(
                     height,
                 };
                 let body = shape_body(&kind, &color, &label, &g)?;
-                insert_node(tx, canvas_id, &node_id, &artifact_id, &g, &body, true)?;
+                insert_node(tx, canvas_id, &node_id, &artifact_id, &g, &body, "drawing")?;
                 created.insert(node_id);
             }
             Operation::Connect {
@@ -542,10 +584,12 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                 .cloned()
                 .collect();
             let context = json!({"nodes": nodes, "artifacts": artifacts, "edges": edges});
-            if context.to_string().len() > crate::MAX_FRAME_BYTES {
-                return Err(invalid(
-                    "Canvas context exceeds 16 KiB. Select a smaller set of objects.",
-                ));
+            let context_bytes = context.to_string().len();
+            if context_bytes > crate::MAX_CANVAS_CONTEXT_BYTES {
+                return Err(invalid(format!(
+                    "Canvas context is {} KiB; the limit is 256 KiB. Select fewer objects or use a new canvas.",
+                    context_bytes.div_ceil(1024)
+                )));
             }
             let mut prior = history(tx, &p.canvas_id, 0)?;
             prior.reverse();
@@ -564,7 +608,15 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                     height: card_height(&p.prompt),
                 },
             )?;
-            insert_node(tx, &p.canvas_id, &node_id, &new_id()?, &g, &p.prompt, false)?;
+            insert_node(
+                tx,
+                &p.canvas_id,
+                &node_id,
+                &new_id()?,
+                &g,
+                &p.prompt,
+                "text",
+            )?;
             tx.execute("INSERT INTO conversation_turn(id,canvas_id,model,prompt,prompt_node_id,anchor,context,status) VALUES (?1,?2,?3,?4,?5,?6,?7,'generating')", (&p.turn_id,&p.canvas_id,&p.model,&p.prompt,&node_id,json!({"x":g.x,"y":g.y}).to_string(),context.to_string()))?;
             bump(tx, &p.canvas_id, canvas_revision(tx, &p.canvas_id)?)?;
             Ok(
@@ -647,7 +699,7 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                         height: card_height(&p.reply),
                     },
                 )?;
-                insert_node(tx, &p.canvas_id, &node_id, &new_id()?, &g, &p.reply, false)?;
+                insert_node(tx, &p.canvas_id, &node_id, &new_id()?, &g, &p.reply, "text")?;
                 bump(tx, &p.canvas_id, canvas_revision(tx, &p.canvas_id)?)?;
                 Some(node_id)
             } else {

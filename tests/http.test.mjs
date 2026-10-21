@@ -1800,3 +1800,184 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
     await stopBackend(backend.child);
   }
 });
+
+test("an applied HTML design renders in an inert frame on the canvas", async () => {
+  const backend = await startBackend();
+  key = backend.connectionKey;
+  let browser;
+  const rpc = async (method, params) => {
+    const reply = await send(port, {
+      body: JSON.stringify({
+        protocolVersion: 1,
+        id: crypto.randomUUID(),
+        method,
+        params,
+      }),
+    });
+    assert.equal(reply.status, 200);
+    const response = RuntimeResponseSchema.parse(JSON.parse(reply.text));
+    assert.equal(response.error, undefined, JSON.stringify(response));
+    return ResultSchemas[method].parse(response.result);
+  };
+  try {
+    const workspace = await rpc("workspace.create", { name: "Design UI" });
+    const workspaceId = workspace.workspace.id;
+    const { canvas } = await rpc("canvas.create", {
+      workspaceId,
+      title: "Login design",
+    });
+    const reference = { workspaceId, canvasId: canvas.id };
+    const turnId = crypto.randomUUID();
+    const start = await rpc("conversation.start", {
+      ...reference,
+      turnId,
+      prompt: "Design a login page",
+      model: "test",
+      anchor: { x: 0, y: 0 },
+      nodeIds: [],
+    });
+    const source = `<!doctype html><style>body{background:#101828;color:#f8fafc;font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0}main{width:320px}input,button{width:100%;padding:10px;margin:6px 0}</style><main><h1>Sign in</h1><input type="email" placeholder="you@example.com"><input type="password" placeholder="Password"><button>Continue</button></main><script>parent.document.title='owned';document.title='owned'</script>`;
+    const finished = await rpc("conversation.finish", {
+      ...reference,
+      turnId,
+      reply: "Here is a login page design.",
+      operations: [
+        {
+          op: "createHtml",
+          nodeId: crypto.randomUUID(),
+          artifactId: crypto.randomUUID(),
+          x: 400,
+          y: 0,
+          width: 960,
+          height: 640,
+          html: source,
+        },
+      ],
+      status: "complete",
+      error: "",
+    });
+    assert.equal(finished.turn.status, "pending");
+    assert.equal(
+      (
+        await rpc("conversation.resolve", {
+          ...reference,
+          turnId,
+          action: "apply",
+        })
+      ).turn.status,
+      "applied",
+    );
+    assert.equal(start.context.nodes.length, 0);
+
+    browser = await launchBrowser();
+    await browser.send(
+      "Page.navigate",
+      { url: `http://127.0.0.1:${port}/` },
+      browser.sessionId,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('#connection-key')`,
+      "the connection form",
+    );
+    await evaluate(
+      browser,
+      `(() => { const input = document.querySelector('#connection-key'); input.value = ${JSON.stringify(key)}; input.dispatchEvent(new Event('input', { bubbles: true })); })()`,
+    );
+    await clickAt(
+      browser,
+      await boxOf(browser, ".connbar button[type='submit']"),
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('.connbar--ok')`,
+      "the connected status",
+    );
+    const selectCard = async (label) => {
+      const card = `[...document.querySelectorAll('.cards .card')].find((item) => item.textContent.includes(${JSON.stringify(label)}))`;
+      await waitFor(
+        browser,
+        `${card} && !(${card}).disabled`,
+        `the ${label} card`,
+      );
+      // Later tests add workspaces: scroll the target card into the list view
+      // so its measured center is inside the clickable area.
+      await evaluate(
+        browser,
+        `(${card}).focus(); (${card}).scrollIntoView({ block: 'center' })`,
+      );
+      await clickAt(browser, await boxByText(browser, ".cards .card", label));
+    };
+    for (const label of ["Design UI", "Login design"]) await selectCard(label);
+    await waitFor(
+      browser,
+      `!!document.querySelector('.design iframe')`,
+      "the design preview",
+    );
+    const frame = await evaluate(
+      browser,
+      `(() => {
+        const iframe = document.querySelector('.design iframe');
+        const box = iframe.getBoundingClientRect();
+        return {
+          sandbox: iframe.getAttribute('sandbox'),
+          source: iframe.getAttribute('srcdoc'),
+          width: box.width,
+          height: box.height,
+        };
+      })()`,
+    );
+    assert.equal(frame.sandbox, "allow-same-origin", "scripts stay disabled");
+    assert.match(frame.source, /Sign in/);
+    assert.ok(frame.width > 0 && frame.height > 0, JSON.stringify(frame));
+    await waitFor(
+      browser,
+      `document.querySelector('.design iframe').contentDocument?.body?.innerText.includes('Sign in')`,
+      "the rendered login design",
+    );
+    assert.equal(
+      await evaluate(
+        browser,
+        `getComputedStyle(document.querySelector('.design iframe').contentDocument.body).backgroundColor`,
+      ),
+      "rgb(16, 24, 40)",
+      "the design's own CSS applies",
+    );
+    assert.notEqual(
+      await evaluate(browser, "document.title"),
+      "owned",
+      "design scripts never run",
+    );
+    // The design survives a reopen and is not stored as prose.
+    await clickAt(
+      browser,
+      await boxOf(browser, '[aria-label="Canvas gallery"]'),
+    );
+    await selectCard("Login design");
+    await waitFor(
+      browser,
+      `!!document.querySelector('.design iframe')`,
+      "the reopened design",
+    );
+    const stored = await rpc("canvas.open", reference);
+    const design = stored.artifacts.find(
+      (artifact) => artifact.type === "html",
+    );
+    assert.equal(design.html, source);
+    assert.equal(
+      stored.artifacts.some(
+        (artifact) =>
+          artifact.type === "text" && artifact.text.includes("Sign in"),
+      ),
+      false,
+      "the design is not duplicated as a text card",
+    );
+  } catch (error) {
+    if (browser)
+      error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({text:document.body.innerText.slice(-2000),frames:document.querySelectorAll('iframe').length})")}`;
+    throw error;
+  } finally {
+    await browser?.close();
+    await stopBackend(backend.child);
+  }
+});

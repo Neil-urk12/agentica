@@ -25,6 +25,9 @@ validates the same protocol, with integration tests checking compatibility.
 - Each workspace is a directory holding an exclusive `writer.lock` and one
   SQLite database. Both modes take the lock before any write and reject a
   second writer, in either mode, with an actionable error.
+- Canvas artifacts are text, drawings, or self-contained HTML designs. Designs
+  are shown in a sandboxed frame with no scripts or remote resources; the
+  runtime stores their source and never writes files into project folders.
 - The local main window has only the runtime request capability; no file, shell,
   network, or database plugin permissions are exposed.
 

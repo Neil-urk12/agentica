@@ -46,7 +46,11 @@ export function stageOperations(
   const staged = structuredClone(context);
   for (const input of operations) {
     const operation = CanvasOperationSchema.parse(input);
-    if (operation.op === "createText" || operation.op === "createShape") {
+    if (
+      operation.op === "createText" ||
+      operation.op === "createShape" ||
+      operation.op === "createHtml"
+    ) {
       if (
         staged.nodes.some((n) => n.id === operation.nodeId) ||
         staged.artifacts.some((a) => a.id === operation.artifactId)
@@ -63,25 +67,33 @@ export function stageOperations(
               revision: 1,
               text: operation.text,
             }
-          : {
-              id: artifactId,
-              type: "drawing",
-              schemaVersion: 1,
-              revision: 1,
-              drawing: {
-                shapes: [
-                  {
-                    kind: operation.kind,
-                    x: 0,
-                    y: 0,
-                    width,
-                    height,
-                    color: operation.color,
-                    label: operation.label,
-                  },
-                ],
+          : operation.op === "createHtml"
+            ? {
+                id: artifactId,
+                type: "html",
+                schemaVersion: 1,
+                revision: 1,
+                html: operation.html,
+              }
+            : {
+                id: artifactId,
+                type: "drawing",
+                schemaVersion: 1,
+                revision: 1,
+                drawing: {
+                  shapes: [
+                    {
+                      kind: operation.kind,
+                      x: 0,
+                      y: 0,
+                      width,
+                      height,
+                      color: operation.color,
+                      label: operation.label,
+                    },
+                  ],
+                },
               },
-            },
       );
       continue;
     }
@@ -161,7 +173,11 @@ export function checkedToolOperation(args: unknown): CanvasOperation {
   if (!args || typeof args !== "object" || Array.isArray(args))
     throw new Error("Canvas tool arguments must be an object.");
   const value = { ...args } as Record<string, unknown>;
-  if (value.op === "createText" || value.op === "createShape") {
+  if (
+    value.op === "createText" ||
+    value.op === "createShape" ||
+    value.op === "createHtml"
+  ) {
     value.nodeId = crypto.randomUUID();
     value.artifactId = crypto.randomUUID();
   } else if (value.op === "connect") value.edgeId = crypto.randomUUID();

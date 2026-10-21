@@ -20,6 +20,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("schema_v3.sql"),
     include_str!("schema_v4.sql"),
     include_str!("schema_v5.sql"),
+    include_str!("schema_v6.sql"),
 ];
 pub const STORAGE_VERSION: i64 = MIGRATIONS.len() as i64;
 
@@ -797,7 +798,10 @@ mod tests {
         drop(conn);
         let upgraded = Workspace::open(Some(temp.path()), &id).unwrap();
         assert_eq!(snapshot(&upgraded.conn), before);
-        assert_eq!(header(&upgraded.conn).unwrap(), (APPLICATION_ID, 5));
+        assert_eq!(
+            header(&upgraded.conn).unwrap(),
+            (APPLICATION_ID, STORAGE_VERSION)
+        );
         assert_eq!(
             upgraded
                 .conn

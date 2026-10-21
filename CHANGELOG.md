@@ -12,6 +12,20 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-21
 
+#### Let the canvas agent propose real HTML designs
+
+- Add an `html` artifact type and a `createHtml` canvas operation. A design is a
+  self-contained HTML/CSS page stored with the workspace and rendered on the
+  canvas in a sandboxed frame without script execution; the app CSP blocks
+  remote images, fonts, forms, and navigation. Designs can be moved, resized,
+  reviewed, and reopened like other canvas objects.
+- Ask for a screen or page and the agent proposes the design instead of
+  describing it or sketching boxes. Designs are capped at 8,000 characters so
+  one proposal plus its reply fits a runtime request frame; **Read HTML source**
+  shows the exact source from the inspector.
+- Upgrade workspace storage to version 6, rebuilding the artifact table to
+  accept the new type while preserving every existing row.
+
 #### Bound the canvas agent behind an explicit harness
 
 - Extract the canvas agent loop from the OpenRouter adapter into
@@ -34,6 +48,11 @@ released version and date. Keep validation evidence in the
 - Raise the provider prompt cap to a separate 256 KiB limit. The old 16 KiB
   runtime-frame limit included a ~3 KiB tool schema and rejected ordinary
   canvases and history before any request was sent; runtime RPC stays at 16 KiB.
+- Apply the same 256 KiB budget to a prompt's canvas snapshot in the runtime.
+  A canvas with a few notes or drawings exceeded one 16 KiB frame, so
+  `conversation.start` rejected every prompt with "Canvas context exceeds
+  16 KiB" and the editor showed a save-recovery banner; the context check now
+  uses the prompt budget and reports the measured size when it rejects.
 - Raise the default per-request agent deadline from 90 to 180 seconds and make
   it configurable in Settings (30–600 seconds), so slow free models are not cut
   off mid-generation. The timeout error now points to the setting.

@@ -43,6 +43,7 @@
   } from "./lib/canvas-view";
   import CanvasToolbar from "./lib/components/CanvasToolbar.svelte";
   import DrawingNode from "./lib/components/DrawingNode.svelte";
+  import DesignNode from "./lib/components/DesignNode.svelte";
   import TextNode from "./lib/components/TextNode.svelte";
   import {
     exchangePosition,
@@ -80,6 +81,7 @@
   import "@xyflow/svelte/dist/style.css";
 
   const nodeTypes = {
+    design: DesignNode,
     drawing: DrawingNode,
     text: TextNode,
     project: ProjectNode,
@@ -279,6 +281,9 @@
   const textArtifact = $derived(
     artifact?.type === "text" ? artifact : undefined,
   );
+  const htmlArtifact = $derived(
+    artifact?.type === "html" ? artifact : undefined,
+  );
   const isDrawingTool = $derived(
     tool === "draw" || tool === "rectangle" || tool === "ellipse",
   );
@@ -292,9 +297,11 @@
       const kind =
         artifact?.type === "drawing"
           ? (artifact.drawing.shapes[0]?.kind ?? "path")
-          : artifact?.purpose === "instruction"
-            ? "instruction"
-            : "text";
+          : artifact?.type === "html"
+            ? "design"
+            : artifact?.purpose === "instruction"
+              ? "instruction"
+              : "text";
       const turn = editorState.turns.find(
         (t) => t.promptNodeId === node.id || t.replyNodeId === node.id,
       );
@@ -304,13 +311,15 @@
           : "Agent reply"
         : kind === "instruction"
           ? "Instruction note"
-          : kind === "text"
-            ? "Text"
-            : kind === "rectangle"
-              ? "Rectangle"
-              : kind === "ellipse"
-                ? "Ellipse"
-                : "Drawing";
+          : kind === "design"
+            ? "Design"
+            : kind === "text"
+              ? "Text"
+              : kind === "rectangle"
+                ? "Rectangle"
+                : kind === "ellipse"
+                  ? "Ellipse"
+                  : "Drawing";
       return { id: node.id, kind, label: `${name} ${index + 1}` };
     });
     return [
@@ -738,6 +747,15 @@
     const node = document?.nodes.find((item) => item.id === nodeId);
     const source = document?.artifacts.find((a) => a.id === node?.artifactId);
     if (!node || !source) return;
+    if (source.type === "html") {
+      reader = {
+        title: "Design source",
+        subtitle: "HTML/CSS · read-only",
+        text: source.html,
+        markdown: false,
+      };
+      return;
+    }
     if (source.type === "drawing") {
       const labels = source.drawing.shapes
         .filter((shape) => shape.kind !== "path")
@@ -959,7 +977,12 @@
         return {
           ...nodes.find((item) => item.id === node.id),
           id: preview ? `preview-${node.id}` : node.id,
-          type: artifact.type === "drawing" ? "drawing" : "text",
+          type:
+            artifact.type === "drawing"
+              ? "drawing"
+              : artifact.type === "html"
+                ? "design"
+                : "text",
           position: { x: node.x, y: node.y },
           width: node.width,
           height: node.height,
@@ -976,7 +999,9 @@
           data: {
             ...(artifact.type === "drawing"
               ? { drawing: artifact.drawing }
-              : { text: artifact.text, purpose: artifact.purpose }),
+              : artifact.type === "html"
+                ? { html: artifact.html }
+                : { text: artifact.text, purpose: artifact.purpose }),
             preview,
             editable: editable && !preview,
             connectable: currentTool === "arrow" && !preview,
@@ -2164,6 +2189,24 @@
           </div>
 
           {#if selected && artifact}
+            {#if htmlArtifact}
+              <div class="field">
+                <span class="field__label">Content</span>
+                <p class="muted">
+                  A self-contained HTML/CSS design rendered in a sandboxed
+                  frame. Scripts and remote resources never run.
+                </p>
+                <div class="inspector__actions">
+                  <button
+                    class="btn btn--soft"
+                    type="button"
+                    onclick={() => openNodeReader(selected.id)}
+                  >
+                    <Icon name="code" size={16} />Read HTML source
+                  </button>
+                </div>
+              </div>
+            {/if}
             {#if textArtifact}
               <div class="field">
                 <label for="text-content"

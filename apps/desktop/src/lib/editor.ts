@@ -22,11 +22,11 @@ export interface DrawingSegment {
   drawing: Drawing;
 }
 
-/** Comparable content, so unsaved work is detected for text and drawings alike. */
+/** Comparable content, so unsaved work is detected for every artifact type. */
 function content(artifact: Artifact): string {
-  return artifact.type === "text"
-    ? artifact.text
-    : JSON.stringify(artifact.drawing);
+  if (artifact.type === "text") return artifact.text;
+  if (artifact.type === "html") return artifact.html;
+  return JSON.stringify(artifact.drawing);
 }
 
 export interface EditorState {

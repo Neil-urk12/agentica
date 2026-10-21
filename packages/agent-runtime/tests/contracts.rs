@@ -246,3 +246,210 @@ fn one_writer_per_workspace_across_launch_modes_and_aliases() {
     let detached = start_detached(temp.path());
     assert_eq!(code(&detached.call("workspace.open", open)), "ok");
 }
+
+/// A design is a sandboxed HTML page, not canvas shapes: proposals store it as
+/// its own artifact type and reject source that would crowd out the reply.
+#[test]
+fn html_design_proposals_apply_reopen_and_enforce_their_size_limit() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut backend = desktop(temp.path());
+    let workspace = call(
+        &mut backend,
+        "workspace.create",
+        json!({ "name": "Designs" }),
+    )["result"]["workspace"]["id"]
+        .clone();
+    let canvas = call(
+        &mut backend,
+        "canvas.create",
+        json!({ "workspaceId": workspace, "title": "Login page" }),
+    )["result"]["canvas"]["id"]
+        .clone();
+    let reference = json!({ "workspaceId": workspace, "canvasId": canvas });
+    let start = |turn: &str| {
+        json!({ "workspaceId": workspace, "canvasId": canvas, "turnId": turn,
+            "prompt": "Design a login page", "model": "test",
+            "anchor": { "x": 0, "y": 0 }, "nodeIds": [] })
+    };
+    let source = "<!doctype html><style>body{background:#101828;color:#fff}</style><main><h1>Sign in</h1><input><button>Continue</button></main>";
+    assert_eq!(
+        code(&call(
+            &mut backend,
+            "conversation.start",
+            start("00000000-0000-4000-8000-000000000020")
+        )),
+        "ok"
+    );
+    let operation = json!({ "op": "createHtml",
+        "nodeId": "00000000-0000-4000-8000-000000000021",
+        "artifactId": "00000000-0000-4000-8000-000000000022",
+        "x": 400, "y": 0, "width": 960, "height": 640, "html": source });
+    let finished = call(
+        &mut backend,
+        "conversation.finish",
+        json!({ "workspaceId": workspace, "canvasId": canvas,
+            "turnId": "00000000-0000-4000-8000-000000000020",
+            "reply": "Here is a login page design.",
+            "operations": [operation], "status": "complete", "error": "" }),
+    );
+    assert_eq!(code(&finished), "ok", "{finished}");
+    assert_eq!(
+        finished["result"]["turn"]["status"], "pending",
+        "a design is reviewable before it is applied"
+    );
+    let applied = call(
+        &mut backend,
+        "conversation.resolve",
+        json!({ "workspaceId": workspace, "canvasId": canvas,
+            "turnId": "00000000-0000-4000-8000-000000000020", "action": "apply" }),
+    );
+    assert_eq!(code(&applied), "ok", "{applied}");
+    let reopened = call(&mut backend, "canvas.open", reference.clone());
+    let artifact = reopened["result"]["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|artifact| artifact["type"] == "html")
+        .expect("the applied design is stored");
+    assert_eq!(artifact["html"], source);
+    assert!(reopened["result"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|node| node["id"] == "00000000-0000-4000-8000-000000000021"));
+
+    // Oversized source fails the finish instead of storing a partial design.
+    let oversized = "x".repeat(8_001);
+    assert_eq!(
+        code(&call(
+            &mut backend,
+            "conversation.start",
+            start("00000000-0000-4000-8000-000000000023")
+        )),
+        "ok"
+    );
+    let rejected = call(
+        &mut backend,
+        "conversation.finish",
+        json!({ "workspaceId": workspace, "canvasId": canvas,
+            "turnId": "00000000-0000-4000-8000-000000000023",
+            "reply": "Design", "operations": [{ "op": "createHtml",
+                "nodeId": "00000000-0000-4000-8000-000000000024",
+                "artifactId": "00000000-0000-4000-8000-000000000025",
+                "x": 400, "y": 0, "width": 960, "height": 640,
+                "html": oversized }],
+            "status": "complete", "error": "" }),
+    );
+    assert_eq!(code(&rejected), "INVALID_PARAMS", "{rejected}");
+    assert!(rejected["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("8000"));
+    let after = call(&mut backend, "canvas.open", reference);
+    assert_eq!(
+        after["result"]["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|artifact| artifact["type"] == "html")
+            .count(),
+        1,
+        "the rejected design was not stored"
+    );
+}
+
+/// A canvas is prompt data, not one transport frame: ordinary canvases exceed
+/// 16 KiB, so the conversation budget is separate and much larger.
+#[test]
+fn canvas_context_crosses_a_frame_but_stops_at_the_prompt_budget() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut backend = desktop(temp.path());
+    let workspace = call(
+        &mut backend,
+        "workspace.create",
+        json!({ "name": "Context" }),
+    )["result"]["workspace"]["id"]
+        .clone();
+    let canvas = call(
+        &mut backend,
+        "canvas.create",
+        json!({ "workspaceId": workspace, "title": "Canvas" }),
+    )["result"]["canvas"]["id"]
+        .clone();
+    let mut revision = call(
+        &mut backend,
+        "canvas.open",
+        json!({ "workspaceId": workspace, "canvasId": canvas }),
+    )["result"]["canvas"]["revision"]
+        .as_u64()
+        .unwrap();
+    let start = |turn: &str| {
+        json!({ "workspaceId": workspace, "canvasId": canvas, "turnId": turn,
+            "prompt": "Explain this canvas", "model": "test",
+            "anchor": { "x": 0, "y": 0 }, "nodeIds": [] })
+    };
+    fn add_note(
+        backend: &mut DesktopBackend,
+        workspace: &Value,
+        canvas: &Value,
+        revision: &mut u64,
+        index: usize,
+    ) {
+        let created = call(
+            backend,
+            "node.createText",
+            json!({ "workspaceId": workspace, "canvasId": canvas,
+                "expectedRevision": revision, "x": 0, "y": index * 100,
+                "width": 300, "height": 80, "text": "x".repeat(10_000) }),
+        );
+        assert_eq!(code(&created), "ok", "{created}");
+        *revision = created["result"]["revision"].as_u64().unwrap();
+    }
+
+    let mut notes = 0;
+    for _ in 0..3 {
+        add_note(&mut backend, &workspace, &canvas, &mut revision, notes);
+        notes += 1;
+    }
+    let accepted = call(
+        &mut backend,
+        "conversation.start",
+        start("00000000-0000-4000-8000-000000000001"),
+    );
+    assert_eq!(code(&accepted), "ok", "{accepted}");
+    let context = &accepted["result"]["context"];
+    assert!(
+        context.to_string().len() > 16 * 1024,
+        "the fixture must exceed one transport frame"
+    );
+    let finished = call(
+        &mut backend,
+        "conversation.finish",
+        json!({ "workspaceId": workspace, "canvasId": canvas,
+            "turnId": "00000000-0000-4000-8000-000000000001", "reply": "Done",
+            "operations": [], "status": "complete", "error": "" }),
+    );
+    assert_eq!(code(&finished), "ok", "{finished}");
+    // Starting and finishing a turn also created canvas nodes.
+    revision = call(
+        &mut backend,
+        "canvas.open",
+        json!({ "workspaceId": workspace, "canvasId": canvas }),
+    )["result"]["canvas"]["revision"]
+        .as_u64()
+        .unwrap();
+
+    // 27 maximal notes exceed the 256 KiB prompt budget, not the frame limit.
+    while notes < 27 {
+        add_note(&mut backend, &workspace, &canvas, &mut revision, notes);
+        notes += 1;
+    }
+    let rejected = call(
+        &mut backend,
+        "conversation.start",
+        start("00000000-0000-4000-8000-000000000002"),
+    );
+    assert_eq!(code(&rejected), "INVALID_PARAMS", "{rejected}");
+    let message = rejected["error"]["message"].as_str().unwrap();
+    assert!(message.contains("limit is 256 KiB"), "{message}");
+}

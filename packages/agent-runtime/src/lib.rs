@@ -12,6 +12,11 @@ pub use store::{default_data_root, RuntimeError, STORAGE_VERSION};
 
 pub const MAX_FRAME_BYTES: usize = 16 * 1024;
 
+/// Canvas context is prompt data, not a transport frame. A canvas can easily
+/// hold more than one frame's worth of objects, so bound it by the provider
+/// prompt budget instead (apps/desktop/src/lib/openrouter.ts).
+pub const MAX_CANVAS_CONTEXT_BYTES: usize = 256 * 1024;
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Request {

@@ -17,6 +17,9 @@ mod projects;
 // Limits shared with packages/protocol/src/index.ts.
 const MAX_LABEL: usize = 120;
 const MAX_TEXT: usize = 10_000;
+/// A design travels in one proposal operation, so it must leave room for the
+/// reply inside a single request frame.
+const MAX_HTML: usize = 8_000;
 const MAX_COORDINATE: f64 = 1_000_000.0;
 const MIN_SIZE: f64 = 40.0;
 const MAX_SIZE: f64 = 4_000.0;
@@ -122,6 +125,18 @@ pub(crate) fn text(value: &str) -> Result<(), RuntimeError> {
     if value.encode_utf16().count() > MAX_TEXT {
         return Err(invalid(format!(
             "text must not exceed {MAX_TEXT} characters."
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn html(value: &str) -> Result<(), RuntimeError> {
+    if value.trim().is_empty() {
+        return Err(invalid("A design must contain HTML."));
+    }
+    if value.encode_utf16().count() > MAX_HTML {
+        return Err(invalid(format!(
+            "A design must not exceed {MAX_HTML} characters."
         )));
     }
     Ok(())
@@ -975,6 +990,21 @@ fn artifact(tx: &Transaction, artifact_id: &str) -> Result<Value, RuntimeError> 
                 "schemaVersion": schema_version,
                 "revision": revision,
                 "text": body, "purpose": purpose,
+            }))
+        }
+        // Designs share the text store but keep their own artifact type so the
+        // canvas renders them in a sandboxed frame instead of as prose.
+        "html" => {
+            let body: String = tx.query_row(
+                "SELECT body FROM text_content WHERE id = ?1",
+                [&content_id],
+                |row| row.get(0),
+            )?;
+            Ok(json!({
+                "id": artifact_id, "type": "html",
+                "schemaVersion": schema_version,
+                "revision": revision,
+                "html": body,
             }))
         }
         "drawing" => {
