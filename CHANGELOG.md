@@ -10,6 +10,45 @@ released version and date. Keep validation evidence in the
 
 ## Unreleased
 
+### 2026-10-21
+
+- Save typed feedback before opening another file or hunk comment, and clear
+  review state only after canvas or workspace deletion succeeds so removed
+  drafts cannot trigger close warnings.
+- Confirm before discarding feedback on desktop close, save typed feedback when
+  switching files, and revalidate unsent hunk comments across files on refresh.
+- Include nonempty open feedback composers in page-unload and tile-removal
+  warnings, while keeping paste limited to saved comments.
+- Warn in both Changes layouts when backend limits omit entries, keeping all
+  notices above the review content so truncation remains visible.
+- Preserve a feedback composer's original file and hunk across refreshes, mark
+  only submitted comments Sent after a paste, and keep drafts and paste controls
+  accessible when the working tree becomes clean or unavailable.
+
+### 2026-10-20
+
+- Add a read-only **Changes** tile to project groups (header **Changes**
+  button; one per project). It lists staged, unstaged, and untracked files from
+  `git status --porcelain=v2 -z` (a file changed on both sides appears in both),
+  shows a unified diff, and collects feedback on a file or hunk. **Expand** (or
+  double-click the header) opens a full-screen review mode over the same state.
+  **Preview & paste** writes one numbered message into a chosen running Codex
+  session as a bracketed paste with no trailing Enter, then focuses that tile.
+  Drafts are memory-only: they are marked Outdated when their hunk changes,
+  Sent after paste, and guarded on tile removal and page unload.
+- Git runs only on tile creation, first show, Refresh, and when a Codex session
+  in the project raises attention. The folder comes from the saved project, not
+  the client; argv is fixed, `GIT_*` overrides are cleared, optional locks and
+  fsmonitor are off, and each request has a 10 s deadline. Unstaged diffs use
+  `diff-files`, because `git diff` refreshes and rewrites `.git/index`.
+  Repository content filters can still run, as with `git status` in a terminal.
+- `changes.*` requests are served outside the workspace writer lock so a slow
+  Git call never blocks autosave. Workspace storage moves to v6 (new
+  `changes_tile` table); older builds refuse v6 workspaces. Changes tiles reuse
+  the session-tile layout wire shape with `kind: "changes"`, so existing canvases
+  load and save unchanged. The paste command strips ESC and other control
+  characters so a payload cannot end the paste early.
+
 ### 2026-10-19
 
 - Move session attention out of the canvas zoom controls into a top-bar

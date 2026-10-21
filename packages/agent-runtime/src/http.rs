@@ -37,6 +37,7 @@ struct HttpState {
     runtime: Arc<Mutex<Runtime>>,
     sessions: Arc<SessionService>,
     session_connections: Arc<tokio::sync::Semaphore>,
+    data_root: Option<std::path::PathBuf>,
 }
 
 // Reject duplicate security headers instead of trusting whichever value is first.
@@ -197,6 +198,18 @@ async fn dispatch_local(state: Arc<HttpState>, request: Request) -> Response {
             Ok(Err(_)) => return reject(StatusCode::BAD_REQUEST, "Cannot read request body."),
             Err(_) => return reject(StatusCode::REQUEST_TIMEOUT, "Request timed out."),
         };
+    // Read-only Git never waits for, or blocks, the workspace writer.
+    if crate::changes::is_changes_request(&bytes) {
+        let data_root = state.data_root.clone();
+        return match tokio::task::spawn_blocking(move || {
+            crate::changes::handle_request(data_root.as_deref(), &bytes)
+        })
+        .await
+        {
+            Ok(reply) => Json(reply).into_response(),
+            Err(_) => reject(StatusCode::INTERNAL_SERVER_ERROR, "Backend runtime failed."),
+        };
+    }
     let mut runtime =
         match tokio::time::timeout_at(deadline, state.runtime.clone().lock_owned()).await {
             Ok(runtime) => runtime,
@@ -255,6 +268,7 @@ pub async fn serve_with_sessions(
             host: format!("127.0.0.1:{}", listener.local_addr()?.port()),
             origin: format!("http://127.0.0.1:{}", listener.local_addr()?.port()),
             credential: format!("Bearer {connection_key}").into_bytes(),
+            data_root: runtime.data_root().map(std::path::Path::to_owned),
             runtime: Arc::new(Mutex::new(runtime)),
             sessions,
             session_connections: Arc::new(tokio::sync::Semaphore::new(MAX_SESSION_CONNECTIONS)),

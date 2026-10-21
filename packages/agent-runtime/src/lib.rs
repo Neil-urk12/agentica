@@ -1,3 +1,4 @@
+pub mod changes;
 mod commands;
 pub mod contracts;
 pub mod http;
@@ -6,6 +7,10 @@ mod store;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 pub use commands::Runtime;
 pub use store::{default_data_root, RuntimeError, STORAGE_VERSION};
@@ -24,41 +29,55 @@ struct Request {
 const INVALID_REQUEST: &str =
     "Expected protocol version 1, an id, a supported method, and its params.";
 
-fn error(id: Option<&str>, code: &str, message: &str) -> Value {
+pub(crate) fn error(id: Option<&str>, code: &str, message: &str) -> Value {
     json!({ "protocolVersion": 1, "id": id, "error": { "code": code, "message": message } })
+}
+
+/// Validate a versioned request envelope; `accept(method, has_params)` gates the method.
+fn envelope(bytes: &[u8], accept: impl Fn(&str, bool) -> bool) -> Result<Request, Value> {
+    if bytes.len() > MAX_FRAME_BYTES {
+        return Err(error(
+            None,
+            "FRAME_TOO_LARGE",
+            "Requests must fit in 16 KiB.",
+        ));
+    }
+    let input = match serde_json::from_slice::<Value>(bytes) {
+        Ok(input) => input,
+        Err(_) => return Err(error(None, "INVALID_JSON", "Expected a JSON request.")),
+    };
+    if !input.is_object() {
+        return Err(error(None, "INVALID_REQUEST", INVALID_REQUEST));
+    }
+    let has_params = input.get("params").is_some();
+    match serde_json::from_value::<Request>(input) {
+        Ok(request)
+            if request.protocol_version == 1.0
+                && !request.id.is_empty()
+                // Zod measures JavaScript strings in UTF-16 code units.
+                && request.id.encode_utf16().count() <= 128
+                && accept(&request.method, has_params) =>
+        {
+            Ok(request)
+        }
+        _ => Err(error(None, "INVALID_REQUEST", INVALID_REQUEST)),
+    }
 }
 
 impl Runtime {
     /// Validate and dispatch a versioned JSON request from either transport.
     /// Envelope errors have a null id; command errors are correlated.
     pub fn handle_request(&mut self, bytes: &[u8]) -> Value {
-        if bytes.len() > MAX_FRAME_BYTES {
-            return error(None, "FRAME_TOO_LARGE", "Requests must fit in 16 KiB.");
-        }
-        let input = match serde_json::from_slice::<Value>(bytes) {
-            Ok(input) => input,
-            Err(_) => return error(None, "INVALID_JSON", "Expected a JSON request."),
-        };
-        if !input.is_object() {
-            return error(None, "INVALID_REQUEST", INVALID_REQUEST);
-        }
         // `runtime.ping` takes no params, not even null.
-        let has_params = input.get("params").is_some();
-        let request = match serde_json::from_value::<Request>(input) {
-            Ok(request)
-                if request.protocol_version == 1.0
-                    && !request.id.is_empty()
-                    // Zod measures JavaScript strings in UTF-16 code units.
-                    && request.id.encode_utf16().count() <= 128
-                    && (if request.method == "runtime.ping" {
-                        !has_params
-                    } else {
-                        commands::METHODS.contains(&request.method.as_str())
-                    }) =>
-            {
-                request
+        let request = match envelope(bytes, |method, has_params| {
+            if method == "runtime.ping" {
+                !has_params
+            } else {
+                commands::METHODS.contains(&method)
             }
-            _ => return error(None, "INVALID_REQUEST", INVALID_REQUEST),
+        }) {
+            Ok(request) => request,
+            Err(reply) => return reply,
         };
         if request.method == "runtime.ping" {
             return json!({ "protocolVersion": 1, "id": request.id, "result": { "status": "ok" } });
@@ -72,16 +91,21 @@ impl Runtime {
 
 /// Desktop connection state; the runtime is linked into the Tauri process.
 pub struct DesktopBackend {
-    connected: bool,
+    connected: Arc<AtomicBool>,
     runtime: Runtime,
 }
 
 impl DesktopBackend {
     pub fn new(runtime: Runtime) -> Self {
         Self {
-            connected: false,
+            connected: Arc::new(AtomicBool::new(false)),
             runtime,
         }
+    }
+
+    /// Shared connection state for requests served outside the runtime lock.
+    pub fn connected_flag(&self) -> Arc<AtomicBool> {
+        self.connected.clone()
     }
 
     pub fn request(&mut self, request: &Value, connect: bool) -> Result<Value, String> {
@@ -90,9 +114,9 @@ impl DesktopBackend {
             return Err("Requests must fit in 16 KiB.".to_owned());
         }
         if connect {
-            self.connected = true;
+            self.connected.store(true, Ordering::SeqCst);
         }
-        if !self.connected {
+        if !self.connected.load(Ordering::SeqCst) {
             return Err("Backend disconnected. Reconnect to start it.".to_owned());
         }
         Ok(self.runtime.handle_request(&bytes))

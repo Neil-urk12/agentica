@@ -16,6 +16,9 @@
       onCollapse: () => void;
       onAddAgent: () => void;
       onAddTerminal: () => void;
+      /** Create the project's Changes tile, or reveal the existing one. */
+      onChanges: () => void;
+      hasChanges: boolean;
       onLocate: () => void;
       onRemove: () => void;
       onResize: (width: number, height: number) => void;
@@ -157,6 +160,18 @@
         disabled={addDisabled}
         ><Icon name="terminal" size={16} /><span class="label"
           >Add terminal</span
+        ></button
+      >
+      <button
+        class="btn btn--soft add"
+        type="button"
+        aria-label={data.hasChanges ? "Show Changes" : "Add Changes"}
+        title={data.hasChanges
+          ? "Show Changes"
+          : "Add a read-only Git Changes tile"}
+        onclick={data.onChanges}
+        disabled={data.hasChanges ? false : addDisabled}
+        ><Icon name="difference" size={16} /><span class="label">Changes</span
         ></button
       >
       <button

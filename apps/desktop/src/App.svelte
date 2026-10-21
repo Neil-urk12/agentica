@@ -1,11 +1,15 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { invoke } from "@tauri-apps/api/core";
   import { open as pickDirectory } from "@tauri-apps/plugin-dialog";
   import { SessionManager } from "./lib/sessions";
   import ProjectNode from "./lib/components/ProjectNode.svelte";
   import SessionNode from "./lib/components/SessionNode.svelte";
+  import ChangesNode from "./lib/components/ChangesNode.svelte";
+  import ChangesOverlay from "./lib/components/ChangesOverlay.svelte";
+  import { ChangesManager } from "./lib/changes-manager.svelte";
+  import { feedbackMessage } from "./lib/changes";
   import Modal from "./lib/components/Modal.svelte";
   import "@xterm/xterm/css/xterm.css";
   import {
@@ -76,6 +80,7 @@
     text: TextNode,
     project: ProjectNode,
     session: SessionNode,
+    changes: ChangesNode,
   };
 
   const editor = new Editor(
@@ -106,6 +111,56 @@
     return workspace && document
       ? sessions.attention(workspace.workspace.id, document.canvas.id)
       : [];
+  });
+  // Read-only Git review state per Changes tile; drafts live only in memory.
+  const changes = new ChangesManager(
+    (method, params) =>
+      callRuntime(
+        connectionKey.trim(),
+        false,
+        method as "changes.status",
+        params as RuntimeParams<"changes.status">,
+      ) as never,
+  );
+  /** The Changes tile shown in full-screen review mode, if any. */
+  let reviewTile = $state<string | null>(null);
+  let pasting = $state(false);
+  const reviewTargets = $derived.by(() => {
+    void sessionRevision;
+    const document = editorState.document;
+    const workspaceId = editorState.workspace?.workspace.id;
+    const tile = document?.sessionTiles.find((t) => t.id === reviewTile);
+    return document && workspaceId && tile
+      ? sessions.pasteTargets(workspaceId, document.canvas.id, tile.projectId)
+      : [];
+  });
+  $effect(() => {
+    const document = editorState.document;
+    if (!document) return;
+    const ids = document.sessionTiles.map((t) => t.id);
+    untrack(() => {
+      changes.prune(document.canvas.id, ids);
+      if (reviewTile && !ids.includes(reviewTile)) reviewTile = null;
+    });
+  });
+  // A Codex session raising attention usually just changed files.
+  const seenAttention = new Set<string>();
+  $effect(() => {
+    const entries = attentionEntries;
+    untrack(() => {
+      const document = editorState.document;
+      for (const entry of entries) {
+        if (entry.tile.kind !== "cli-agent") continue;
+        const key = `${entry.status.sessionId}:${entry.status.attention.sequence}`;
+        if (seenAttention.has(key)) continue;
+        seenAttention.add(key);
+        const tile = document?.sessionTiles.find(
+          (t) => t.kind === "changes" && t.projectId === entry.tile.projectId,
+        );
+        const state = tile && changes.peek(tile.id);
+        if (state?.status && !state.loading) void state.refresh();
+      }
+    });
   });
   let projectDialog = $state<{ projectId?: string } | null>(null);
   let projectPath = $state("");
@@ -177,7 +232,8 @@
           n.selected &&
           !n.id.startsWith("preview-") &&
           n.type !== "project" &&
-          n.type !== "session",
+          n.type !== "session" &&
+          n.type !== "changes",
       )
       .map((n) => n.id),
   );
@@ -312,7 +368,7 @@
       ...document.sessionTiles.map((t) => ({
         id: t.id,
         kind: t.kind,
-        label: `${t.kind === "shell" ? "Terminal" : "Codex"} · ${document.projectGroups.find((g) => g.id === t.projectId)?.label ?? "Project"}`,
+        label: `${t.kind === "shell" ? "Terminal" : t.kind === "changes" ? "Changes" : "Codex"} · ${document.projectGroups.find((g) => g.id === t.projectId)?.label ?? "Project"}`,
       })),
     ];
   });
@@ -930,6 +986,7 @@
     const editable = connected && !editorState.busy;
     const turns = editorState.turns;
     const revision = sessionRevision;
+    const pastingNow = pasting;
     // Tracked so collapsing or expanding a group rerenders these nodes.
     const groupView = expandedGroups;
     untrack(() => {
@@ -1002,6 +1059,8 @@
           const tiles = document.sessionTiles.filter(
             (t) => t.projectId === group.id,
           );
+          const changesTile = tiles.find((t) => t.kind === "changes");
+          const processTiles = tiles.filter((t) => t.kind !== "changes");
           const running = sessions.summary(
             workspaceId,
             document.canvas.id,
@@ -1025,7 +1084,7 @@
                 running: running.filter((s) => s.state === "running").length,
                 starting: running.filter((s) => s.state === "starting").length,
                 stopping: running.filter((s) => s.state === "stopping").length,
-                stopped: tiles.length - running.length,
+                stopped: processTiles.length - running.length,
                 waiting: sessions
                   .attention(workspaceId, document.canvas.id)
                   .filter((entry) => entry.tile.projectId === group.id).length,
@@ -1050,6 +1109,17 @@
                 expandedGroups = { ...expandedGroups, [group.id]: true };
                 void editor.addSessionTile(group.id, "shell");
               },
+              hasChanges: !!changesTile,
+              // One Changes tile per project: reveal it instead of adding another.
+              onChanges: () => {
+                expandedGroups = { ...expandedGroups, [group.id]: true };
+                if (changesTile)
+                  void tick().then(() => {
+                    focusObject(changesTile.id);
+                    selectedId = changesTile.id;
+                  });
+                else void editor.addSessionTile(group.id, "changes");
+              },
               onLocate: () => void openProject(group.id),
               onRemove: () => void removeObject(group.id),
               onResize: (width: number, height: number) =>
@@ -1066,6 +1136,47 @@
             canvasId: document.canvas.id,
             tileId: tile.id,
           };
+          if (tile.kind === "changes") {
+            rendered.push({
+              ...nodes.find((n) => n.id === tile.id),
+              id: tile.id,
+              type: "changes",
+              parentId: group.id,
+              position: { x: tile.x, y: tile.y },
+              width: tile.width,
+              height: tile.height,
+              hidden: groupView[group.id] !== true,
+              dragHandle: ".changes-drag",
+              extent: [
+                [PROJECT_PADDING, PROJECT_HEADER],
+                [group.width - PROJECT_PADDING, group.height - PROJECT_PADDING],
+              ],
+              connectable: false,
+              data: {
+                kind: "changes",
+                tile,
+                group,
+                state: changes.get(tile.id, {
+                  workspaceId,
+                  canvasId: document.canvas.id,
+                  projectId: group.id,
+                }),
+                targets: sessions.pasteTargets(
+                  workspaceId,
+                  document.canvas.id,
+                  group.id,
+                ),
+                pasting: pastingNow,
+                editable,
+                onExpand: () => (reviewTile = tile.id),
+                onPaste: () => void pasteFeedback(tile.id),
+                onRemove: () => void removeObject(tile.id),
+                onResize: (width: number, height: number) =>
+                  editor.placeSessionTile(tile.id, { width, height }),
+              },
+            });
+            continue;
+          }
           rendered.push({
             ...nodes.find((n) => n.id === tile.id),
             id: tile.id,
@@ -1208,7 +1319,8 @@
     untrack(() => {
       for (const { id, position, type } of placements) {
         if (type === "project") editor.placeProject(id, position);
-        else if (type === "session") editor.placeSessionTile(id, position);
+        else if (type === "session" || type === "changes")
+          editor.placeSessionTile(id, position);
         else editor.placeNode(id, position);
       }
     });
@@ -1313,7 +1425,13 @@
   }
 
   function beforeUnload(event: BeforeUnloadEvent) {
-    if (!editorState.dirty && !editorState.saving && !pendingReply) return;
+    if (
+      !editorState.dirty &&
+      !editorState.saving &&
+      !pendingReply &&
+      !changes.pending()
+    )
+      return;
     event.preventDefault();
     event.returnValue = "";
   }
@@ -1372,6 +1490,14 @@
       pickingProject = false;
     }
   }
+  async function deleteScope(workspaceId: string, canvasId?: string) {
+    const deleted =
+      canvasId === undefined
+        ? await editor.deleteWorkspace(workspaceId)
+        : await editor.deleteCanvas(canvasId);
+    if (deleted) changes.forgetScope(workspaceId, canvasId);
+  }
+
   async function requestRemoval(
     workspaceId: string,
     canvasId: string | undefined,
@@ -1419,6 +1545,24 @@
     if (!document || !workspaceId) return;
     const group = document.projectGroups.find((g) => g.id === id);
     const tile = document.sessionTiles.find((t) => t.id === id);
+    // Feedback drafts are memory-only; removing their tile discards them.
+    const reviewIds = document.sessionTiles
+      .filter(
+        (t) => t.kind === "changes" && (t.id === id || t.projectId === id),
+      )
+      .map((t) => t.id);
+    const unsent = changes.pending(reviewIds);
+    if (
+      unsent &&
+      !window.confirm(
+        `Discard ${unsent} unsent feedback item${unsent === 1 ? "" : "s"} in the Changes tile?`,
+      )
+    )
+      return;
+    if (tile?.kind === "changes") {
+      await editor.deleteSessionTile(id);
+      return;
+    }
     if (group)
       await requestRemoval(
         workspaceId,
@@ -1438,8 +1582,57 @@
     else await editor.deleteNode(id);
   }
 
+  function closeReview() {
+    const id = reviewTile;
+    reviewTile = null;
+    void tick().then(() =>
+      window.document.getElementById(`changes-expand-${id}`)?.focus(),
+    );
+  }
+
+  /** Paste unsent drafts into the chosen Codex PTY; the user presses Enter there. */
+  async function pasteFeedback(tileId: string) {
+    const document = editorState.document;
+    const workspaceId = editorState.workspace?.workspace.id;
+    const tile = document?.sessionTiles.find((t) => t.id === tileId);
+    const state = changes.peek(tileId);
+    if (!document || !workspaceId || !tile || !state || pasting) return;
+    const targets = sessions.pasteTargets(
+      workspaceId,
+      document.canvas.id,
+      tile.projectId,
+    );
+    const target =
+      targets.find((t) => t.owner.tileId === state.target) ?? targets[0];
+    state.notice = "";
+    if (!target) {
+      state.error = "Start a Codex tile in this project, then retry.";
+      return;
+    }
+    pasting = true;
+    state.error = "";
+    try {
+      const drafts = state.drafts.filter((draft) => !draft.sent);
+      const ids = drafts.map((draft) => draft.id);
+      await sessions.paste(target.owner, feedbackMessage(drafts));
+      state.markSent(ids);
+      state.notice = "Pasted — press Enter in the Codex tile to send.";
+      reviewTile = null;
+      expandedGroups = { ...expandedGroups, [tile.projectId]: true };
+      await tick();
+      focusObject(target.owner.tileId);
+      selectedId = target.owner.tileId;
+      sessions.focus(target.owner);
+    } catch (error) {
+      state.error = error instanceof Error ? error.message : String(error);
+    } finally {
+      pasting = false;
+    }
+  }
+
   function onKeydown(event: KeyboardEvent) {
-    const dialogOpen = settingsOpen || reader || projectDialog || removal;
+    const dialogOpen =
+      settingsOpen || reader || projectDialog || removal || reviewTile;
     const target = event.target as HTMLElement | null;
     // The queue shortcut also works from tile controls (header buttons,
     // Mark seen); only the terminal itself and text fields keep Ctrl+J.
@@ -1496,6 +1689,14 @@
               "Keep this window open until changes are saved. Copy unsaved edits for recovery if saving fails.";
             return;
           }
+          const unsent = changes.pending();
+          if (
+            unsent &&
+            !window.confirm(
+              `Discard ${unsent} unsent feedback item${unsent === 1 ? "" : "s"} and close this window?`,
+            )
+          )
+            return;
           closing = true;
           try {
             await invoke("session_shutdown");
@@ -1601,6 +1802,29 @@
   </Modal>
 {/if}
 
+{#if reviewTile && editorState.document && editorState.workspace}
+  {@const tile = editorState.document.sessionTiles.find(
+    (t) => t.id === reviewTile,
+  )}
+  {#if tile}
+    <ChangesOverlay
+      tileId={tile.id}
+      label={editorState.document.projectGroups.find(
+        (g) => g.id === tile.projectId,
+      )?.label ?? "Project"}
+      state={changes.get(tile.id, {
+        workspaceId: editorState.workspace.workspace.id,
+        canvasId: editorState.document.canvas.id,
+        projectId: tile.projectId,
+      })}
+      targets={reviewTargets}
+      {pasting}
+      onPaste={() => void pasteFeedback(tile.id)}
+      onClose={closeReview}
+    />
+  {/if}
+{/if}
+
 <svelte:window onbeforeunload={beforeUnload} onkeydown={onKeydown} />
 
 {#snippet connectionControls()}
@@ -1668,7 +1892,7 @@
           id,
           undefined,
           editorState.workspaces.find((w) => w.id === id)?.name ?? "Workspace",
-          () => editor.deleteWorkspace(id),
+          () => deleteScope(id),
         )}
       onOpenSettings={() => (settingsOpen = true)}
     />
@@ -1688,7 +1912,7 @@
           id,
           editorState.workspace?.canvases.find((c) => c.id === id)?.title ??
             "Canvas",
-          () => editor.deleteCanvas(id),
+          () => deleteScope(editorState.workspace!.workspace.id, id),
         )}
       onBack={() => void backToWorkspaces()}
       onOpenSettings={() => (settingsOpen = true)}

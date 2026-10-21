@@ -174,7 +174,11 @@ export class SessionManager {
     document: CanvasDocument,
     force = false,
   ) {
-    for (const tile of document.sessionTiles ?? []) {
+    // Changes tiles share the tile layout but never own a native process.
+    const tiles = (document.sessionTiles ?? []).filter(
+      (tile) => tile.kind !== "changes",
+    );
+    for (const tile of tiles) {
       const owner = {
         workspaceId,
         canvasId: document.canvas.id,
@@ -203,7 +207,7 @@ export class SessionManager {
           replayed: false,
         });
     }
-    const signature = `${workspaceId}/${document.canvas.id}/${document.sessionTiles?.map((tile) => tile.id).join(",")}`;
+    const signature = `${workspaceId}/${document.canvas.id}/${tiles.map((tile) => tile.id).join(",")}`;
     if (!force && this.signature === signature && this.connected) return;
     if (this.reconciling) await this.reconciling;
     this.signature = signature;
@@ -236,9 +240,7 @@ export class SessionManager {
             !live(entry.status) &&
             (entry.owner.workspaceId !== workspaceId ||
               entry.owner.canvasId !== document.canvas.id ||
-              !document.sessionTiles.some(
-                (tile) => tile.id === entry.owner.tileId,
-              ))
+              !tiles.some((tile) => tile.id === entry.owner.tileId))
           ) {
             if (entry.status?.state === "exited") await entry.drained;
             await this.detach(entry);
@@ -519,6 +521,46 @@ export class SessionManager {
   focus(owner: SessionOwner) {
     const entry = this.entries.get(key(owner));
     if (entry?.connected) entry.terminal?.focus();
+  }
+
+  /** Running, attached Codex sessions in one project, in tile order. */
+  pasteTargets(workspaceId: string, canvasId: string, projectId: string) {
+    return [...this.entries.values()]
+      .filter(
+        (entry) =>
+          entry.owner.workspaceId === workspaceId &&
+          entry.owner.canvasId === canvasId &&
+          entry.tile.projectId === projectId &&
+          entry.tile.kind === "cli-agent",
+      )
+      .map((entry, index) => ({
+        owner: entry.owner,
+        label: `Codex ${index + 1}`,
+        ready:
+          !!entry.attachment &&
+          entry.connected &&
+          entry.status?.state === "running",
+      }))
+      .filter((target) => target.ready);
+  }
+
+  /** Paste text into a running session through its existing attachment. */
+  async paste(owner: SessionOwner, text: string) {
+    const entry = this.entries.get(key(owner));
+    const attachment = entry?.attachment;
+    if (
+      !entry ||
+      !attachment ||
+      !entry.connected ||
+      entry.status?.state !== "running"
+    )
+      throw new Error(
+        "This Codex session is not running. Start it, then retry.",
+      );
+    // Queue behind typed input so the paste never interleaves with it.
+    const run = entry.input.then(() => attachment.paste(text));
+    entry.input = run.catch(() => {});
+    await run;
   }
 
   private sendInput(entry: Entry, bytes: Uint8Array) {

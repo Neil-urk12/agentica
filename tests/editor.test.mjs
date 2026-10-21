@@ -1184,7 +1184,7 @@ test("deleting a saved canvas and workspace updates the lists the pickers show",
     { id: workspaceId, name: "Work" },
   ]);
 
-  await editor.deleteCanvas(canvasId);
+  assert.equal(await editor.deleteCanvas(canvasId), true);
   assert.equal(editor.state.error, "");
   assert.deepEqual(editor.state.workspace.canvases, []);
   assert.deepEqual(calls.at(-1).params, {
@@ -1192,7 +1192,7 @@ test("deleting a saved canvas and workspace updates the lists the pickers show",
     canvasId,
   });
 
-  await editor.deleteWorkspace(workspaceId);
+  assert.equal(await editor.deleteWorkspace(workspaceId), true);
   assert.equal(editor.state.error, "");
   assert.deepEqual(editor.state.workspaces, []);
   assert.equal(editor.state.busy, false);
@@ -1209,12 +1209,24 @@ test("a refused delete keeps the list and reports the runtime message", async (t
     if (method === "canvas.delete")
       throw new Error("Cannot remove the canvas. Nothing was deleted; retry.");
   });
-  await editor.deleteCanvas(canvasId);
+  assert.equal(await editor.deleteCanvas(canvasId), false);
   assert.match(editor.state.error, /Cannot remove the canvas/);
   assert.deepEqual(editor.state.workspace.canvases, [
     { id: canvasId, title: "Plan" },
   ]);
   assert.equal(editor.state.busy, false);
+});
+
+test("skipped deletes do not report success", async (t) => {
+  const { editor, calls } = await setup(t);
+  for (const guard of ["busy", "saving", "dirty"]) {
+    editor.state[guard] = true;
+    const before = calls.length;
+    assert.equal(await editor.deleteCanvas(canvasId), false);
+    assert.equal(await editor.deleteWorkspace(workspaceId), false);
+    assert.equal(calls.length, before);
+    editor.state[guard] = false;
+  }
 });
 
 test("typing autosaves after the debounce", async (t) => {

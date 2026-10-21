@@ -198,6 +198,27 @@ impl SessionService {
                 supervisor.input(&owner, &session_id, &attachment_id, bytes)?;
                 Ok(json!({}))
             }
+            SessionCommand::Paste {
+                owner,
+                session_id,
+                attachment_id,
+                text,
+            } => {
+                if super::paste::sanitize(&text).is_empty() {
+                    return Err(RuntimeError::new(
+                        "INVALID_PARAMS",
+                        "Paste text is empty after removing control characters.",
+                    ));
+                }
+                // Same controller, Running, and bounded-queue checks as typed input.
+                supervisor.input(
+                    &owner,
+                    &session_id,
+                    &attachment_id,
+                    super::paste::bracketed(&text),
+                )?;
+                Ok(json!({}))
+            }
             SessionCommand::Resize {
                 owner,
                 session_id,

@@ -1,17 +1,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use agentica_runtime::{
-    default_data_root,
+    changes, default_data_root,
     sessions::{
         wire::{SessionCommand, SessionEvent, SessionRequest, MAX_CONNECTION_SUBSCRIPTIONS},
         SessionOwner, SessionService,
     },
-    DesktopBackend, Runtime,
+    DesktopBackend, Runtime, MAX_FRAME_BYTES,
 };
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::{
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         Arc, Mutex,
     },
     time::{Duration, Instant},
@@ -23,6 +24,8 @@ struct BackendState {
     runtime: Arc<Mutex<DesktopBackend>>,
     sessions: Arc<SessionService>,
     attachments: Arc<Mutex<HashMap<String, Lease>>>,
+    connected: Arc<AtomicBool>,
+    data_root: Option<PathBuf>,
 }
 
 /// Input, resize, acknowledgement, and detach must name an attachment this
@@ -47,6 +50,28 @@ async fn runtime_request(
     connect: bool,
     state: tauri::State<'_, BackendState>,
 ) -> Result<serde_json::Value, String> {
+    // Read-only Git runs outside the runtime lock and metadata gate.
+    if request["method"]
+        .as_str()
+        .is_some_and(|method| method.starts_with("changes."))
+    {
+        let bytes = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
+        if bytes.len() > MAX_FRAME_BYTES {
+            return Err("Requests must fit in 16 KiB.".into());
+        }
+        if connect {
+            state.connected.store(true, Ordering::SeqCst);
+        }
+        if !state.connected.load(Ordering::SeqCst) {
+            return Err("Backend disconnected. Reconnect to start it.".into());
+        }
+        let data_root = state.data_root.clone();
+        return tauri::async_runtime::spawn_blocking(move || {
+            Ok(changes::handle_request(data_root.as_deref(), &bytes))
+        })
+        .await
+        .map_err(|error| format!("Backend task failed: {error}"))?;
+    }
     let backend = state.runtime.clone();
     let sessions = state.sessions.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -230,13 +255,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = default_data_root();
     let sessions = Arc::new(SessionService::new(root.clone()));
     let exiting = Arc::new(AtomicU8::new(0));
+    let backend = DesktopBackend::new(Runtime::new(root.clone()));
+    let connected = backend.connected_flag();
     tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(BackendState {
-            runtime: Arc::new(Mutex::new(DesktopBackend::new(Runtime::new(root)))),
+            runtime: Arc::new(Mutex::new(backend)),
             sessions: sessions.clone(),
             attachments: Arc::new(Mutex::new(HashMap::new())),
+            connected,
+            data_root: root,
         })
         .invoke_handler(tauri::generate_handler![
             runtime_request,

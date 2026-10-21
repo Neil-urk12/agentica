@@ -72,12 +72,15 @@ export const SessionTileSchema = z
     projectId: IdSchema,
     ...TileGeometry,
     revision: Revision,
-    kind: z.enum(["shell", "cli-agent"]),
+    // "changes" is a read-only Git tile; it never owns a native process.
+    kind: z.enum(["shell", "cli-agent", "changes"]),
     preset: z.enum(["codex"]).nullable(),
   })
   .refine(
     (tile) =>
-      tile.kind === "shell" ? tile.preset === null : tile.preset === "codex",
+      tile.kind === "cli-agent"
+        ? tile.preset === "codex"
+        : tile.preset === null,
     "Invalid launch preset",
   );
 export type ProjectGroup = z.infer<typeof ProjectGroupSchema>;
@@ -274,6 +277,56 @@ export const ConversationTurnSchema = z.strictObject({
   error: Text,
 });
 export type ConversationTurn = z.infer<typeof ConversationTurnSchema>;
+export const ChangeSectionSchema = z.enum(["staged", "unstaged", "untracked"]);
+export type ChangeSection = z.infer<typeof ChangeSectionSchema>;
+export const ChangeEntrySchema = z.strictObject({
+  section: ChangeSectionSchema,
+  status: z.string().length(1),
+  path: z.string(),
+  origPath: z.string().nullable(),
+});
+export type ChangeEntry = z.infer<typeof ChangeEntrySchema>;
+const Message = z.strictObject({ message: z.string() });
+export const ChangesStatusSchema = z.discriminatedUnion("state", [
+  z.strictObject({
+    state: z.literal("ready"),
+    branch: z.string().nullable(),
+    prefix: z.string(),
+    entries: z.array(ChangeEntrySchema).max(2000),
+    truncated: z.boolean(),
+  }),
+  z.strictObject({ state: z.literal("notRepository") }),
+  z.strictObject({ state: z.literal("folderUnavailable") }),
+  z.strictObject({ state: z.literal("gitUnavailable"), ...Message.shape }),
+  z.strictObject({ state: z.literal("failed"), ...Message.shape }),
+]);
+export type ChangesStatus = z.infer<typeof ChangesStatusSchema>;
+export const DiffHunkSchema = z.strictObject({
+  header: z.string(),
+  oldStart: z.number().int().nonnegative(),
+  oldLines: z.number().int().nonnegative(),
+  newStart: z.number().int().nonnegative(),
+  newLines: z.number().int().nonnegative(),
+  lines: z.array(z.tuple([z.enum([" ", "+", "-"]), z.string(), z.boolean()])),
+});
+export type DiffHunk = z.infer<typeof DiffHunkSchema>;
+const Notes = z.array(z.string()).max(8);
+export const ChangesDiffSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("text"),
+    notes: Notes,
+    hunks: z.array(DiffHunkSchema),
+  }),
+  z.strictObject({ kind: z.literal("binary"), notes: Notes }),
+  z.strictObject({ kind: z.literal("empty"), notes: Notes }),
+  z.strictObject({ kind: z.literal("tooLarge") }),
+  z.strictObject({ kind: z.literal("missing") }),
+  z.strictObject({ kind: z.literal("notRepository") }),
+  z.strictObject({ kind: z.literal("folderUnavailable") }),
+  z.strictObject({ kind: z.literal("gitUnavailable"), ...Message.shape }),
+  z.strictObject({ kind: z.literal("failed"), ...Message.shape }),
+]);
+export type ChangesDiff = z.infer<typeof ChangesDiffSchema>;
 const ParamSchemas = {
   "conversation.start": z.strictObject({
     ...TurnRef,
@@ -343,15 +396,25 @@ const ParamSchemas = {
       expectedRevision: Revision,
       projectId: IdSchema,
       ...TileGeometry,
-      kind: z.enum(["shell", "cli-agent"]),
+      kind: z.enum(["shell", "cli-agent", "changes"]),
       preset: z.literal("codex").nullable().optional(),
       growProject: z.boolean().optional(),
     })
     .refine(
       (tile) =>
-        tile.kind === "shell" ? tile.preset == null : tile.preset === "codex",
+        tile.kind === "cli-agent"
+          ? tile.preset === "codex"
+          : tile.preset == null,
       "Invalid launch preset",
     ),
+  "changes.status": z.strictObject({ ...CanvasRef, projectId: IdSchema }),
+  "changes.diff": z.strictObject({
+    ...CanvasRef,
+    projectId: IdSchema,
+    section: ChangeSectionSchema,
+    path: z.string().min(1).max(4096),
+    origPath: z.string().min(1).max(4096).optional(),
+  }),
   "canvas.save": z.strictObject({
     ...CanvasRef,
     expectedRevision: Revision,
@@ -532,6 +595,8 @@ export const ResultSchemas = {
     revision: Revision,
     tileId: IdSchema,
   }),
+  "changes.status": ChangesStatusSchema,
+  "changes.diff": z.strictObject({ diff: ChangesDiffSchema }),
   "canvas.open": z
     .strictObject({
       canvas: z.strictObject({
@@ -670,6 +735,20 @@ export const SessionCommandSchema = z.discriminatedUnion("op", [
     bytes: TerminalBytes.min(1),
   }),
   z.strictObject({
+    op: z.literal("paste"),
+    ...AttachmentRef,
+    // Bracketed-paste markers take 12 of the 16 KiB frame.
+    text: z
+      .string()
+      .min(1)
+      .refine(
+        (text) =>
+          new TextEncoder().encode(text).length <=
+          SESSION_LIMITS.frameBytes - 12,
+        "Paste text must fit one 16 KiB terminal frame",
+      ),
+  }),
+  z.strictObject({
     op: z.literal("resize"),
     ...AttachmentRef,
     ...TerminalDimensions,
@@ -782,6 +861,7 @@ export const SessionResultSchemas = {
   stop: StatusResult,
   subscribe: z.strictObject({ attachmentId: IdSchema }),
   input: EmptySessionResult,
+  paste: EmptySessionResult,
   resize: EmptySessionResult,
   acknowledge: EmptySessionResult,
   detach: EmptySessionResult,

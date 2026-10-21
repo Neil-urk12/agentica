@@ -74,6 +74,8 @@ struct RemoveTile {
 enum TileKind {
     Shell,
     CliAgent,
+    /// Read-only Git changes; stored in `changes_tile`, never owns a process.
+    Changes,
 }
 
 #[derive(Deserialize)]
@@ -154,7 +156,11 @@ fn contained(tx: &Transaction, canvas: &str) -> Result<(), RuntimeError> {
         JOIN project_group g ON g.id = t.project_id AND g.canvas_id = t.canvas_id
         WHERE t.canvas_id = ?1 AND (t.x + t.width > g.width - 16 OR t.y + t.height > g.height - 16))",
         [canvas], |row| row.get(0))?;
-    if outside {
+    let changes_outside: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM changes_tile t
+        JOIN project_group g ON g.id = t.project_id AND g.canvas_id = t.canvas_id
+        WHERE t.canvas_id = ?1 AND (t.x + t.width > g.width - 16 OR t.y + t.height > g.height - 16))",
+        [canvas], |row| row.get(0))?;
+    if outside || changes_outside {
         return Err(invalid(
             "The project must contain all of its tiles, with room below its header.",
         ));
@@ -191,6 +197,10 @@ pub(super) fn call(tx: &Transaction, method: &str, value: Value) -> Result<Value
                 "DELETE FROM session_tile WHERE id = ?1 AND canvas_id = ?2",
                 (&p.tile_id, &p.canvas_id),
             )? == 0
+                && tx.execute(
+                    "DELETE FROM changes_tile WHERE id = ?1 AND canvas_id = ?2",
+                    (&p.tile_id, &p.canvas_id),
+                )? == 0
             {
                 return Err(not_found("Session tile on this canvas"));
             }
@@ -249,10 +259,10 @@ pub(super) fn call(tx: &Transaction, method: &str, value: Value) -> Result<Value
             tile_geometry(p.x, p.y, p.width, p.height)?;
             if !matches!(
                 (&p.kind, p.preset.as_deref()),
-                (TileKind::Shell, None) | (TileKind::CliAgent, Some("codex"))
+                (TileKind::Shell | TileKind::Changes, None) | (TileKind::CliAgent, Some("codex"))
             ) {
                 return Err(invalid(
-                    "Use a shell without a preset, or the Codex CLI-agent preset.",
+                    "Use a shell or Changes tile without a preset, or the Codex CLI-agent preset.",
                 ));
             }
             let exists: bool = tx.query_row(
@@ -264,14 +274,41 @@ pub(super) fn call(tx: &Transaction, method: &str, value: Value) -> Result<Value
                 return Err(not_found("Project on this canvas"));
             }
             let tile = new_id()?;
-            let kind = if p.kind == TileKind::Shell {
-                "shell"
+            if p.kind == TileKind::Changes {
+                let exists: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM changes_tile WHERE canvas_id = ?1 AND project_id = ?2)",
+                    (&p.canvas_id, &p.project_id),
+                    |row| row.get(0),
+                )?;
+                if exists {
+                    return Err(RuntimeError::new(
+                        "CONFLICT",
+                        "This project already has a Changes tile.",
+                    ));
+                }
+                tx.execute(
+                    "INSERT INTO changes_tile (id, canvas_id, project_id, x, y, width, height)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    (
+                        &tile,
+                        &p.canvas_id,
+                        &p.project_id,
+                        p.x,
+                        p.y,
+                        p.width,
+                        p.height,
+                    ),
+                )?;
             } else {
-                "cli-agent"
-            };
-            tx.execute("INSERT INTO session_tile (id, canvas_id, project_id, kind, preset, x, y, width, height)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                (&tile, &p.canvas_id, &p.project_id, kind, &p.preset, p.x, p.y, p.width, p.height))?;
+                let kind = if p.kind == TileKind::Shell {
+                    "shell"
+                } else {
+                    "cli-agent"
+                };
+                tx.execute("INSERT INTO session_tile (id, canvas_id, project_id, kind, preset, x, y, width, height)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    (&tile, &p.canvas_id, &p.project_id, kind, &p.preset, p.x, p.y, p.width, p.height))?;
+            }
             if p.grow_project {
                 let width = p.x + p.width + PROJECT_PADDING;
                 let height = p.y + p.height + PROJECT_PADDING;
@@ -317,9 +354,24 @@ pub(super) fn save_layout(
             return Err(invalid("Layout IDs must be unique."));
         }
         tile_geometry(t.x, t.y, t.width, t.height)?;
-        let changed = tx.execute("UPDATE session_tile SET x = ?4, y = ?5, width = ?6, height = ?7,
+        let values = (
+            &t.id,
+            canvas,
+            &t.project_id,
+            t.x,
+            t.y,
+            t.width,
+            t.height,
+            revision(t.expected_revision)?,
+        );
+        let mut changed = tx.execute("UPDATE session_tile SET x = ?4, y = ?5, width = ?6, height = ?7,
             revision = revision + 1 WHERE id = ?1 AND canvas_id = ?2 AND project_id = ?3 AND revision = ?8",
-            (&t.id, canvas, &t.project_id, t.x, t.y, t.width, t.height, revision(t.expected_revision)?))?;
+            values)?;
+        if changed == 0 {
+            changed = tx.execute("UPDATE changes_tile SET x = ?4, y = ?5, width = ?6, height = ?7,
+                revision = revision + 1 WHERE id = ?1 AND canvas_id = ?2 AND project_id = ?3 AND revision = ?8",
+                values)?;
+        }
         if changed == 0 {
             return Err(RuntimeError::new("CONFLICT", "Tile layout is stale, outside this canvas, or changes project membership. Reload and retry."));
         }
@@ -347,6 +399,16 @@ pub(super) fn collections(
         "x": row.get::<_, f64>(4)?, "y": row.get::<_, f64>(5)?,
         "width": row.get::<_, f64>(6)?, "height": row.get::<_, f64>(7)?, "revision": row.get::<_, i64>(8)?
     })))?.collect::<Result<Vec<_>, _>>()?;
+    // Changes tiles share the session-tile wire shape so layout code stays shared.
+    let mut statement = tx.prepare("SELECT id, project_id, x, y, width, height, revision FROM changes_tile WHERE canvas_id = ?1 ORDER BY rowid")?;
+    let changes = statement.query_map([canvas], |row| Ok(json!({
+        "id": row.get::<_, String>(0)?, "canvasId": canvas, "projectId": row.get::<_, String>(1)?,
+        "kind": "changes", "preset": null,
+        "x": row.get::<_, f64>(2)?, "y": row.get::<_, f64>(3)?,
+        "width": row.get::<_, f64>(4)?, "height": row.get::<_, f64>(5)?, "revision": row.get::<_, i64>(6)?
+    })))?.collect::<Result<Vec<_>, _>>()?;
+    let mut tiles = tiles;
+    tiles.extend(changes);
     Ok((groups, tiles))
 }
 

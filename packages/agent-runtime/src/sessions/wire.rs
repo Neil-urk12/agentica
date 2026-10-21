@@ -45,6 +45,13 @@ pub enum SessionCommand {
         attachment_id: String,
         bytes: Vec<u8>,
     },
+    /// Text written as one bracketed paste; never followed by Enter.
+    Paste {
+        owner: SessionOwner,
+        session_id: String,
+        attachment_id: String,
+        text: String,
+    },
     Resize {
         owner: SessionOwner,
         session_id: String,
@@ -118,6 +125,7 @@ impl SessionCommand {
             | Self::Start { owner, .. }
             | Self::Subscribe { owner, .. }
             | Self::Input { owner, .. }
+            | Self::Paste { owner, .. }
             | Self::Resize { owner, .. }
             | Self::Acknowledge { owner, .. }
             | Self::Detach { owner, .. }
@@ -131,6 +139,12 @@ impl SessionCommand {
     pub fn attachment(&self) -> Option<(&SessionOwner, &str, &str)> {
         match self {
             Self::Input {
+                owner,
+                session_id,
+                attachment_id,
+                ..
+            }
+            | Self::Paste {
                 owner,
                 session_id,
                 attachment_id,
@@ -206,6 +220,14 @@ impl SessionCommand {
                 if bytes.is_empty() || bytes.len() > MAX_SESSION_FRAME_BYTES =>
             {
                 return Err(invalid())
+            }
+            Self::Paste { text, .. }
+                if text.is_empty() || text.len() > super::paste::MAX_PASTE_TEXT_BYTES =>
+            {
+                return Err(RuntimeError::new(
+                    "INVALID_PARAMS",
+                    "Paste text must contain 1–16372 bytes.",
+                ))
             }
             Self::Resize { rows, cols, .. } => {
                 process::dimensions(*rows, *cols)?;

@@ -13,6 +13,7 @@ pub use output::{OutputFrame, OutputPage};
 mod attention;
 #[cfg(target_os = "linux")]
 mod linux;
+pub mod paste;
 mod process;
 pub use attention::{Attention, Kind as AttentionKind};
 mod service;

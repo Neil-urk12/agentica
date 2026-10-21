@@ -287,7 +287,10 @@ export class Editor {
     );
   }
 
-  async addSessionTile(projectId: string, kind: "shell" | "cli-agent") {
+  async addSessionTile(
+    projectId: string,
+    kind: "shell" | "cli-agent" | "changes",
+  ) {
     const document = this.state.document;
     if (!document) return;
     const tiles = (document.sessionTiles ?? []).filter(
@@ -458,6 +461,7 @@ export class Editor {
 
   /** Remove a saved workspace from this device; the picker lists what is left. */
   async deleteWorkspace(workspaceId: string) {
+    let deleted = false;
     await this.operation(async () => {
       const { workspaces } = await this.call(
         this.key(),
@@ -466,11 +470,14 @@ export class Editor {
         { workspaceId },
       );
       this.publish({ workspaces });
+      deleted = true;
     });
+    return deleted;
   }
 
   /** Remove a saved canvas from the open workspace; the picker lists what is left. */
   async deleteCanvas(canvasId: string) {
+    let deleted = false;
     await this.operation(async () => {
       const workspace = this.state.workspace!;
       const { canvases } = await this.call(this.key(), false, "canvas.delete", {
@@ -478,7 +485,9 @@ export class Editor {
         canvasId,
       });
       this.publish({ workspace: { ...workspace, canvases } });
+      deleted = true;
     });
+    return deleted;
   }
 
   /** Persist one drawing; a stroke larger than one frame is split for you. */

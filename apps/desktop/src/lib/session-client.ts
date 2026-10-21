@@ -15,6 +15,8 @@ import { desktopMode } from "./runtime";
 export interface SessionAttachment {
   id: string;
   input(bytes: Uint8Array): Promise<void>;
+  /** Bracketed paste; the backend never appends Enter. */
+  paste(text: string): Promise<void>;
   resize(rows: number, cols: number, redraw?: boolean): Promise<void>;
   acknowledge(sequence: number): Promise<void>;
   detach(): Promise<void>;
@@ -213,6 +215,9 @@ class Client implements SessionClient {
           ...reference,
           bytes: Array.from(bytes),
         });
+      },
+      paste: async (text) => {
+        await this.request({ op: "paste", ...reference, text });
       },
       resize: async (rows, cols, redraw = false) => {
         await this.request({ op: "resize", ...reference, rows, cols, redraw });
