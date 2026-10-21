@@ -7,6 +7,7 @@ import {
   validateProvider,
 } from "../apps/desktop/src/lib/provider.ts";
 import {
+  checkProvider,
   runCanvasAgent,
   setOpenRouterApiKey,
   setOpenRouterModel,
@@ -369,4 +370,83 @@ test("desktop custom requests use native HTTP and cancel through native IPC", as
     /Request cancelled/,
   );
   assert.equal(cancelled, true);
+});
+
+test("settings check reports plain results without changing settings", async (t) => {
+  const signal = new AbortController().signal;
+  let reply = () => response({ content: "OK" });
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    assert.equal(url, "https://api.example.com/v1/chat/completions");
+    assert.equal(options.headers.Authorization, "Bearer custom-key");
+    assert.equal(JSON.parse(options.body).model, "custom-model");
+    return reply();
+  });
+  assert.deepEqual(await checkProvider(custom(), signal), { result: "ok" });
+  for (const status of [401, 403]) {
+    reply = () => new Response("{}", { status });
+    assert.deepEqual(await checkProvider(custom(), signal), { result: "key" });
+  }
+  reply = () => new Response("{}", { status: 404 });
+  const other = await checkProvider(custom(), signal);
+  assert.equal(other.result, "other");
+  assert.match(other.detail, /error 404/);
+  reply = () => {
+    throw new TypeError("fetch failed");
+  };
+  assert.deepEqual(await checkProvider(custom(), signal), {
+    result: "unreachable",
+  });
+  const invalid = await checkProvider({ ...custom(), baseUrl: "" }, signal);
+  assert.equal(invalid.result, "other");
+  assert.match(invalid.detail, /base URL/);
+});
+
+test("settings check rejects unsuccessful completion bodies even with HTTP success", async (t) => {
+  const bodies = [
+    { error: { message: "secret-key", code: 503 } },
+    {
+      error: { message: "secret-key" },
+      choices: [{ message: { content: "OK" } }],
+    },
+    null,
+    {},
+    { choices: [] },
+    { choices: { 0: { message: { content: "OK" } } } },
+    { choices: [null] },
+    { choices: [{}] },
+    { choices: [{ message: { content: null } }] },
+    { choices: [{ message: { content: 42 } }] },
+    { choices: [{ message: { content: "" } }] },
+    { choices: [{ message: { content: "  \n" } }] },
+    { choices: [{ message: { content: "OK" }, finish_reason: "length" }] },
+  ];
+  let body;
+  t.mock.method(globalThis, "fetch", async () => new Response(body));
+  for (const payload of bodies) {
+    body = JSON.stringify(payload);
+    const result = await checkProvider(custom(), new AbortController().signal);
+    assert.equal(result.result, "other", body);
+    assert.ok(result.detail);
+    assert.ok(!result.detail.includes("secret-key"));
+  }
+  for (const invalidJson of ["", "<html>Service unavailable</html>", "{"]) {
+    body = invalidJson;
+    const result = await checkProvider(custom(), new AbortController().signal);
+    assert.equal(result.result, "other", invalidJson);
+    assert.ok(result.detail);
+  }
+});
+
+test("settings check preserves cancellation while reading the response body", async (t) => {
+  const controller = new AbortController();
+  const error = new DOMException("Request cancelled", "AbortError");
+  t.mock.method(globalThis, "fetch", async () => ({
+    status: 200,
+    ok: true,
+    json: async () => {
+      controller.abort(error);
+      throw error;
+    },
+  }));
+  await assert.rejects(checkProvider(custom(), controller.signal), error);
 });

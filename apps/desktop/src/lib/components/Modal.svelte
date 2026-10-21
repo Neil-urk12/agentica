@@ -8,6 +8,7 @@
     subtitle?: string;
     icon?: string;
     wide?: boolean;
+    fullscreen?: boolean;
     actions?: Snippet;
     children: Snippet;
     onClose?: () => void;
@@ -17,6 +18,7 @@
     subtitle,
     icon = "blur_on",
     wide = false,
+    fullscreen = false,
     actions,
     children,
     onClose,
@@ -55,6 +57,7 @@
 <dialog
   bind:this={dialog}
   class="scrim"
+  class:scrim--full={fullscreen}
   transition:fade={{ duration: 180 }}
   aria-label={title}
   onkeydown={onKeydown}
@@ -66,6 +69,7 @@
   <div
     class="modal"
     class:modal--wide={wide}
+    class:modal--full={fullscreen}
     transition:fly={{ y: 18, duration: 260, opacity: 0.4 }}
   >
     <header class="modal__head">

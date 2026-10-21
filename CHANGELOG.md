@@ -12,6 +12,30 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-22
 
+- Validate the response body before Settings **Check** reports success. HTTP
+  success alone can contain a provider error; malformed, empty, and truncated
+  replies now report failure without exposing provider error text.
+
+- Replaced the settings modal with a full-screen settings page for less technical
+  users. It has three categories (**AI assistant**, **Appearance**, **Advanced**):
+  a side rail on wide windows, a list then a section on narrow ones.
+  - **AI assistant** shows a plain status line (needs a key / ready / own server),
+    the key, a **Quality** choice ("Free" or "A specific model…"), and a **Check**
+    button.
+  - Developer settings (own server, server address, canvas tools, exact model ID,
+    Codex status) moved to **Advanced**.
+  - The page is a full-screen variant of the existing `Modal`, not a new app
+    stage, so the canvas and live sessions stay mounted underneath and **Back**
+    returns to them unchanged.
+  - **Check** sends one tiny request through the same request helper
+    (`postChat`, extracted from `runCanvasAgent`) that canvas calls use, so a
+    passing check means real requests work. It sorts the result into four cases:
+    working, key rejected (401/403), unreachable, or another error.
+  - **Quality** offers only "Free" because free OpenRouter models change too
+    often to maintain a curated list.
+  - Storage keys are unchanged, so existing settings carry over.
+  - Error banners that point to Settings open the page at **AI assistant**.
+
 - Fixed a restored review composer attaching inline under any hunk with the same
   header. Persisted composers keep only a fingerprint, so the text-match check
   was skipped. The composer now stays detached until refresh finds a hunk with

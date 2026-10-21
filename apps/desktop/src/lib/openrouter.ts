@@ -144,6 +144,94 @@ function canvasTool() {
   };
 }
 
+async function postChat(
+  provider: ProviderConfig | undefined,
+  apiKey: string,
+  body: string,
+  signal: AbortSignal,
+) {
+  const nativeHttp = provider?.kind === "custom" && isTauri();
+  const send = nativeHttp
+    ? (await import("@tauri-apps/plugin-http")).fetch
+    : fetch;
+  return send(
+    `${provider?.baseUrl ?? "https://openrouter.ai/api/v1"}/chat/completions`,
+    {
+      method: "POST",
+      signal,
+      redirect: "error",
+      ...(nativeHttp ? { maxRedirections: 0, connectTimeout: 30_000 } : {}),
+      headers: {
+        "Content-Type": "application/json",
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+        ...(provider?.kind !== "custom"
+          ? { "HTTP-Referer": "https://agentica.app", "X-Title": "Agentica" }
+          : {}),
+      },
+      body,
+    },
+  );
+}
+
+export type ProviderCheck =
+  | { result: "ok" | "key" | "unreachable" }
+  | { result: "other"; detail: string };
+
+/** Sends one tiny request with the given settings, the same way canvas calls do. */
+export async function checkProvider(
+  config: ProviderConfig,
+  signal: AbortSignal,
+): Promise<ProviderCheck> {
+  let provider: ProviderConfig;
+  try {
+    provider = validateProvider(config);
+  } catch (error) {
+    return {
+      result: "other",
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+  const body = JSON.stringify({
+    model: provider.model,
+    messages: [{ role: "user", content: "Reply with OK." }],
+    max_tokens: 16,
+  });
+  let response: Response;
+  try {
+    response = await postChat(provider, provider.apiKey, body, signal);
+  } catch (error) {
+    if (signal.aborted) throw error;
+    return { result: "unreachable" };
+  }
+  if (response.status === 401 || response.status === 403)
+    return { result: "key" };
+  if (!response.ok)
+    return {
+      result: "other",
+      detail: `The AI service returned error ${response.status}. Check the model in Advanced.`,
+    };
+  try {
+    const data = (await response.json()) as OpenRouterChatResponse | null;
+    signal.throwIfAborted();
+    const choice = Array.isArray(data?.choices) ? data.choices[0] : undefined;
+    const content = choice?.message?.content;
+    if (
+      !data?.error &&
+      choice?.finish_reason !== "length" &&
+      typeof content === "string" &&
+      content.trim()
+    )
+      return { result: "ok" };
+  } catch (error) {
+    if (signal.aborted) throw error;
+  }
+  return {
+    result: "other",
+    detail:
+      "The AI service did not return a valid answer. Check the model in Advanced and your API key.",
+  };
+}
+
 export async function runCanvasAgent(
   start: RuntimeResult<"conversation.start">,
   options: {
@@ -158,9 +246,6 @@ export async function runCanvasAgent(
     : undefined;
   const label = provider?.kind === "custom" ? "Provider" : "OpenRouter";
   const nativeHttp = provider?.kind === "custom" && isTauri();
-  const send = nativeHttp
-    ? (await import("@tauri-apps/plugin-http")).fetch
-    : fetch;
   const apiKey = (
     provider?.apiKey ??
     options.apiKey ??
@@ -214,22 +299,11 @@ export async function runCanvasAgent(
       throw new Error(
         "Conversation and canvas context exceed 16 KiB. Select fewer objects or use a new canvas; nothing was truncated.",
       );
-    const response = await send(
-      `${provider?.baseUrl ?? "https://openrouter.ai/api/v1"}/chat/completions`,
-      {
-        method: "POST",
-        signal: options.signal,
-        redirect: "error",
-        ...(nativeHttp ? { maxRedirections: 0, connectTimeout: 30_000 } : {}),
-        headers: {
-          "Content-Type": "application/json",
-          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-          ...(provider?.kind !== "custom"
-            ? { "HTTP-Referer": "https://agentica.app", "X-Title": "Agentica" }
-            : {}),
-        },
-        body,
-      },
+    const response = await postChat(
+      provider,
+      apiKey,
+      body,
+      options.signal,
     ).catch((error: unknown) => {
       if (options.signal.aborted || provider?.kind !== "custom") throw error;
       throw new Error(

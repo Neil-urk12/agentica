@@ -54,7 +54,9 @@
     textHeight,
   } from "./lib/canvas-agent";
   import Icon from "./lib/components/Icon.svelte";
-  import Settings from "./lib/components/Settings.svelte";
+  import Settings, {
+    type SettingsSection,
+  } from "./lib/components/Settings.svelte";
   import { runCanvasAgent, canvasToolSupport } from "./lib/openrouter";
   import { getProviderConfig, validateProvider } from "./lib/provider";
   import WorkspacePicker from "./lib/components/WorkspacePicker.svelte";
@@ -195,7 +197,8 @@
   const DRAWER_MIN_WIDTH = 180;
   const DRAWER_MAX_WIDTH = 480;
   let drawerWidth = $state(readDrawerWidth());
-  let settingsOpen = $state(false);
+  // true opens settings without a section (narrow windows show the category list).
+  let settingsOpen = $state<boolean | SettingsSection>(false);
   let theme = $state<Theme>(readTheme());
   let recoveryCopy = $state("");
   let closeNotice = $state("");
@@ -2111,7 +2114,7 @@
             class="btn btn--soft"
             type="button"
             onclick={() => {
-              settingsOpen = true;
+              settingsOpen = "ai";
             }}
           >
             <Icon name="settings" size={16} />
@@ -2608,6 +2611,7 @@
       {theme}
       {connectionKey}
       {connected}
+      section={settingsOpen === true ? undefined : settingsOpen}
       onChange={(next) => (theme = next)}
       onClose={() => (settingsOpen = false)}
     />

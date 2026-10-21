@@ -1729,12 +1729,21 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
     const customBaseUrl = `http://127.0.0.1:${customServer.address().port}/v1/`;
     await evaluate(
       browser,
-      `document.querySelector('[aria-label="Settings"]').click()`,
+      `window.__canvasRoot = document.querySelector('.svelte-flow'); document.querySelector('[aria-label="Settings"]').click()`,
     );
     await waitFor(
       browser,
       `!!document.querySelector('#ai-provider')`,
       "provider settings",
+    );
+    await evaluate(
+      browser,
+      `[...document.querySelectorAll('.settings__tab')].find((tab) => tab.textContent.includes('Advanced')).click()`,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('#ai-provider')?.checkVisibility()`,
+      "advanced settings",
     );
     await evaluate(
       browser,
@@ -1746,13 +1755,21 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
         const input = document.querySelector(selector); input.value = value; input.dispatchEvent(new Event('input', {bubbles:true}));
       }
       document.querySelector('#provider-tools').click();
-      document.querySelector('[aria-label="Close settings"]').click();
+      document.querySelector('[aria-label="Back, close settings"]').click();
     })()`,
     );
     await waitFor(
       browser,
       `!document.querySelector('dialog[open]')`,
       "closed provider settings",
+    );
+    assert.equal(
+      await evaluate(
+        browser,
+        `!!window.__canvasRoot && document.querySelector('.svelte-flow') === window.__canvasRoot`,
+      ),
+      true,
+      "the canvas stays mounted under the settings page",
     );
     await submit("Use the custom endpoint");
     await waitFor(
