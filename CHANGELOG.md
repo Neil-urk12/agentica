@@ -12,6 +12,25 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-22
 
+#### Let the canvas agent propose real HTML designs
+
+- Add an `html` artifact type and a `createHtml` canvas operation. A design is a
+  self-contained HTML/CSS page (up to 8,000 characters) stored with the
+  workspace and rendered on the canvas in a sandboxed frame without script
+  execution; the app CSP blocks remote images, fonts, forms, and navigation.
+  Designs can be moved, resized, reviewed, and reopened like other objects,
+  and **Read HTML source** shows the exact source from the inspector.
+- Ask for a screen or page and the agent proposes a design instead of
+  describing it. The outline lists designs as `design` objects named by their
+  `<title>` or first heading.
+- Upgrade workspace storage to version 9, rebuilding the artifact table to
+  accept the new type while preserving every existing row.
+- Bound a prompt's canvas context by the harness's 128 KiB request budget
+  instead of one 16 KiB RPC frame, since a few designs already exceed a frame;
+  the rejection reports the measured size.
+- Tests cover staging, the size limit, apply and reopen, the context budget,
+  outline titles, and a rendered inert frame whose scripts never run.
+
 #### Named provider presets
 
 - Add OpenAI-compatible presets for NVIDIA NIM, Groq, Together AI, Mistral AI,

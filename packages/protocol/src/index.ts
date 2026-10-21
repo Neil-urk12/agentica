@@ -6,6 +6,9 @@ export const MAX_FRAME_BYTES = 16 * 1024;
 export const LIMITS = {
   label: 120,
   text: 10_000,
+  // A design is prompt data plus a proposal operation, so it must stay well
+  // inside one 16 KiB frame together with the turn's reply.
+  html: 8_000,
   coordinate: 1_000_000,
   minSize: 40,
   maxSize: 4_000,
@@ -232,6 +235,13 @@ export const CanvasOperationSchema = z.discriminatedUnion("op", [
     color: DrawingColor,
     label: z.string().max(LIMITS.label).optional(),
   }),
+  z.strictObject({
+    op: z.literal("createHtml"),
+    nodeId: IdSchema,
+    artifactId: IdSchema,
+    ...Geometry,
+    html: z.string().min(1).max(LIMITS.html),
+  }),
   z.strictObject({ op: z.literal("updateText"), nodeId: IdSchema, text: Text }),
   z.strictObject({
     op: z.literal("updateShape"),
@@ -267,7 +277,7 @@ const OutlineSchema = z.strictObject({
     .array(
       z.strictObject({
         nodeId: IdSchema,
-        kind: z.enum(["text", "rectangle", "ellipse", "drawing"]),
+        kind: z.enum(["text", "rectangle", "ellipse", "drawing", "design"]),
         x: z.number(),
         y: z.number(),
         width: z.number(),
@@ -619,9 +629,19 @@ export const DrawingArtifactSchema = z.strictObject({
   revision: Revision,
   drawing: DrawingSchema,
 });
+// A self-contained HTML/CSS design rendered in a sandboxed frame. Scripts are
+// never executed; the sandbox blocks them and remote resources by CSP.
+export const HtmlArtifactSchema = z.strictObject({
+  id: IdSchema,
+  type: z.literal("html"),
+  schemaVersion: z.literal(1),
+  revision: Revision,
+  html: z.string().min(1).max(LIMITS.html),
+});
 export const ArtifactSchema = z.discriminatedUnion("type", [
   TextArtifactSchema,
   DrawingArtifactSchema,
+  HtmlArtifactSchema,
 ]);
 export type Artifact = z.infer<typeof ArtifactSchema>;
 export const NodeSchema = z.strictObject({

@@ -50,9 +50,15 @@ or unresolved proposal can be active on a canvas. Cancel stops generation, and
 interrupted requests require an explicit retry.
 
 The first tool set supports text, labeled rectangles and ellipses, placement,
-and connectors. It does not generate images or execute code. Context and changes
-must fit the existing size limits; oversized requests fail visibly without
-truncation. If saving a generated response fails, keep the canvas open to retry
+connectors, and self-contained HTML/CSS designs. Ask for a screen (for example
+“design a login page”) and the agent proposes a page rendered on the canvas in
+a sandboxed frame: scripts, remote resources, and form submission are blocked,
+and **Read HTML source** shows the exact source. Designs are stored with the
+workspace, not written into a project folder, and appear in the agent's outline
+as `design` objects named by their title or first heading. The agent does not
+generate images or execute code. A prompt's canvas context shares the 128 KiB
+model request budget instead of the 16 KiB runtime RPC frame limit; oversized
+requests fail visibly without truncation and report the measured size. If saving a generated response fails, keep the canvas open to retry
 or copy the response for recovery. Basic manual editing needs no AI account.
 
 While a turn runs, the composer reports the current request (for example,

@@ -92,6 +92,12 @@ fn outline_entry(artifact: &Value) -> (&'static str, String) {
     if artifact["type"] == "text" {
         return ("text", title(artifact["text"].as_str().unwrap_or_default()));
     }
+    if artifact["type"] == "html" {
+        return (
+            "design",
+            title(&design_title(artifact["html"].as_str().unwrap_or_default())),
+        );
+    }
     let Some(shapes) = artifact["drawing"]["shapes"].as_array() else {
         return ("drawing", String::new());
     };
@@ -110,6 +116,32 @@ fn outline_entry(artifact: &Value) -> (&'static str, String) {
             ),
         ),
     }
+}
+
+/// A design's <title> or first heading, as plain text, so the outline can name it.
+fn design_title(html: &str) -> String {
+    let lower = html.to_ascii_lowercase();
+    let inner = |tag: &str| {
+        let open = lower.find(&format!("<{tag}"))?;
+        let start = open + lower[open..].find('>')? + 1;
+        let end = start + lower[start..].find(&format!("</{tag}"))?;
+        Some(&html[start..end])
+    };
+    let raw = inner("title")
+        .or_else(|| inner("h1"))
+        .or_else(|| inner("h2"))
+        .unwrap_or_default();
+    let mut text = String::new();
+    let mut in_tag = false;
+    for c in raw.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => text.push(c),
+            _ => {}
+        }
+    }
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Canvas map for the model: write scope first, then nearest the stored anchor.
@@ -207,6 +239,16 @@ enum Operation {
         #[serde(default)]
         label: String,
     },
+    #[serde(rename = "createHtml")]
+    CreateHtml {
+        node_id: String,
+        artifact_id: String,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        html: String,
+    },
     #[serde(rename = "updateText")]
     UpdateText { node_id: String, text: String },
     #[serde(rename = "updateShape")]
@@ -272,25 +314,33 @@ fn insert_node(
     artifact_id: &str,
     g: &Geometry,
     body: &str,
-    drawing: bool,
+    kind: &str,
 ) -> Result<(), RuntimeError> {
     id("nodeId", node_id)?;
     id("artifactId", artifact_id)?;
     g.check()?;
     let content_id = new_id()?;
-    let kind = if drawing { "drawing" } else { "text" };
-    if drawing {
-        tx.execute(
+    match kind {
+        "drawing" => tx.execute(
             "INSERT INTO drawing_content(id, body) VALUES (?1, ?2)",
             (&content_id, body),
-        )?;
-    } else {
-        text(body)?;
-        tx.execute(
-            "INSERT INTO text_content(id, body, purpose) VALUES (?1, ?2, 'note')",
-            (&content_id, body),
-        )?;
-    }
+        )?,
+        // Designs share the text store; their artifact type marks them as HTML.
+        "html" => {
+            html(body)?;
+            tx.execute(
+                "INSERT INTO text_content(id, body, purpose) VALUES (?1, ?2, 'note')",
+                (&content_id, body),
+            )?
+        }
+        _ => {
+            text(body)?;
+            tx.execute(
+                "INSERT INTO text_content(id, body, purpose) VALUES (?1, ?2, 'note')",
+                (&content_id, body),
+            )?
+        }
+    };
     tx.execute("INSERT INTO artifact(id, type, schema_version, revision, content_store, content_id) VALUES (?1, ?2, 1, 1, 'sqlite', ?3)", (artifact_id, kind, &content_id))?;
     tx.execute("INSERT INTO canvas_node(id, canvas_id, kind, artifact_id, x, y, width, height) VALUES (?1, ?2, 'artifact', ?3, ?4, ?5, ?6, ?7)", (node_id, canvas_id, artifact_id, g.x, g.y, g.width, g.height))?;
     Ok(())
@@ -456,7 +506,32 @@ fn apply_operations(
                         height,
                     },
                     &text,
-                    false,
+                    "text",
+                )?;
+                created.insert(node_id);
+            }
+            Operation::CreateHtml {
+                node_id,
+                artifact_id,
+                x,
+                y,
+                width,
+                height,
+                html: body,
+            } => {
+                insert_node(
+                    tx,
+                    canvas_id,
+                    &node_id,
+                    &artifact_id,
+                    &Geometry {
+                        x,
+                        y,
+                        width,
+                        height,
+                    },
+                    &body,
+                    "html",
                 )?;
                 created.insert(node_id);
             }
@@ -478,7 +553,7 @@ fn apply_operations(
                     height,
                 };
                 let body = shape_body(&kind, &color, &label, &g)?;
-                insert_node(tx, canvas_id, &node_id, &artifact_id, &g, &body, true)?;
+                insert_node(tx, canvas_id, &node_id, &artifact_id, &g, &body, "drawing")?;
                 created.insert(node_id);
             }
             Operation::Connect {
@@ -664,10 +739,15 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                 .cloned()
                 .collect();
             let context = json!({"nodes": nodes, "artifacts": artifacts, "edges": edges});
-            if context.to_string().len() > crate::MAX_FRAME_BYTES {
-                return Err(invalid(
-                    "Canvas context exceeds 16 KiB. Select a smaller set of objects.",
-                ));
+            // Context is prompt data, not a transport frame: a few designs on a
+            // canvas already exceed one 16 KiB frame.
+            let context_bytes = context.to_string().len();
+            if context_bytes > crate::MAX_CANVAS_CONTEXT_BYTES {
+                return Err(invalid(format!(
+                    "Canvas context is {} KiB; the limit is {} KiB. Select fewer objects or use a new canvas.",
+                    context_bytes.div_ceil(1024),
+                    crate::MAX_CANVAS_CONTEXT_BYTES / 1024
+                )));
             }
             let mut prior = history(tx, &p.canvas_id, 0)?;
             prior.reverse();
@@ -686,7 +766,15 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                     height: card_height(&p.prompt),
                 },
             )?;
-            insert_node(tx, &p.canvas_id, &node_id, &new_id()?, &g, &p.prompt, false)?;
+            insert_node(
+                tx,
+                &p.canvas_id,
+                &node_id,
+                &new_id()?,
+                &g,
+                &p.prompt,
+                "text",
+            )?;
             tx.execute("INSERT INTO conversation_turn(id,canvas_id,model,prompt,prompt_node_id,anchor,context,status) VALUES (?1,?2,?3,?4,?5,?6,?7,'generating')", (&p.turn_id,&p.canvas_id,&p.model,&p.prompt,&node_id,json!({"x":g.x,"y":g.y}).to_string(),context.to_string()))?;
             bump(tx, &p.canvas_id, canvas_revision(tx, &p.canvas_id)?)?;
             let outline = outline(tx, &p.canvas_id, &context, (g.x, g.y))?;
@@ -854,7 +942,7 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                         height: card_height(&p.reply),
                     },
                 )?;
-                insert_node(tx, &p.canvas_id, &node_id, &new_id()?, &g, &p.reply, false)?;
+                insert_node(tx, &p.canvas_id, &node_id, &new_id()?, &g, &p.reply, "text")?;
                 bump(tx, &p.canvas_id, canvas_revision(tx, &p.canvas_id)?)?;
                 Some(node_id)
             } else {
@@ -962,6 +1050,28 @@ mod tests {
         assert_eq!(
             outline_entry(&json!({"type": "drawing", "drawing": {}})),
             ("drawing", String::new())
+        );
+    }
+
+    #[test]
+    fn designs_are_named_by_their_title_or_first_heading() {
+        let entry = |html: &str| outline_entry(&json!({"type": "html", "html": html}));
+        assert_eq!(
+            entry("<html><head><TITLE>Sign in</TITLE></head><h1>Other</h1></html>"),
+            ("design", "Sign in".to_owned())
+        );
+        assert_eq!(
+            entry("<main><h1 class=\"hero\">Launch <b>faster</b>\n today</h1></main>"),
+            ("design", "Launch faster today".to_owned())
+        );
+        assert_eq!(entry("<p>No heading</p>"), ("design", String::new()));
+        assert_eq!(entry("<h1>Unclosed"), ("design", String::new()));
+        assert_eq!(
+            entry(&format!("<h1>{}</h1>", "é".repeat(200)))
+                .1
+                .chars()
+                .count(),
+            80
         );
     }
 }

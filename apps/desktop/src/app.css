@@ -1986,7 +1986,9 @@ label {
 .svelte-flow__node-text.selected,
 .svelte-flow__node-text.node--selected,
 .svelte-flow__node-drawing.selected,
-.svelte-flow__node-drawing.node--selected {
+.svelte-flow__node-drawing.node--selected,
+.svelte-flow__node-design.selected,
+.svelte-flow__node-design.node--selected {
   border-radius: 8px;
   outline: 2px solid var(--selection);
   outline-offset: 2px;
@@ -2709,4 +2711,41 @@ span.card-more {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* A design is a self-contained page shown in an inert, sandboxed frame. */
+.design {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow-sm);
+}
+
+.design.preview {
+  outline: 2px dashed var(--proposal-line);
+  outline-offset: 2px;
+  pointer-events: none;
+}
+
+.design__head {
+  flex: none;
+}
+
+.design__frame {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+  /* Keep canvas drag, resize, and selection working over the preview. */
+  pointer-events: none;
 }

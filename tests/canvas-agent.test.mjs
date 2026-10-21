@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CanvasOperationSchema, MAX_FRAME_BYTES } from "@agentica/protocol";
+import {
+  CanvasOperationSchema,
+  LIMITS,
+  MAX_FRAME_BYTES,
+} from "@agentica/protocol";
 import {
   exchangePosition,
   stageOperations,
@@ -170,6 +174,51 @@ test("staging creates stable editable objects and connectors without changing th
   );
 });
 
+test("an HTML design stages as a sandboxed page and honors its size limit", () => {
+  const source =
+    "<!doctype html><style>body{background:#101828;color:#fff}</style><main><h1>Sign in</h1></main>";
+  const created = checkedToolOperation({
+    op: "createHtml",
+    x: 500,
+    y: 0,
+    width: 960,
+    height: 640,
+    html: source,
+  });
+  assert.equal(CanvasOperationSchema.safeParse(created).success, true);
+  const staged = stageOperations(context, [
+    created,
+    {
+      op: "place",
+      nodeId: created.nodeId,
+      x: 600,
+      y: 20,
+      width: 1000,
+      height: 700,
+    },
+  ]);
+  assert.equal(staged.artifacts[1].type, "html");
+  assert.equal(staged.artifacts[1].html, source);
+  assert.deepEqual(
+    { x: staged.nodes[1].x, width: staged.nodes[1].width },
+    { x: 600, width: 1000 },
+    "a design can be moved and resized like a page",
+  );
+  assert.equal(context.artifacts.length, 1, "the source context is untouched");
+  assert.throws(
+    () =>
+      checkedToolOperation({
+        op: "createHtml",
+        x: 500,
+        y: 0,
+        width: 960,
+        height: 640,
+        html: "x".repeat(LIMITS.html + 1),
+      }),
+    /Invalid canvas/,
+  );
+});
+
 test("exchange placement uses selected content and finds open space without moving anything", () => {
   const nodes = [
     { ...context.nodes[0] },
@@ -266,11 +315,12 @@ test("the agent stages multi-round tools, returns generated IDs, and includes re
       assert.match(body.messages[2].content, /discarded/);
       assert.equal(body.provider.require_parameters, true);
       const variants = body.tools[0].function.parameters.oneOf;
-      assert.ok(
-        !variants
-          .find((s) => s.properties.op.const === "createShape")
-          .required.includes("nodeId"),
-      );
+      for (const op of ["createShape", "createHtml"]) {
+        const variant = variants.find((s) => s.properties.op.const === op);
+        assert.ok(variant, `${op} is offered to the model`);
+        assert.ok(!variant.required.includes("nodeId"));
+        assert.ok(!variant.required.includes("artifactId"));
+      }
       return result(null, [
         tool(1, {
           op: "createShape",
