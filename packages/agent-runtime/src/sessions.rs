@@ -1276,20 +1276,25 @@ mod tests {
             .wait_stopped(&spec.owner, &status.session_id)
             .unwrap();
         assert_eq!(exited.state, ProcessState::Exited, "{:?}", exited.error);
-        assert_eq!(exited.exit_code, Some(3));
-        assert_eq!(exited.exit_signal, None);
-        assert_eq!(exited.attention.kind, Some(AttentionKind::Exited));
         let attachment = supervisor
             .0
             .attach(&spec.owner, &status.session_id, 0)
             .unwrap();
-        receive(
+        let output = receive(
             &supervisor.0,
             &spec.owner,
             &status.session_id,
             &attachment,
             b"FINAL",
         );
+        assert_eq!(
+            exited.exit_code,
+            Some(3),
+            "{:?}",
+            String::from_utf8_lossy(&output)
+        );
+        assert_eq!(exited.exit_signal, None);
+        assert_eq!(exited.attention.kind, Some(AttentionKind::Exited));
         spec.executable = root.path().join("missing.exe");
         let failed = supervisor.0.start(spec.clone(), "missing", 24, 80).unwrap();
         assert_eq!(

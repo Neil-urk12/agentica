@@ -1944,6 +1944,155 @@ button.card-more {
   pointer-events: none;
 }
 
+.design__badge {
+  min-width: 1.25rem;
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25rem;
+  text-align: center;
+  color: var(--accent-ink, #fff);
+  background: var(--accent);
+  border-radius: 999px;
+}
+
+/* Design annotation: the scaled design with pins, then the comment list. */
+.review {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.review__stage {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.review__canvas {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.review__frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: none;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.review__overlay {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: crosshair;
+}
+
+.review__overlay:disabled {
+  cursor: not-allowed;
+}
+
+.review__overlay:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: -3px;
+}
+
+.review__pin,
+.review__number {
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  background: var(--accent);
+  border: 2px solid #ffffff;
+  border-radius: 999px 999px 999px 0;
+  box-shadow: var(--shadow-sm);
+}
+
+.review__pin {
+  position: absolute;
+  /* The pin's tip marks the clicked point. */
+  transform: translate(0, -100%);
+  pointer-events: none;
+}
+
+.review__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.review__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.review__number {
+  flex: none;
+  margin-top: 1.3rem;
+}
+
+.review__field {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.review__field label {
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.review__field textarea {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+}
+
+.review__remove {
+  margin-top: 1.2rem;
+}
+
+.review__empty,
+.review__blocked {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.review__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.review__count {
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Previews are noninteractive: a compact marker points to the review bar. */
 span.card-more {
   padding: 0 6px;
