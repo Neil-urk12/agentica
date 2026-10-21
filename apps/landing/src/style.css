@@ -1099,53 +1099,6 @@ html:not(.js) .theme-toggle {
   color: var(--indigo);
 }
 
-/* ================================================================ ticker */
-
-.ticker {
-  overflow: hidden;
-  padding: 0.8rem 0;
-  border-block: 1px solid var(--line);
-  background: color-mix(in srgb, var(--paper-deep) 55%, var(--paper));
-}
-
-.ticker__track {
-  display: flex;
-  width: max-content;
-  animation: ticker 46s linear infinite;
-}
-
-.ticker:hover .ticker__track {
-  animation-play-state: paused;
-}
-
-.ticker__group {
-  display: flex;
-  align-items: center;
-  gap: 2.1rem;
-  padding-right: 2.1rem;
-  font-family: var(--sans);
-  font-size: 0.68rem;
-  font-weight: 500;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  color: var(--ink-2);
-  white-space: nowrap;
-}
-
-.ticker__group i {
-  width: 5px;
-  height: 5px;
-  flex: none;
-  background: var(--indigo);
-  transform: rotate(45deg);
-}
-
-@keyframes ticker {
-  to {
-    transform: translateX(-50%);
-  }
-}
-
 /* ================================================================ layout */
 
 .section {
@@ -2431,12 +2384,6 @@ html:not(.js) .theme-toggle {
   .specimen figcaption {
     font-size: 0.56rem;
     line-height: 1.5;
-  }
-
-  .ticker__group {
-    gap: 1.4rem;
-    padding-right: 1.4rem;
-    font-size: 0.6rem;
   }
 
   .section {
