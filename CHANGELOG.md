@@ -100,6 +100,15 @@ released version and date. Keep validation evidence in the
   left the session (`setsid`) can hold the terminal open after cleanup, which
   previously kept the tile "Stopping" and blocked restart, delete, and quit.
   Output arriving after exit is dropped.
+- The runtime keeps every workspace its browser tabs open, so opening or
+  creating a workspace in one tab no longer closes the one another tab is
+  using. Only the first open in a process marks generating turns as
+  interrupted: after another tab closes the workspace, Retry save reopens it
+  and a reply still streaming can finish. A closed workspace still refuses
+  requests until it is reopened. Each open workspace keeps its database
+  connection and OS lock until another tab closes it or the backend exits, so
+  closing a tab alone does not release them; idle release is not implemented
+  yet.
 - Redesigned the workspace picker as a full start screen for less technical
   users: one "What are you working on?" name field, saved workspaces as tiles,
   plain-language copy, and a labelled Settings button. Connection details appear

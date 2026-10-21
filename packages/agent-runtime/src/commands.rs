@@ -1,5 +1,6 @@
 //! Validated workspace, canvas, and text-artifact commands.
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
@@ -404,11 +405,14 @@ struct DeleteNode {
     node_id: String,
 }
 
-/// Domain state shared by both transports. Holds at most one open workspace
-/// and its writer lock.
+/// Domain state shared by both transports. Browser tabs share one runtime, so
+/// each open workspace and its writer lock is held independently.
 pub struct Runtime {
     data_root: Option<PathBuf>,
-    open: Option<Workspace>,
+    open: HashMap<String, Workspace>,
+    /// Workspaces this process has opened. Reopening one, after another tab
+    /// closed it, keeps turns that are still generating.
+    opened: HashSet<String>,
 }
 
 impl Runtime {
@@ -416,7 +420,8 @@ impl Runtime {
     pub fn new(data_root: Option<PathBuf>) -> Self {
         Self {
             data_root,
-            open: None,
+            open: HashMap::new(),
+            opened: HashSet::new(),
         }
     }
 
@@ -527,34 +532,41 @@ impl Runtime {
             "workspace.create" => {
                 let params: CreateWorkspace = parse(params)?;
                 label("name", &params.name)?;
-                self.open = Some(Workspace::create(self.data_root(), &params.name)?);
-                self.workspace_state()
+                let workspace = Workspace::create(self.data_root(), &params.name)?;
+                let workspace_id = workspace.id.clone();
+                self.opened.insert(workspace_id.clone());
+                self.open.insert(workspace_id.clone(), workspace);
+                self.workspace_state(&workspace_id)
             }
             "workspace.delete" => {
                 let params: WorkspaceParams = parse(params)?;
                 id("workspaceId", &params.workspace_id)?;
                 // Deleting the open workspace closes it first: the storage
                 // cannot be removed while this runtime holds its files open.
-                if self.open.as_ref().map(|open| open.id.as_str()) == Some(&params.workspace_id) {
-                    self.open = None;
-                }
+                self.open.remove(&params.workspace_id);
                 delete_workspace(self.data_root(), &params.workspace_id)?;
+                self.opened.remove(&params.workspace_id);
                 Ok(json!({ "workspaces": self.workspaces()? }))
             }
             "workspace.open" => {
                 let params: WorkspaceParams = parse(params)?;
                 id("workspaceId", &params.workspace_id)?;
                 // Reopening in the same runtime reuses the held lock.
-                if self.open.as_ref().map(|open| open.id.as_str()) != Some(&params.workspace_id) {
-                    // Acquire the new workspace before releasing the current one.
-                    self.open = Some(Workspace::open(self.data_root(), &params.workspace_id)?);
+                if !self.open.contains_key(&params.workspace_id) {
+                    let workspace = Workspace::open(self.data_root(), &params.workspace_id)?;
+                    // Only turns left by an earlier process are interrupted:
+                    // another tab may still be generating a reply here.
+                    if self.opened.insert(params.workspace_id.clone()) {
+                        workspace.interrupt_generating()?;
+                    }
+                    self.open.insert(params.workspace_id.clone(), workspace);
                 }
-                self.workspace_state()
+                self.workspace_state(&params.workspace_id)
             }
             "workspace.close" => {
                 let params: WorkspaceParams = parse(params)?;
                 self.workspace(&params.workspace_id)?;
-                self.open = None;
+                self.open.remove(&params.workspace_id);
                 Ok(json!({}))
             }
             "canvas.create" => {
@@ -853,13 +865,12 @@ impl Runtime {
 
     fn workspace(&mut self, workspace_id: &str) -> Result<&mut Workspace, RuntimeError> {
         id("workspaceId", workspace_id)?;
-        match &mut self.open {
-            Some(open) if open.id == workspace_id => Ok(open),
-            _ => Err(RuntimeError::new(
+        self.open.get_mut(workspace_id).ok_or_else(|| {
+            RuntimeError::new(
                 "WORKSPACE_NOT_OPEN",
                 "This workspace is not open in this runtime. Open it, then retry.",
-            )),
-        }
+            )
+        })
     }
 
     /// Run `apply` in one durable transaction; nothing is stored on error.
@@ -885,10 +896,8 @@ impl Runtime {
             .collect())
     }
 
-    fn workspace_state(&mut self) -> Result<Value, RuntimeError> {
-        let Some(workspace) = &self.open else {
-            unreachable!("called after opening a workspace");
-        };
+    fn workspace_state(&self, workspace_id: &str) -> Result<Value, RuntimeError> {
+        let workspace = &self.open[workspace_id];
         let conn = &workspace.conn;
         let name: String = conn.query_row("SELECT name FROM workspace", [], |row| row.get(0))?;
         Ok(json!({ "workspace": { "id": workspace.id, "name": name },

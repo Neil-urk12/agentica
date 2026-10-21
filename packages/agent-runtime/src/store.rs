@@ -241,7 +241,6 @@ impl Workspace {
         if version < STORAGE_VERSION {
             migrate(&tx, version, MIGRATIONS)?;
         }
-        tx.execute("UPDATE conversation_turn SET status = 'interrupted', error = 'Generation was interrupted. Retry explicitly.' WHERE status = 'generating'", [])?;
         let stored: Option<String> = tx
             .query_row("SELECT id FROM workspace", [], |row| row.get(0))
             .optional()?;
@@ -257,6 +256,12 @@ impl Workspace {
             conn,
             _lock: lock,
         })
+    }
+
+    /// Turns still generating when an earlier process stopped can never finish.
+    pub(crate) fn interrupt_generating(&self) -> Result<(), RuntimeError> {
+        self.conn.execute("UPDATE conversation_turn SET status = 'interrupted', error = 'Generation was interrupted. Retry explicitly.' WHERE status = 'generating'", [])?;
+        Ok(())
     }
 }
 
