@@ -90,6 +90,12 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-21
 
+- Save only changed canvas objects, splitting large layout deltas across
+  frame-sized `canvas.save` requests. A canvas with hundreds of nodes now
+  persists placement, project layout, and viewport changes without hitting the
+  16 KiB request limit. A project and its changed tiles always share one
+  request, because the runtime rejects any request that leaves a tile outside
+  its project.
 - Redesigned the workspace picker as a full start screen for less technical
   users: one "What are you working on?" name field, saved workspaces as tiles,
   plain-language copy, and a labelled Settings button. Connection details appear

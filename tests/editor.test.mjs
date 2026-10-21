@@ -153,14 +153,16 @@ async function setup(t, intercept = async () => {}) {
         ...params.nodes.find((item) => item.id === node.id),
       }));
       for (const collection of ["projectGroups", "sessionTiles"])
-        if (params[collection])
-          disk[collection] = disk[collection].map((item) => {
-            const { expectedRevision, ...layout } = params[collection].find(
-              (p) => p.id === item.id,
-            );
-            assert.equal(expectedRevision, item.revision);
-            return { ...item, ...layout, revision: item.revision + 1 };
-          });
+        for (const patch of params[collection] ?? []) {
+          const item = disk[collection].find((entry) => entry.id === patch.id);
+          const { expectedRevision, ...layout } = patch;
+          assert.equal(expectedRevision, item.revision);
+          disk[collection] = disk[collection].map((entry) =>
+            entry.id === item.id
+              ? { ...entry, ...layout, revision: entry.revision + 1 }
+              : entry,
+          );
+        }
       return { revision: disk.canvas.revision };
     }
     throw new Error(`Unexpected method ${method}`);
@@ -256,7 +258,11 @@ test("project layout keeps duplicate roots independent and children relative acr
   assert.equal(editor.state.document.projectGroups[0].collapsed, true);
   assert.equal(editor.state.document.projectGroups[0].x, 150);
   assert.equal(editor.state.document.projectGroups[0].height, 552);
-  assert.equal(editor.state.document.sessionTiles[0].revision, 2);
+  assert.equal(
+    editor.state.document.sessionTiles[0].revision,
+    1,
+    "an unchanged tile is not rewritten",
+  );
   assert.ok(calls.every((call) => !call.method.startsWith("session.")));
 });
 
@@ -810,6 +816,157 @@ test("new placement and view changes during canvas saves are saved afterward", a
   assert.deepEqual(disk.canvas.viewport, { x: 80, y: -40, zoom: 2 });
   assert.equal(editor.state.dirty, false);
 });
+
+function canvasNode(index, x = 0) {
+  return {
+    id: `00000000-0000-4000-8000-${String(1000 + index).padStart(12, "0")}`,
+    artifactId: `00000000-0000-4000-8000-${String(5000 + index).padStart(12, "0")}`,
+    x,
+    y: index % 100,
+    width: 240,
+    height: 160,
+  };
+}
+
+async function largeCanvas(t, intercept) {
+  const fixture = await setup(t, intercept);
+  fixture.disk.nodes = [
+    ...fixture.disk.nodes,
+    ...Array.from({ length: 400 }, (_, index) => canvasNode(index)),
+  ];
+  await fixture.editor.openCanvas(canvasId);
+  return fixture;
+}
+
+test("a large canvas saves only the changed node instead of the whole layout", async (t) => {
+  const { editor, disk, calls } = await largeCanvas(t);
+  const fullLayout = frameBytes("canvas.save", {
+    workspaceId,
+    canvasId,
+    expectedRevision: disk.canvas.revision,
+    viewport: disk.canvas.viewport,
+    nodes: disk.nodes.map(({ id, x, y, width, height }) => ({
+      id,
+      x,
+      y,
+      width,
+      height,
+    })),
+  });
+  assert.ok(fullLayout > MAX_FRAME_BYTES, "the full layout exceeds one frame");
+
+  const target = disk.nodes.at(-1);
+  editor.placeNode(target.id, { x: 777 });
+  await editor.save();
+
+  assert.equal(editor.state.error, "");
+  assert.equal(editor.state.dirty, false);
+  assert.equal(disk.nodes.find((node) => node.id === target.id).x, 777);
+  const saves = calls.filter((call) => call.method === "canvas.save");
+  assert.equal(saves.length, 1);
+  assert.deepEqual(
+    saves[0].params.nodes.map((node) => node.id),
+    [target.id],
+    "unchanged nodes are not resent",
+  );
+  assert.ok(frameBytes("canvas.save", saves[0].params) <= MAX_FRAME_BYTES);
+});
+
+test("a layout change larger than one frame is split across canvas saves", async (t) => {
+  const { editor, disk, calls } = await largeCanvas(t);
+  const before = calls.filter((call) => call.method === "canvas.save").length;
+  const expected = new Map();
+  for (const [index, node] of disk.nodes.entries()) {
+    const x = node.x + index + 1;
+    expected.set(node.id, x);
+    editor.placeNode(node.id, { x });
+  }
+  await editor.save();
+
+  assert.equal(editor.state.error, "");
+  assert.equal(editor.state.dirty, false);
+  const saves = calls
+    .filter((call) => call.method === "canvas.save")
+    .slice(before);
+  assert.ok(saves.length > 1, "the delta was split across requests");
+  for (const save of saves)
+    assert.ok(
+      frameBytes("canvas.save", save.params) <= MAX_FRAME_BYTES,
+      `canvas.save fits the frame limit (${frameBytes("canvas.save", save.params)} bytes)`,
+    );
+  for (const node of disk.nodes)
+    assert.equal(node.x, expected.get(node.id), `${node.id} persisted`);
+});
+
+test("a split layout save that fails midway retries only the remaining changes", async (t) => {
+  let attempts = 0;
+  let fail = true;
+  const { editor, disk, calls } = await largeCanvas(t, async (method) => {
+    if (method === "canvas.save" && ++attempts === 2 && fail) {
+      fail = false;
+      throw new TypeError("Simulated layout failure");
+    }
+  });
+  const expected = new Map();
+  for (const [index, node] of disk.nodes.entries()) {
+    const x = node.x + index + 1;
+    expected.set(node.id, x);
+    editor.placeNode(node.id, { x });
+  }
+  await editor.save();
+  assert.equal(editor.state.dirty, true);
+  assert.match(editor.state.error, /Simulated layout failure/);
+  const committed = calls.filter(
+    (call) => call.method === "canvas.save",
+  ).length;
+  assert.equal(
+    committed,
+    2,
+    "the second request failed after the first committed",
+  );
+
+  await editor.retrySave();
+  assert.equal(editor.state.error, "");
+  assert.equal(editor.state.dirty, false);
+  for (const node of disk.nodes)
+    assert.equal(node.x, expected.get(node.id), `${node.id} persisted`);
+  for (const save of calls.filter((call) => call.method === "canvas.save"))
+    assert.ok(frameBytes("canvas.save", save.params) <= MAX_FRAME_BYTES);
+});
+
+// With these counts, a frame boundary used to fall between a project and its
+// tile, so the shrunken project was sent before the tile that makes it fit.
+for (const moved of [185, 186])
+  test(`a shrunken project and its tile share one split save (${moved} nodes moved)`, async (t) => {
+    const { editor, disk, calls } = await projectSetup(t);
+    disk.nodes = Array.from({ length: moved }, (_, index) => canvasNode(index));
+    await editor.openCanvas(canvasId);
+    for (const [index, node] of disk.nodes.entries())
+      editor.placeNode(node.id, { x: node.x + index + 1 });
+    const [group] = disk.projectGroups;
+    const [tile] = disk.sessionTiles;
+    // A project cannot shrink past its tiles, so the tile shrinks first.
+    editor.placeSessionTile(tile.id, { width: 300, height: 200 });
+    editor.placeProject(group.id, { width: 400, height: 400 });
+    await editor.save();
+
+    assert.equal(editor.state.error, "");
+    assert.equal(editor.state.dirty, false);
+    const saves = calls.filter((call) => call.method === "canvas.save");
+    assert.ok(saves.length > 1, "the delta was split across requests");
+    const shared = saves.filter((save) =>
+      save.params.projectGroups?.some((item) => item.id === group.id),
+    );
+    assert.equal(shared.length, 1);
+    assert.ok(
+      shared[0].params.sessionTiles?.some((item) => item.id === tile.id),
+      "the tile is saved with its project",
+    );
+    for (const save of saves)
+      assert.ok(frameBytes("canvas.save", save.params) <= MAX_FRAME_BYTES);
+    assert.equal(disk.projectGroups[0].width, 400);
+    assert.equal(disk.sessionTiles[0].width, 300);
+  });
 
 for (const failedMethod of ["artifact.saveText", "canvas.save"]) {
   test(`${failedMethod} failure retains drafts and partial progress for explicit retry`, async (t) => {
