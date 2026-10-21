@@ -109,6 +109,8 @@ released version and date. Keep validation evidence in the
   connection and OS lock until another tab closes it or the backend exits, so
   closing a tab alone does not release them; idle release is not implemented
   yet.
+- Applying a proposal skips a link that already exists instead of failing on
+  the duplicate-link constraint, so a link drawn by hand no longer blocks Apply.
 - Redesigned the workspace picker as a full start screen for less technical
   users: one "What are you working on?" name field, saved workspaces as tiles,
   plain-language copy, and a labelled Settings button. Connection details appear
