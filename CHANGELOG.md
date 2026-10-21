@@ -111,6 +111,9 @@ released version and date. Keep validation evidence in the
   yet.
 - Applying a proposal skips a link that already exists instead of failing on
   the duplicate-link constraint, so a link drawn by hand no longer blocks Apply.
+- Workspace listing and deletion roll back a write interrupted by a crash
+  (listing only while no writer holds the workspace), instead of reporting the
+  workspace as unreadable and refusing deletion.
 - Redesigned the workspace picker as a full start screen for less technical
   users: one "What are you working on?" name field, saved workspaces as tiles,
   plain-language copy, and a labelled Settings button. Connection details appear
