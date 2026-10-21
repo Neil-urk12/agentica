@@ -12,6 +12,24 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-21
 
+- Redesigned the workspace picker as a full start screen for less technical
+  users: one "What are you working on?" name field, saved workspaces as tiles,
+  plain-language copy, and a labelled Settings button. Connection details appear
+  only when the backend is not ready, or on demand from **Ready** (see the
+  follow-up below); otherwise a quiet **Ready** status shows. Workspace IDs show
+  only for unreadable workspaces.
+- Follow-up to the workspace picker redesign above: made the connection controls
+  reachable again, because **Ready** is now a disclosure that reveals them, so
+  the key can be changed and the backend reconnected without leaving the
+  screen. Connection changes are announced by one live region per screen, so
+  "Ready" and failures are read out instead of appearing silently. The delete
+  confirmation takes focus, closes on Escape and returns focus to the delete
+  button, and no longer lets the tile name open a workspace while it is open.
+  The home logo now matches the brand mark, truncated tile names expose their
+  full name, and the unused `.panel__action` rule was dropped.
+- Updated the rendered-app browser tests for the new start screen: they now
+  select workspaces by their tiles (`.tiles .tile__open`, named by
+  `.tile__name`) while canvases keep the picker cards.
 - Added a pull request template
   ([`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md)) asking
   for a summary, linked issue, motivation, changes, change type, test steps, and

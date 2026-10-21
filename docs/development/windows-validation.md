@@ -51,7 +51,7 @@ reopen and writer-contention checks. Never use real workspaces for fault tests.
 & .\target\release\agentica-desktop.exe
 ```
 
-1. Verify an actual application window opens and shows **Backend connected**.
+1. Verify an actual application window opens and shows **Ready** on the workspace screen.
 2. Create a workspace and canvas, add text, edit it with the keyboard, change
    node position/dimensions and pan/zoom, and wait for **Saved**. Check visible
    keyboard focus and save/error notices.

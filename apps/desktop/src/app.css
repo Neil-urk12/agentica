@@ -551,10 +551,6 @@ label {
   background: var(--accent-soft);
 }
 
-.panel__action {
-  margin-left: auto;
-}
-
 .panel__hint {
   margin: 0;
   font-size: 0.8rem;
@@ -719,6 +715,343 @@ label {
 
 .empty small {
   font-size: 0.76rem;
+}
+
+/* ---------------------------------------------------------- workspace home */
+
+/* Full-page start screen; the dot grid echoes the canvas it leads into. */
+.home {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg);
+  background-image: radial-gradient(var(--line-strong) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.home__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.1rem 2rem;
+}
+
+.home__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.home__logo {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 9px;
+  color: var(--on-primary);
+  background: var(--primary-from);
+}
+
+.home__tools {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.home__ready {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  padding: 0 0.85rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  background: var(--surface);
+  cursor: pointer;
+  transition:
+    border-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.home__ready:hover {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.home__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.home__tools .btn {
+  min-height: 2.75rem;
+  background: var(--surface);
+}
+
+.home__conn {
+  width: 100%;
+  max-width: 65rem;
+  margin: 0 auto;
+  padding: 0 2rem;
+  box-sizing: border-box;
+}
+
+.home__conn[hidden] {
+  display: none;
+}
+
+.home__main {
+  width: 100%;
+  max-width: 65rem;
+  margin: 0 auto;
+  padding: 3.5rem 2rem 3rem;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 3.5rem;
+}
+
+.home__start {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.home__start h1 {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 2.75rem);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.home__form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  max-width: 45rem;
+}
+
+.home__form input {
+  flex: 1 1 22rem;
+  width: auto;
+  min-width: 0;
+  min-height: 3.5rem;
+  padding: 0 1.1rem;
+  font-size: 1.05rem;
+  border: 2px solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.home__form .btn {
+  min-height: 3.5rem;
+  padding: 0 1.6rem;
+  font-size: 1rem;
+  border-radius: var(--radius);
+}
+
+.home__hint {
+  margin: 0;
+  max-width: 60ch;
+  font-size: 0.92rem;
+  color: var(--ink-soft);
+}
+
+.home__recent {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.home__recent-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.home__recent-head h2 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.home__empty {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  max-width: 45rem;
+  padding: 1.75rem;
+  border: 2px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.home__empty p {
+  margin: 0;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.home__note {
+  flex: none;
+  width: 4.5rem;
+  height: 3.25rem;
+  border-radius: 4px;
+  background: var(--card-note);
+  border: 1px solid var(--card-note-line);
+  transform: rotate(-4deg);
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  gap: 1.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tile {
+  position: relative;
+}
+
+.tile__open {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.tile__open:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.tile__paper {
+  position: relative;
+  display: block;
+  height: 8rem;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  transition: border-color 0.16s ease;
+}
+
+.tile__open:hover:not(:disabled) .tile__paper {
+  border-color: var(--accent);
+}
+
+.tile__note {
+  position: absolute;
+  left: 1.4rem;
+  top: 1.5rem;
+  width: 4rem;
+  height: 2.75rem;
+  border-radius: 4px;
+  background: var(--card-note);
+  border: 1px solid var(--card-note-line);
+  transform: rotate(-3deg);
+}
+
+.tile__line {
+  position: absolute;
+  left: 6.5rem;
+  top: 2.1rem;
+  width: 4.5rem;
+  height: 2px;
+  background: var(--card-line);
+}
+
+.tile__ring {
+  position: absolute;
+  left: 7rem;
+  top: 3.75rem;
+  width: 3.25rem;
+  height: 2.1rem;
+  border: 2px solid var(--card-line);
+  border-radius: 50%;
+}
+
+.tile__name {
+  padding-right: 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tile__meta {
+  margin-top: -0.4rem;
+  font-size: var(--type-meta);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tile__delete {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: var(--surface);
+}
+
+/* Covers the tile's preview while asking to confirm a destructive delete. */
+.tile__confirm {
+  position: absolute;
+  inset: 0 0 auto;
+  min-height: 8rem;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.85rem;
+  font-size: 0.85rem;
+  line-height: 1.35;
+  color: var(--ink);
+  background: var(--bad-soft);
+  border: 1px solid var(--bad-line);
+  border-radius: var(--radius);
+}
+
+.tile__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+@media (max-width: 640px) {
+  .home__bar,
+  .home__conn,
+  .home__main {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+  .home__main {
+    padding-top: 2rem;
+    gap: 2.5rem;
+  }
 }
 
 /* ------------------------------------------------------------------ alerts */

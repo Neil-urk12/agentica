@@ -287,7 +287,7 @@ enter its connection key, and connect.
 1. Keep the backend running (and the frontend server for development).
 2. Open **`http://127.0.0.1:1421`** for the distribution, or **`http://127.0.0.1:1420`** for development.
 3. Copy the **Connection key** from the backend terminal into the UI's password field.
-4. Select **Connect**; a successful health check shows **Backend connected**.
+4. Select **Connect**; a successful health check shows **Ready** at the top of the workspace screen.
 
 The backend listens on `http://127.0.0.1:1421/rpc` for authenticated API requests.
 It accepts the production origin `http://127.0.0.1:1421` and the development

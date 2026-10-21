@@ -13,6 +13,7 @@
     workspaceName: string;
     canvases: CanvasInfo[];
     connection: Snippet;
+    connectionMessage: string;
     busy: boolean;
     error: string;
     onCreate: (title: string) => void;
@@ -26,6 +27,7 @@
     workspaceName,
     canvases,
     connection,
+    connectionMessage,
     busy,
     error,
     onCreate,
@@ -60,6 +62,9 @@
   {actions}
 >
   {@render connection()}
+  <!-- The dialog is modal, so the app-level live region is inert while it is
+       open. This one carries the connection announcements instead. -->
+  <p class="sr-only" role="status" aria-live="polite">{connectionMessage}</p>
   <div class="split">
     <section class="panel">
       <header class="panel__head">

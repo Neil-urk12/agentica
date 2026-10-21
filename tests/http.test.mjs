@@ -931,12 +931,14 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
       ["workspace", "Handle coverage"],
       ["canvas", "Handle canvas"],
     ]) {
+      // Workspaces are tiles on the start screen; canvases are picker cards.
+      const item = ".tiles .tile__open, .cards .card";
       await waitFor(
         browser,
-        `[...document.querySelectorAll(".cards .card")].some((card) => card.textContent.includes(${JSON.stringify(label)}))`,
+        `[...document.querySelectorAll(${JSON.stringify(item)})].some((card) => card.textContent.includes(${JSON.stringify(label)}))`,
         `the seeded ${picker} card`,
       );
-      await clickAt(browser, await boxByText(browser, ".cards .card", label));
+      await clickAt(browser, await boxByText(browser, item, label));
     }
     await waitFor(
       browser,
@@ -1317,8 +1319,9 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
       `!!document.querySelector('.connbar--ok')`,
       "connection",
     );
+    // Workspaces are tiles on the start screen; canvases are picker cards.
     const selectCard = async (label) => {
-      const expression = `[...document.querySelectorAll('.cards .card')].find(c => c.querySelector('strong')?.textContent === ${JSON.stringify(label)})`;
+      const expression = `[...document.querySelectorAll('.tiles .tile__open, .cards .card')].find(c => c.querySelector('.tile__name, strong')?.textContent === ${JSON.stringify(label)})`;
       await waitFor(
         browser,
         `${expression} && !(${expression}).disabled`,
@@ -1328,7 +1331,10 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
         browser,
         `(${expression}).focus(); (${expression}).scrollIntoView({block:'center'})`,
       );
-      await clickAt(browser, await boxByText(browser, ".cards .card", label));
+      await clickAt(
+        browser,
+        await boxByText(browser, ".tiles .tile__open, .cards .card", label),
+      );
     };
     for (const label of ["Canvas conversation UI", "Conversation UI"])
       await selectCard(label);

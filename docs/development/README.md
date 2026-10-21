@@ -18,8 +18,8 @@ pnpm dev
 
 `pnpm dev` builds the frontend protocol package, starts Vite, and opens the Tauri
 desktop app. The shared Rust runtime is compiled into the app. The window calls
-it through a scoped Tauri command and shows **Backend connected** after a validated
-ping. Closing the app ends its backend; there is no separate child process.
+it through a scoped Tauri command and shows **Ready** on the workspace screen after
+a validated ping. Closing the app ends its backend; there is no separate child process.
 
 For browser mode, Rust is needed to build the backend, but GTK, WebKitGTK, and
 other desktop prerequisites are not needed. In two terminals:

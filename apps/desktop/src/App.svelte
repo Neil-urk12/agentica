@@ -1364,7 +1364,9 @@
       await pingRuntime(connectionKey.trim(), connect);
       if (alive) {
         status = "connected";
-        message = "Backend connected";
+        // "Ready" is what the workspace screen shows, so the live region and
+        // the visible badge never disagree.
+        message = "Ready";
         if (connect) await editor.listWorkspaces();
         if (!sessions.connected) {
           try {
@@ -1827,14 +1829,21 @@
 
 <svelte:window onbeforeunload={beforeUnload} onkeydown={onKeydown} />
 
+<!-- One live region per screen context. The workspace and editor screens
+     share this one; the canvas screen renders its own inside its modal
+     dialog, because a modal makes the rest of the page inert. -->
+{#if stage !== "canvas"}
+  <p class="sr-only" role="status" aria-live="polite">{message}</p>
+{/if}
+
 {#snippet connectionControls()}
+  <!-- The workspace screen shows the controls on demand, so the bar stays
+       rendered there even while connected. -->
   {#if stage === "workspace" || !connected}
     <div
       class="connbar"
       class:connbar--ok={connected}
       class:connbar--bad={status === "failed"}
-      role="status"
-      aria-live="polite"
     >
       <span class="connbar__dot"></span>
       <span class="connbar__text">{message}</span>
@@ -1902,6 +1911,7 @@
         "Unnamed workspace"}
       canvases={editorState.workspace?.canvases ?? []}
       connection={connectionControls}
+      connectionMessage={message}
       busy={working}
       error={editorState.error}
       onCreate={(title) => void editor.createCanvas(title)}
