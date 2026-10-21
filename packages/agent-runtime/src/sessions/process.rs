@@ -7,7 +7,7 @@ use std::{
         mpsc::{self, SyncSender},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 pub(super) struct Process {
@@ -69,10 +69,12 @@ fn spawn(
     command.cwd(&spec.directory);
     command.env("TERM", "xterm-256color");
     let (send, receive) = mpsc::sync_channel::<Vec<u8>>(16);
-    let (output_supervisor, output_owner, output_id) = (
+    let detached = Arc::new(AtomicBool::new(false));
+    let (output_supervisor, output_owner, output_id, output_detached) = (
         supervisor.clone(),
         spec.owner.clone(),
         session_id.to_owned(),
+        detached.clone(),
     );
     let output = thread::Builder::new()
         .name("terminal-output".into())
@@ -84,6 +86,12 @@ fn spawn(
                     Ok(count) => {
                         if output_supervisor
                             .with_session(&output_owner, &output_id, |session| {
+                                if output_detached.load(Ordering::SeqCst) {
+                                    return Err(RuntimeError::new(
+                                        "CONFLICT",
+                                        "The session already exited.",
+                                    ));
+                                }
                                 session.push(&buffer[..count])
                             })
                             .is_err()
@@ -152,8 +160,19 @@ fn spawn(
         });
         match linux::cleanup(pid as i32, child.as_mut()) {
             Ok((code, signal)) => {
-                // Exit makes the final output cursor safe for renderer detachment.
-                let _ = output.join();
+                // A process that escaped the session (setsid) can hold the
+                // terminal open indefinitely, so final output gets a bounded wait.
+                let deadline = Instant::now() + Duration::from_millis(500);
+                while !output.is_finished() && Instant::now() < deadline {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                // shortcut: the output thread is not joined after the deadline.
+                // It stays blocked in read() and keeps the terminal handle open
+                // until the escaped process writes or closes the terminal,
+                // upgrade to an explicit reader shutdown if escaped sessions pile up.
+                // Exit makes the final output cursor safe for renderer
+                // detachment, so later output from an escaped process is dropped.
+                detached.store(true, Ordering::SeqCst);
                 let _ = supervisor.with_session(&spec.owner, session_id, |session| {
                     session.status.state = ProcessState::Exited;
                     session.status.exit_code = code;
