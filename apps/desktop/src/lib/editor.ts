@@ -769,6 +769,11 @@ export class Editor {
     });
   }
 
+  /** Agent reads leave the canvas revision alone, so they skip the save queue and reload. */
+  readConversation(params: RuntimeParams<"conversation.read">) {
+    return this.call(this.key(), false, "conversation.read", params);
+  }
+
   async startConversation(params: RuntimeParams<"conversation.start">) {
     let result: RuntimeResult<"conversation.start"> | undefined;
     await this.enqueue(async () => {

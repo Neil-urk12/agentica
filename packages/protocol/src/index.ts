@@ -253,6 +253,34 @@ export const CanvasOperationJsonSchema = z.toJSONSchema(CanvasOperationSchema);
 const Operations = z.array(CanvasOperationSchema).max(32);
 const Anchor = z.strictObject({ x: Coordinate, y: Coordinate });
 const TurnRef = { ...CanvasRef, turnId: IdSchema };
+// Per-turn agent read limits shared with packages/agent-runtime/src/conversation.rs;
+// both are pinned by tests/fixtures/conversation-read-limits.json.
+export const CONVERSATION_READ = {
+  nodes: 16,
+  calls: 8,
+  bytes: 64 * 1024,
+  outline: 200,
+  title: 80,
+} as const;
+const OutlineSchema = z.strictObject({
+  items: z
+    .array(
+      z.strictObject({
+        nodeId: IdSchema,
+        kind: z.enum(["text", "rectangle", "ellipse", "drawing"]),
+        x: z.number(),
+        y: z.number(),
+        width: z.number(),
+        height: z.number(),
+        title: z.string().max(CONVERSATION_READ.title),
+        writable: z.boolean(),
+        conversation: z.literal(true).optional(),
+      }),
+    )
+    .max(CONVERSATION_READ.outline),
+  truncated: z.boolean(),
+});
+export type CanvasOutline = z.infer<typeof OutlineSchema>;
 const ConversationStatus = z.enum([
   "generating",
   "pending",
@@ -408,6 +436,14 @@ const ParamSchemas = {
   "conversation.resolve": z.strictObject({
     ...TurnRef,
     action: z.enum(["apply", "discard"]),
+  }),
+  "conversation.read": z.strictObject({
+    ...TurnRef,
+    nodeIds: z
+      .array(IdSchema)
+      .min(1)
+      .max(CONVERSATION_READ.nodes)
+      .refine((ids) => new Set(ids).size === ids.length, "IDs must be unique"),
   }),
   "conversation.list": z.strictObject({
     ...CanvasRef,
@@ -615,6 +651,7 @@ export const ResultSchemas = {
       edges: z.array(EdgeSchema),
       artifacts: z.array(ArtifactSchema),
     }),
+    outline: OutlineSchema,
     history: z
       .array(
         z.strictObject({
@@ -627,6 +664,15 @@ export const ResultSchemas = {
   }),
   "conversation.finish": z.strictObject({ turn: ConversationTurnSchema }),
   "conversation.resolve": z.strictObject({ turn: ConversationTurnSchema }),
+  "conversation.read": z.strictObject({
+    nodes: z.array(NodeSchema).max(CONVERSATION_READ.nodes),
+    edges: z.array(EdgeSchema),
+    artifacts: z.array(ArtifactSchema).max(CONVERSATION_READ.nodes),
+    remaining: z.strictObject({
+      reads: z.number().int().nonnegative(),
+      bytes: z.number().int().nonnegative(),
+    }),
+  }),
   "conversation.list": z.strictObject({
     turns: z.array(ConversationTurnSchema).max(8),
     nextBefore: z.number().int().nonnegative(),
@@ -753,6 +799,7 @@ export const ErrorCodeSchema = z.enum([
   "SCOPE_DENIED",
   "BACKPRESSURE",
   "INVALID_EVENT_ORDER",
+  "BUDGET_EXCEEDED",
 ]);
 
 export const SESSION_LIMITS = {

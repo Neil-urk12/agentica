@@ -90,11 +90,58 @@
             }
           ]
         },
+        "outline": {
+          "items": [
+            { "nodeId": "$cn1", "kind": "text", "writable": true },
+            {
+              "nodeId": "$cn2",
+              "kind": "text",
+              "title": "Unrelated",
+              "writable": false
+            }
+          ],
+          "truncated": false
+        },
         "history": []
       },
       "save": {
         "cp1": "/turn/promptNodeId"
       }
+    },
+    {
+      "method": "conversation.read",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000001",
+        "nodeIds": ["$cn2"]
+      },
+      "expect": {
+        "nodes": [{ "id": "$cn2" }],
+        "edges": [],
+        "artifacts": [{ "id": "$ca2", "text": "Unrelated" }],
+        "remaining": { "reads": 7 }
+      }
+    },
+    {
+      "method": "conversation.read",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000001",
+        "nodeIds": ["10000000-0000-4000-8000-0000000000ff"]
+      },
+      "error": "SCOPE_DENIED"
+    },
+    {
+      "method": "conversation.read",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000001",
+        "nodeIds": []
+      },
+      "error": "INVALID_PARAMS"
     },
     {
       "method": "conversation.start",

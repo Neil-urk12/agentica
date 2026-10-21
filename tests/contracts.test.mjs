@@ -14,6 +14,7 @@ import {
   SessionAttentionSchema,
   ReviewRecordSchema,
   MAX_FRAME_BYTES,
+  CONVERSATION_READ,
 } from "@agentica/protocol";
 
 test("review records and method contracts are bounded within RPC frames", () => {
@@ -298,6 +299,18 @@ test("project collections validate explicit membership, geometry and saved prese
     );
 });
 
+test("conversation read limits match the runtime's", () => {
+  assert.deepEqual(
+    JSON.parse(
+      readFileSync(
+        new URL("./fixtures/conversation-read-limits.json", import.meta.url),
+        "utf8",
+      ),
+    ),
+    CONVERSATION_READ,
+  );
+});
+
 test("normalized run events enforce correlation, bounds, and cancellation ordering", () => {
   const fixtures = JSON.parse(
     readFileSync(
@@ -387,4 +400,46 @@ test("operation and agent scope bounds reject oversized and duplicate identities
     }).success,
     false,
   );
+});
+
+test("conversation reads and outline items stay bounded", () => {
+  const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const read = (nodeIds) =>
+    RuntimeRequestSchema.safeParse({
+      protocolVersion: 1,
+      id: "read",
+      method: "conversation.read",
+      params: { workspaceId: id(0), canvasId: id(0), turnId: id(0), nodeIds },
+    }).success;
+  const ids = Array.from({ length: CONVERSATION_READ.nodes }, (_, n) =>
+    id(n + 1),
+  );
+  assert.equal(read(ids), true);
+  assert.equal(read([]), false);
+  assert.equal(read([...ids, id(99)]), false);
+  assert.equal(read([id(1), id(1)]), false);
+  const outline = ResultSchemas["conversation.start"].shape.outline;
+  const item = {
+    nodeId: id(1),
+    kind: "text",
+    x: 0,
+    y: 0,
+    width: 40,
+    height: 40,
+    title: "a".repeat(CONVERSATION_READ.title),
+    writable: false,
+  };
+  assert.equal(
+    outline.safeParse({ items: [item], truncated: false }).success,
+    true,
+  );
+  for (const invalid of [
+    { ...item, title: "a".repeat(CONVERSATION_READ.title + 1) },
+    { ...item, kind: "path" },
+    { ...item, conversation: false },
+  ])
+    assert.equal(
+      outline.safeParse({ items: [invalid], truncated: false }).success,
+      false,
+    );
 });

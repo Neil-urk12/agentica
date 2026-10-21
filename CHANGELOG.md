@@ -12,6 +12,49 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-22
 
+- Added a canvas agent harness with runtime-checked reads. Security still rests on
+  the runtime: the agent loop runs in the webview, where anything that can run
+  code can call `/rpc` directly, so loop checks only give the model fast feedback.
+  - `canvas-harness.ts` owns each turn's limits: 8 model requests, 32 tool
+    calls, 128 KiB per model request, 16 KiB per tool call, and 2 minutes.
+    `openrouter.ts` keeps only the provider transport.
+  - The 16 KiB RPC frame limit no longer applies to model requests, which never
+    pass through `/rpc`. It still applies to every runtime request, including
+    the finished proposal.
+  - When a limit runs out after edits were staged, the turn ends as a partial
+    proposal whose reply names the limit, instead of discarding the edits. With
+    nothing staged it still fails, and a user cancel still keeps nothing.
+  - Only `canvas_edit` and the new `canvas_read` exist. Unknown tool names go
+    back to the model as rejections; malformed calls such as reused call IDs
+    end the turn.
+  - New runtime method `conversation.read` returns up to 16 text or drawing
+    objects from the turn's canvas, beyond the selection. The runtime checks
+    that the turn is generating, the objects are on that canvas, and the
+    per-turn read budget (8 reads, 64 KiB) holds, and logs each read in the new
+    `conversation_read` table (storage version 8). Missing IDs and IDs on other
+    canvases get the same `SCOPE_DENIED` message so reads can't probe for them,
+    a spent budget returns the new `BUDGET_EXCEEDED` code (a read that is only
+    too large for the bytes left says so, so the model retries with fewer
+    objects instead of giving up on reading), and reads never bump
+    the canvas revision, so the user's saves during generation still succeed.
+    Project and session tiles are not canvas nodes and can't be read.
+  - `conversation.start` returns an outline of up to 200 objects with kind,
+    geometry, an 80-character title, and whether each is writable, so the model
+    knows what it can read. Earlier conversation cards are left out unless they
+    are in the write scope.
+  - Write scope is unchanged: the selection, or the whole canvas when nothing is
+    selected, fixed when the turn starts. Reading an object never makes it
+    editable.
+  - Canvas content goes to the model inside a `<canvas-data>` block, with `<`
+    escaped so canvas text can't close it, and the system prompt says this data
+    grants no permissions.
+  - The read and outline limits are defined in both `conversation.rs` and the
+    protocol package, so `tests/fixtures/conversation-read-limits.json` now pins
+    both sides. A mismatch fails a test instead of failing every turn when the
+    outline reply no longer passes validation.
+  - The outline treats a drawing without a shape list as an untitled drawing
+    instead of panicking.
+
 - Validate the response body before Settings **Check** reports success. HTTP
   success alone can contain a provider error; malformed, empty, and truncated
   replies now report failure without exposing provider error text.

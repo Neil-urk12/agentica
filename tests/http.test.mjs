@@ -1288,9 +1288,10 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
           options.signal.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), {once: true});
         });
         if (body.messages.at(-1).role === 'user') {
-          const input = JSON.parse(body.messages.at(-1).content);
-          const operation = input.prompt.includes('Change')
-            ? {op:'updateText',nodeId:input.canvasContext.nodes[0].id,text:'Proposed replacement'}
+          const content = body.messages.at(-1).content;
+          const input = JSON.parse(content.slice(content.indexOf('<canvas-data>') + 14, content.lastIndexOf('</canvas-data>')));
+          const operation = content.slice(0, content.indexOf('<canvas-data>')).includes('Change')
+            ? {op:'updateText',nodeId:input.writeScope.nodes[0].id,text:'Proposed replacement'}
             : {op:'createShape',kind:'rectangle',color:'#123456',label:'Idea',...input.proposalAnchor,width:200,height:100};
           return new Response(JSON.stringify({choices:[{message:{content:null,tool_calls:[{id:crypto.randomUUID(),type:'function',function:{name:'canvas_edit',arguments:JSON.stringify(operation)}}]}}]}), {headers:{'Content-Type':'application/json'}});
         }

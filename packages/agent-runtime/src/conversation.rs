@@ -60,6 +60,128 @@ struct List {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Read {
+    workspace_id: String,
+    canvas_id: String,
+    turn_id: String,
+    node_ids: Vec<String>,
+}
+
+// Shared with CONVERSATION_READ in packages/protocol/src/index.ts; both are pinned by
+// tests/fixtures/conversation-read-limits.json.
+const READ_NODES: usize = 16;
+const READ_CALLS: i64 = 8;
+const READ_BYTES: i64 = 64 * 1024;
+const OUTLINE_ITEMS: usize = 200;
+const OUTLINE_TITLE: usize = 80;
+
+/// At most OUTLINE_TITLE UTF-16 code units; cutting whole chars never splits a surrogate pair.
+fn title(text: &str) -> String {
+    let mut units = 0;
+    text.chars()
+        .take_while(|c| {
+            units += c.len_utf16();
+            units <= OUTLINE_TITLE
+        })
+        .collect()
+}
+
+/// Kind and title as the model sees them; kinds follow which edits `stageOperations` allows.
+fn outline_entry(artifact: &Value) -> (&'static str, String) {
+    if artifact["type"] == "text" {
+        return ("text", title(artifact["text"].as_str().unwrap_or_default()));
+    }
+    let Some(shapes) = artifact["drawing"]["shapes"].as_array() else {
+        return ("drawing", String::new());
+    };
+    let label = |shape: &Value| shape["label"].as_str().unwrap_or_default().to_owned();
+    match shapes.as_slice() {
+        [shape] if shape["kind"] == "rectangle" => ("rectangle", title(&label(shape))),
+        [shape] if shape["kind"] == "ellipse" => ("ellipse", title(&label(shape))),
+        _ => (
+            "drawing",
+            title(
+                &shapes
+                    .iter()
+                    .map(label)
+                    .find(|l| !l.is_empty())
+                    .unwrap_or_default(),
+            ),
+        ),
+    }
+}
+
+/// Canvas map for the model: write scope first, then nearest the stored anchor.
+/// Conversation cards are left out unless writable; the model gets them as history.
+fn outline(
+    tx: &Transaction,
+    canvas_id: &str,
+    context: &Value,
+    anchor: (f64, f64),
+) -> Result<Value, RuntimeError> {
+    let state = canvas_state(tx, canvas_id)?;
+    let mut stmt = tx.prepare(
+        "SELECT prompt_node_id FROM conversation_turn WHERE canvas_id = ?1
+         UNION SELECT reply_node_id FROM conversation_turn WHERE canvas_id = ?1 AND reply_node_id IS NOT NULL",
+    )?;
+    let cards = stmt
+        .query_map([canvas_id], |r| r.get::<_, String>(0))?
+        .collect::<Result<HashSet<_>, _>>()?;
+    let writable = |id: &str| {
+        context["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n["id"] == id)
+    };
+    let distance = |n: &Value| {
+        (n["x"].as_f64().unwrap() - anchor.0).hypot(n["y"].as_f64().unwrap() - anchor.1)
+    };
+    let mut nodes: Vec<&Value> = state["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|n| {
+            let id = n["id"].as_str().unwrap();
+            writable(id) || !cards.contains(id)
+        })
+        .collect();
+    nodes.sort_by(|a, b| {
+        let (ida, idb) = (a["id"].as_str().unwrap(), b["id"].as_str().unwrap());
+        writable(idb)
+            .cmp(&writable(ida))
+            .then(distance(a).total_cmp(&distance(b)))
+            .then(ida.cmp(idb))
+    });
+    let truncated = nodes.len() > OUTLINE_ITEMS;
+    let items: Vec<Value> = nodes
+        .into_iter()
+        .take(OUTLINE_ITEMS)
+        .map(|n| {
+            let artifact = state["artifacts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|a| a["id"] == n["artifactId"])
+                .unwrap();
+            let (kind, title) = outline_entry(artifact);
+            let id = n["id"].as_str().unwrap();
+            let mut item = json!({
+                "nodeId": id, "kind": kind, "x": n["x"], "y": n["y"],
+                "width": n["width"], "height": n["height"], "title": title,
+                "writable": writable(id),
+            });
+            if cards.contains(id) {
+                item["conversation"] = json!(true);
+            }
+            item
+        })
+        .collect();
+    Ok(json!({ "items": items, "truncated": truncated }))
+}
+
+#[derive(Deserialize)]
 #[serde(tag = "op", deny_unknown_fields, rename_all_fields = "camelCase")]
 enum Operation {
     #[serde(rename = "createText")]
@@ -567,9 +689,94 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
             insert_node(tx, &p.canvas_id, &node_id, &new_id()?, &g, &p.prompt, false)?;
             tx.execute("INSERT INTO conversation_turn(id,canvas_id,model,prompt,prompt_node_id,anchor,context,status) VALUES (?1,?2,?3,?4,?5,?6,?7,'generating')", (&p.turn_id,&p.canvas_id,&p.model,&p.prompt,&node_id,json!({"x":g.x,"y":g.y}).to_string(),context.to_string()))?;
             bump(tx, &p.canvas_id, canvas_revision(tx, &p.canvas_id)?)?;
+            let outline = outline(tx, &p.canvas_id, &context, (g.x, g.y))?;
             Ok(
-                json!({"turn":turn(tx,&p.canvas_id,&p.turn_id)?, "context":context, "history":prior}),
+                json!({"turn":turn(tx,&p.canvas_id,&p.turn_id)?, "context":context, "outline":outline, "history":prior}),
             )
+        }
+        "conversation.read" => {
+            let p: Read = parse(params)?;
+            id("workspaceId", &p.workspace_id)?;
+            id("turnId", &p.turn_id)?;
+            if p.node_ids.is_empty()
+                || p.node_ids.len() > READ_NODES
+                || p.node_ids.iter().collect::<HashSet<_>>().len() != p.node_ids.len()
+            {
+                return Err(invalid("Read 1–16 unique objects."));
+            }
+            for n in &p.node_ids {
+                id("nodeIds", n)?;
+            }
+            if turn(tx, &p.canvas_id, &p.turn_id)?["status"] != "generating" {
+                return Err(RuntimeError::new(
+                    "CONFLICT",
+                    "This turn is no longer generating; reads are closed.",
+                ));
+            }
+            let state = canvas_state(tx, &p.canvas_id)?;
+            let nodes: Vec<_> = state["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|n| p.node_ids.iter().any(|id| n["id"] == *id))
+                .cloned()
+                .collect();
+            // One message for missing and foreign IDs, so reads cannot probe other canvases.
+            if nodes.len() != p.node_ids.len() {
+                return Err(RuntimeError::new(
+                    "SCOPE_DENIED",
+                    "Reads are limited to objects on this turn's canvas.",
+                ));
+            }
+            let artifacts: Vec<_> = state["artifacts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|a| nodes.iter().any(|n| n["artifactId"] == a["id"]))
+                .cloned()
+                .collect();
+            let edges: Vec<_> = state["edges"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|e| {
+                    nodes.iter().any(|n| n["id"] == e["sourceNodeId"])
+                        && nodes.iter().any(|n| n["id"] == e["targetNodeId"])
+                })
+                .cloned()
+                .collect();
+            let body = json!({"nodes": nodes, "edges": edges, "artifacts": artifacts});
+            let bytes = body.to_string().len() as i64;
+            let (calls, used): (i64, i64) = tx.query_row(
+                "SELECT count(*), coalesce(sum(bytes), 0) FROM conversation_read WHERE turn_id = ?1",
+                [&p.turn_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            if calls >= READ_CALLS || used >= READ_BYTES {
+                return Err(RuntimeError::new(
+                    "BUDGET_EXCEEDED",
+                    "This turn's read budget is spent. Work with what was already read.",
+                ));
+            }
+            // Budget left, but not enough for this read: a smaller one can still succeed.
+            if used + bytes > READ_BYTES {
+                return Err(RuntimeError::new(
+                    "BUDGET_EXCEEDED",
+                    format!(
+                        "This read needs {bytes} bytes but {} remain this turn. Read fewer objects.",
+                        READ_BYTES - used
+                    ),
+                ));
+            }
+            // Reads never bump the canvas revision: it guards the user's own saves.
+            tx.execute(
+                "INSERT INTO conversation_read(turn_id, sequence, node_ids, bytes) VALUES (?1, ?2, ?3, ?4)",
+                (&p.turn_id, calls + 1, json!(p.node_ids).to_string(), bytes),
+            )?;
+            let mut result = body;
+            result["remaining"] =
+                json!({"reads": READ_CALLS - calls - 1, "bytes": READ_BYTES - used - bytes});
+            Ok(result)
         }
         "conversation.finish" => {
             let p: Finish = parse(params)?;
@@ -730,5 +937,31 @@ mod tests {
         assert_eq!(card_height("Short"), CARD_MIN_HEIGHT);
         assert_eq!(card_height(&"word ".repeat(2_000)), CARD_MAX_HEIGHT);
         assert_eq!(card_height(&"line\n".repeat(400)), CARD_MAX_HEIGHT);
+    }
+
+    #[test]
+    fn read_limits_match_the_protocol() {
+        let limits: Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/conversation-read-limits.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            limits,
+            json!({
+                "nodes": READ_NODES,
+                "calls": READ_CALLS,
+                "bytes": READ_BYTES,
+                "outline": OUTLINE_ITEMS,
+                "title": OUTLINE_TITLE,
+            })
+        );
+    }
+
+    #[test]
+    fn outline_entry_tolerates_drawings_without_shapes() {
+        assert_eq!(
+            outline_entry(&json!({"type": "drawing", "drawing": {}})),
+            ("drawing", String::new())
+        );
     }
 }

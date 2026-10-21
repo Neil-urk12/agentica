@@ -303,4 +303,5 @@ const ERROR_CODES: &[&str] = &[
     "SCOPE_DENIED",
     "BACKPRESSURE",
     "INVALID_EVENT_ORDER",
+    "BUDGET_EXCEEDED",
 ];

@@ -713,16 +713,23 @@
         );
       turnId = start.turn.id;
       controller.signal.throwIfAborted();
-      const response = await runCanvasAgent(start, {
+      const { reply, operations } = await runCanvasAgent(start, {
         signal: controller.signal,
         tools,
         provider,
+        read: (nodeIds) =>
+          editor.readConversation({
+            ...origin,
+            turnId: start.turn.id,
+            nodeIds,
+          }),
       });
       controller.signal.throwIfAborted();
       pendingReply = {
         ...origin,
         turnId,
-        ...response,
+        reply,
+        operations,
         status: "complete",
         error: "",
       };
