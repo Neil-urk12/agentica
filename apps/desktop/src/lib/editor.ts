@@ -1,6 +1,8 @@
 import {
+  FILE_LIMITS,
   MAX_FRAME_BYTES,
   type Drawing,
+  type FileMime,
   type RuntimeResult,
   type RuntimeParams,
   type ConversationTurn,
@@ -9,6 +11,7 @@ import {
   type ProjectGroup,
   type SessionTile,
 } from "@agentica/protocol";
+import { bytesToBase64 } from "./file-types.ts";
 import type { callRuntime } from "./runtime";
 
 export type CanvasDocument = RuntimeResult<"canvas.open">;
@@ -26,6 +29,13 @@ export interface DrawingSegment {
 function content(artifact: Artifact): string {
   if (artifact.type === "text") return artifact.text;
   if (artifact.type === "html") return artifact.html;
+  if (artifact.type === "file")
+    return JSON.stringify([
+      artifact.name,
+      artifact.mime,
+      artifact.size,
+      artifact.text,
+    ]);
   return JSON.stringify(artifact.drawing);
 }
 
@@ -603,6 +613,85 @@ export class Editor {
         },
       }),
     ).length;
+  }
+
+  /**
+   * Copy a file into workspace storage in bounded chunks, then place its node.
+   * A failed import discards the staged upload so a retry starts clean.
+   */
+  async addFile(
+    input: {
+      name: string;
+      mime: FileMime;
+      size: number;
+      text: string;
+      bytes: Uint8Array;
+    },
+    position?: { x: number; y: number },
+    onProgress?: (fraction: number) => void,
+  ) {
+    await this.enqueue(async () => {
+      await this.settleSave();
+      if (this.state.error || this.disposed) return;
+      await this.mutation(async () => {
+        const document = this.state.document;
+        const workspaceId = this.state.workspace?.workspace.id;
+        if (!document || !workspaceId) return;
+        const { x, y, zoom } = document.canvas.viewport;
+        const { uploadId } = await this.call(this.key(), false, "file.begin", {
+          workspaceId,
+          canvasId: document.canvas.id,
+          name: input.name,
+          mime: input.mime,
+          size: input.size,
+          text: input.text,
+        });
+        try {
+          let offset = 0;
+          while (offset < input.bytes.length) {
+            const end = Math.min(
+              offset + FILE_LIMITS.chunkBytes,
+              input.bytes.length,
+            );
+            const { received } = await this.call(
+              this.key(),
+              false,
+              "file.chunk",
+              {
+                workspaceId,
+                uploadId,
+                offset,
+                data: bytesToBase64(input.bytes.subarray(offset, end)),
+              },
+            );
+            offset = received;
+            onProgress?.(offset / Math.max(1, input.bytes.length));
+          }
+          const result = await this.call(this.key(), false, "file.finish", {
+            workspaceId,
+            canvasId: document.canvas.id,
+            expectedRevision: document.canvas.revision,
+            uploadId,
+            x: position?.x ?? (40 - x) / zoom,
+            y: position?.y ?? (40 - y) / zoom,
+            width: 380,
+            height: 300,
+          });
+          this.load({
+            ...document,
+            canvas: { ...document.canvas, revision: result.revision },
+            nodes: [...document.nodes, result.node],
+            artifacts: [...document.artifacts, result.artifact],
+          });
+        } catch (error) {
+          await this.call(this.key(), false, "file.discard", {
+            workspaceId,
+            uploadId,
+          }).catch(() => undefined);
+          throw error;
+        }
+      });
+    });
   }
 
   /** Remove one node (and its artifact when unreferenced); used by the eraser. */

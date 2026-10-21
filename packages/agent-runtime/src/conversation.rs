@@ -92,6 +92,9 @@ fn outline_entry(artifact: &Value) -> (&'static str, String) {
     if artifact["type"] == "text" {
         return ("text", title(artifact["text"].as_str().unwrap_or_default()));
     }
+    if artifact["type"] == "file" {
+        return ("file", title(artifact["name"].as_str().unwrap_or_default()));
+    }
     if artifact["type"] == "html" {
         return (
             "design",
@@ -1065,6 +1068,10 @@ mod tests {
             ("design", "Launch faster today".to_owned())
         );
         assert_eq!(entry("<p>No heading</p>"), ("design", String::new()));
+        assert_eq!(
+            outline_entry(&json!({"type": "file", "name": "Brief.pdf", "text": "Body"})),
+            ("file", "Brief.pdf".to_owned())
+        );
         assert_eq!(entry("<h1>Unclosed"), ("design", String::new()));
         assert_eq!(
             entry(&format!("<h1>{}</h1>", "é".repeat(200)))

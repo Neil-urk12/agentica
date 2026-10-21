@@ -1270,6 +1270,24 @@ label {
   background: var(--bg);
 }
 
+.canvas__drop {
+  position: absolute;
+  inset: 0.75rem;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 2px dashed var(--accent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 600;
+  pointer-events: none;
+}
+
 .canvas__nodes,
 .canvas__inspector {
   position: absolute;

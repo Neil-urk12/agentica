@@ -20,6 +20,8 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "@xyflow/svelte": "^1.7.0",
+    "mammoth": "^1.13.0",
+    "pdfjs-dist": "^6.4.299",
     "svelte": "^5.57.2"
   },
   "devDependencies": {

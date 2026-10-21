@@ -12,12 +12,23 @@
     tool: Tool;
     color: string;
     width: number;
+    fileDisabled?: boolean;
     onSelect: (tool: Tool) => void;
     onColor: (color: string) => void;
     onWidth: (width: number) => void;
+    onFile: () => void;
   }
 
-  let { tool, color, width, onSelect, onColor, onWidth }: Props = $props();
+  let {
+    tool,
+    color,
+    width,
+    fileDisabled = false,
+    onSelect,
+    onColor,
+    onWidth,
+    onFile,
+  }: Props = $props();
 </script>
 
 <div class="toolbar" role="toolbar" aria-label="Canvas tools">
@@ -48,6 +59,16 @@
         <Icon name={item.icon} size={20} />
       </button>
     {/each}
+    <button
+      class="toolbar__btn"
+      type="button"
+      title="Add a file — images, PDF, Word, and text files are copied onto the canvas"
+      aria-label="Add a file"
+      disabled={fileDisabled}
+      onclick={onFile}
+    >
+      <Icon name="upload_file" size={20} />
+    </button>
   </div>
 
   {#if tool === "draw"}
