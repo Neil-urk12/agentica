@@ -506,7 +506,10 @@ fn apply_operations(
                 if source_node_id == target_node_id {
                     return Err(invalid("Connect two different objects."));
                 }
-                tx.execute("INSERT INTO canvas_edge(id, canvas_id, kind, source_node_id, target_node_id) VALUES (?1, ?2, 'relationship', ?3, ?4)", (&edge_id, canvas_id, &source_node_id, &target_node_id))?;
+                // A link already drawn by hand is the outcome the proposal
+                // wants. Target the link constraint so a reused edge id still
+                // fails the proposal instead of silently creating no link.
+                tx.execute("INSERT INTO canvas_edge(id, canvas_id, kind, source_node_id, target_node_id) VALUES (?1, ?2, 'relationship', ?3, ?4) ON CONFLICT(canvas_id, source_node_id, target_node_id) DO NOTHING", (&edge_id, canvas_id, &source_node_id, &target_node_id))?;
             }
             Operation::UpdateText {
                 node_id,
@@ -1025,5 +1028,160 @@ mod tests {
         call("workspace.open", json!({"workspaceId": workspace})).unwrap();
         let finished = call("conversation.finish", finish).unwrap();
         assert_eq!(finished["turn"]["status"], "pending");
+    }
+
+    #[test]
+    fn a_proposal_applies_over_a_link_drawn_by_hand() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut runtime = crate::Runtime::new(Some(temp.path().to_owned()));
+        let mut call = |method: &str, params: Value| -> Result<Value, Value> {
+            let response = runtime.handle_request(
+                &serde_json::to_vec(&json!({"protocolVersion": 1, "id": "manual-link",
+                    "method": method, "params": params}))
+                .unwrap(),
+            );
+            match response.get("error") {
+                Some(error) => Err(error.clone()),
+                None => Ok(response["result"].clone()),
+            }
+        };
+        let workspace =
+            call("workspace.create", json!({"name": "Links"})).unwrap()["workspace"]["id"].clone();
+        let canvas = call(
+            "canvas.create",
+            json!({"workspaceId": workspace, "title": "Canvas"}),
+        )
+        .unwrap()["canvas"]["id"]
+            .clone();
+        let reference = json!({"workspaceId": workspace, "canvasId": canvas});
+        let [a, b] = [(1, 0.0), (2, 400.0)].map(|(revision, x)| {
+            call(
+                "node.createText",
+                json!({"workspaceId": workspace, "canvasId": canvas, "expectedRevision": revision,
+                    "x": x, "y": 0, "width": 200, "height": 100, "text": "Note"}),
+            )
+            .unwrap()["node"]["id"]
+                .clone()
+        });
+        let turn = new_id().unwrap();
+        call(
+            "conversation.start",
+            json!({"workspaceId": workspace, "canvasId": canvas, "turnId": turn,
+                "prompt": "Link them", "model": "test", "nodeIds": [a, b],
+                "anchor": {"x": 0, "y": 400}}),
+        )
+        .unwrap();
+        call(
+            "conversation.finish",
+            json!({"workspaceId": workspace, "canvasId": canvas, "turnId": turn,
+                "reply": "Linked", "status": "complete", "error": "",
+                "operations": [{"op": "connect", "edgeId": new_id().unwrap(),
+                    "sourceNodeId": a, "targetNodeId": b}]}),
+        )
+        .unwrap();
+
+        // The same link drawn by hand while the proposal waits.
+        let revision =
+            call("canvas.open", reference.clone()).unwrap()["canvas"]["revision"].clone();
+        call(
+            "edge.create",
+            json!({"workspaceId": workspace, "canvasId": canvas, "expectedRevision": revision,
+                "kind": "relationship", "sourceNodeId": a, "targetNodeId": b}),
+        )
+        .unwrap();
+        let applied = call(
+            "conversation.resolve",
+            json!({"workspaceId": workspace, "canvasId": canvas, "turnId": turn,
+                "action": "apply"}),
+        )
+        .unwrap();
+        assert_eq!(applied["turn"]["status"], "applied");
+        assert_eq!(
+            call("canvas.open", reference).unwrap()["edges"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_proposal_that_reuses_an_edge_id_is_rejected() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut runtime = crate::Runtime::new(Some(temp.path().to_owned()));
+        let mut call = |method: &str, params: Value| -> Result<Value, Value> {
+            let response = runtime.handle_request(
+                &serde_json::to_vec(&json!({"protocolVersion": 1, "id": "reused-edge",
+                    "method": method, "params": params}))
+                .unwrap(),
+            );
+            match response.get("error") {
+                Some(error) => Err(error.clone()),
+                None => Ok(response["result"].clone()),
+            }
+        };
+        let workspace =
+            call("workspace.create", json!({"name": "Reused"})).unwrap()["workspace"]["id"].clone();
+        let canvas = call(
+            "canvas.create",
+            json!({"workspaceId": workspace, "title": "Canvas"}),
+        )
+        .unwrap()["canvas"]["id"]
+            .clone();
+        let reference = json!({"workspaceId": workspace, "canvasId": canvas});
+        let [a, b, c] = [(1, 0.0), (2, 250.0), (3, 500.0)].map(|(revision, x)| {
+            call(
+                "node.createText",
+                json!({"workspaceId": workspace, "canvasId": canvas, "expectedRevision": revision,
+                    "x": x, "y": 0, "width": 200, "height": 100, "text": "Note"}),
+            )
+            .unwrap()["node"]["id"]
+                .clone()
+        });
+        call(
+            "edge.create",
+            json!({"workspaceId": workspace, "canvasId": canvas, "expectedRevision": 4,
+                "kind": "relationship", "sourceNodeId": a, "targetNodeId": b}),
+        )
+        .unwrap();
+        let edge_id = call("canvas.open", reference.clone()).unwrap()["edges"][0]["id"].clone();
+
+        let turn = new_id().unwrap();
+        call(
+            "conversation.start",
+            json!({"workspaceId": workspace, "canvasId": canvas, "turnId": turn,
+                "prompt": "Link them", "model": "test", "nodeIds": [a, b, c],
+                "anchor": {"x": 0, "y": 400}}),
+        )
+        .unwrap();
+        let error = call(
+            "conversation.finish",
+            json!({"workspaceId": workspace, "canvasId": canvas, "turnId": turn,
+                "reply": "Linked", "status": "complete", "error": "",
+                "operations": [{"op": "connect", "edgeId": edge_id,
+                    "sourceNodeId": c, "targetNodeId": a}]}),
+        )
+        .unwrap_err();
+        assert_eq!(error["code"], "STORAGE_ERROR");
+        assert!(
+            error["message"].as_str().unwrap().contains("UNIQUE"),
+            "the reused id must fail instead of being ignored: {error}"
+        );
+        assert_eq!(
+            call("canvas.open", reference).unwrap()["edges"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            call(
+                "conversation.list",
+                json!({"workspaceId": workspace, "canvasId": canvas,
+                "before": 0})
+            )
+            .unwrap()["turns"][0]["status"],
+            "generating"
+        );
     }
 }
