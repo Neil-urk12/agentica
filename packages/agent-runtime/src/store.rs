@@ -265,9 +265,16 @@ impl Workspace {
     }
 }
 
+/// A crashed write leaves a journal that only a writer can roll back.
+fn needs_rollback(error: &rusqlite::Error) -> bool {
+    matches!(error, rusqlite::Error::SqliteFailure(failure, _)
+        if failure.extended_code == rusqlite::ffi::SQLITE_READONLY_ROLLBACK)
+}
+
 /// Committed workspaces as `(id, name)`; `name` is `None` when the workspace
 /// cannot be read by this build. Incomplete creations are skipped. Readers
-/// never take the writer lock and never modify storage.
+/// never modify storage, except to roll back a crashed write while no writer
+/// holds the workspace.
 pub(crate) fn list_workspaces(
     data_root: Option<&Path>,
 ) -> Result<Vec<(String, Option<String>)>, RuntimeError> {
@@ -286,11 +293,7 @@ pub(crate) fn list_workspaces(
         if !database.is_file() {
             continue;
         }
-        let read = || -> rusqlite::Result<Option<Option<String>>> {
-            let conn = Connection::open_with_flags(
-                &database,
-                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-            )?;
+        let read = |conn: Connection| -> rusqlite::Result<Option<Option<String>>> {
             conn.busy_timeout(Duration::from_secs(1))?;
             match header(&conn)? {
                 (0, 0) => Ok(None),
@@ -303,7 +306,17 @@ pub(crate) fn list_workspaces(
                 _ => Ok(Some(None)),
             }
         };
-        match read() {
+        let mut result = Connection::open_with_flags(
+            &database,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .and_then(read);
+        if result.as_ref().is_err_and(needs_rollback) {
+            if let Ok(_lock) = lock_workspace(&entry.path(), &id) {
+                result = connect(&database, false).and_then(read);
+            }
+        }
+        match result {
             Ok(None) => {}
             Ok(Some(name)) => workspaces.push((id, name)),
             Err(_) => workspaces.push((id, None)),
@@ -328,11 +341,8 @@ pub(crate) fn delete_workspace(data_root: Option<&Path>, id: &str) -> Result<(),
         return Err(not_found());
     }
     let lock = lock_workspace(&dir, id)?;
-    let conn = Connection::open_with_flags(
-        &database,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    conn.busy_timeout(Duration::from_secs(1))?;
+    // Read-write under the held lock, so a crashed write can be rolled back.
+    let conn = connect(&database, false)?;
     match header(&conn)? {
         (0, 0) => return Err(not_found()),
         (APPLICATION_ID, 1..) => {}
@@ -1096,16 +1106,11 @@ mod tests {
         let _ = io::stdin().lines().count();
     }
 
-    #[test]
-    fn a_writer_killed_mid_transaction_leaves_the_last_committed_state() {
-        let _serial = serial();
-        let temp = tempfile::tempdir().unwrap();
-        let id = created(temp.path(), "Before");
-        let path = database(temp.path(), &id);
-        let committed = fs::read(&path).unwrap();
+    /// Kill a writer mid-transaction, leaving a hot journal behind.
+    fn crash_writer(path: &Path) {
         let mut writer = Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "store::tests::torn_write_process", "--nocapture"])
-            .env(TORN_WRITE_ENV, &path)
+            .env(TORN_WRITE_ENV, path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -1114,6 +1119,40 @@ mod tests {
         assert!(lines.any(|line| line.unwrap() == "WRITING"));
         writer.kill().unwrap();
         writer.wait().unwrap();
+    }
+
+    #[test]
+    fn a_crashed_write_is_rolled_back_before_listing_or_deletion() {
+        let _serial = serial();
+        let temp = tempfile::tempdir().unwrap();
+        let id = created(temp.path(), "Before");
+        let path = database(temp.path(), &id);
+        let dir = path.parent().unwrap().to_owned();
+        crash_writer(&path);
+        // A held writer lock keeps the journal for that writer to roll back.
+        let held = lock_workspace(&dir, &id).unwrap();
+        assert_eq!(
+            list_workspaces(Some(temp.path())).unwrap(),
+            [(id.clone(), None)]
+        );
+        drop(held);
+        assert_eq!(
+            list_workspaces(Some(temp.path())).unwrap(),
+            [(id.clone(), Some("Before".to_owned()))]
+        );
+        crash_writer(&path);
+        delete_workspace(Some(temp.path()), &id).unwrap();
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn a_writer_killed_mid_transaction_leaves_the_last_committed_state() {
+        let _serial = serial();
+        let temp = tempfile::tempdir().unwrap();
+        let id = created(temp.path(), "Before");
+        let path = database(temp.path(), &id);
+        let committed = fs::read(&path).unwrap();
+        crash_writer(&path);
         // The crash left a hot journal and uncommitted pages in the database.
         assert!(path.with_extension("sqlite3-journal").is_file());
         assert_ne!(fs::read(&path).unwrap(), committed);
