@@ -12,6 +12,11 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-21
 
+- Added a pull request template
+  ([`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md)) asking
+  for a summary, linked issue, motivation, changes, change type, test steps, and
+  screenshots. Guidance and examples sit in HTML comments so they stay out of
+  published PR descriptions.
 - Save typed feedback before opening another file or hunk comment, and clear
   review state only after canvas or workspace deletion succeeds so removed
   drafts cannot trigger close warnings.
