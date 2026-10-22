@@ -1694,6 +1694,235 @@ test("Settings Tools lists built-in tools and manages MCP servers in the rendere
   }
 });
 
+test("box selection groups, moves, ungroups, and deletes canvas objects", async () => {
+  const backend = await startBackend();
+  key = backend.connectionKey;
+  let browser;
+  const rpc = async (method, params) => {
+    const reply = await send(port, {
+      body: JSON.stringify({
+        protocolVersion: 1,
+        id: crypto.randomUUID(),
+        method,
+        params,
+      }),
+    });
+    assert.equal(reply.status, 200);
+    const response = RuntimeResponseSchema.parse(JSON.parse(reply.text));
+    assert.equal(response.error, undefined, JSON.stringify(response));
+    return ResultSchemas[method].parse(response.result);
+  };
+  try {
+    const { workspace } = await rpc("workspace.create", {
+      name: "Box selection",
+    });
+    const { canvas } = await rpc("canvas.create", {
+      workspaceId: workspace.id,
+      title: "Grouping canvas",
+    });
+    const reference = { workspaceId: workspace.id, canvasId: canvas.id };
+    let revision = 1;
+    const ids = [];
+    for (const [x, y, text] of [
+      [500, 250, "First"],
+      [850, 250, "Second"],
+      [500, 580, "Outside"],
+    ]) {
+      const created = await rpc("node.createText", {
+        ...reference,
+        expectedRevision: revision,
+        x,
+        y,
+        width: 240,
+        height: 160,
+        text,
+      });
+      revision = created.revision;
+      ids.push(created.node.id);
+    }
+    const [first, second, outside] = ids;
+    const stored = async () =>
+      new Map(
+        (await rpc("canvas.open", reference)).nodes.map((node) => [
+          node.id,
+          node,
+        ]),
+      );
+    const eventually = async (check, label) => {
+      const deadline = Date.now() + 5000;
+      for (;;) {
+        const nodes = await stored();
+        if (check(nodes)) return nodes;
+        if (Date.now() > deadline)
+          throw new Error(
+            `Timed out waiting for ${label}: ${JSON.stringify([...nodes.values()])}`,
+          );
+        await delay(50);
+      }
+    };
+    const press = async (key, code, keyCode, modifiers = 0) => {
+      await evaluate(browser, `document.activeElement?.blur()`);
+      for (const type of ["keyDown", "keyUp"])
+        await browser.send(
+          "Input.dispatchKeyEvent",
+          { type, key, code, windowsVirtualKeyCode: keyCode, modifiers },
+          browser.sessionId,
+        );
+    };
+
+    browser = await launchBrowser();
+    await browser.send(
+      "Page.navigate",
+      { url: `http://127.0.0.1:${port}/` },
+      browser.sessionId,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('#connection-key')`,
+      "the connection form",
+    );
+    await evaluate(
+      browser,
+      `(() => { const input = document.querySelector('#connection-key'); input.value = ${JSON.stringify(key)}; input.dispatchEvent(new Event('input', { bubbles: true })); })()`,
+    );
+    await clickAt(
+      browser,
+      await boxOf(browser, ".connbar button[type='submit']"),
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('.connbar--ok')`,
+      "the connected status",
+    );
+    // Workspaces are tiles on the start screen; canvases are picker cards.
+    const selectCard = async (label) => {
+      const expression = `[...document.querySelectorAll('.tiles .tile__open, .cards .card')].find(c => c.querySelector('.tile__name, strong')?.textContent === ${JSON.stringify(label)})`;
+      await waitFor(
+        browser,
+        `${expression} && !(${expression}).disabled`,
+        label,
+      );
+      await evaluate(
+        browser,
+        `(${expression}).focus(); (${expression}).scrollIntoView({block:'center'})`,
+      );
+      await clickAt(
+        browser,
+        await boxByText(browser, ".tiles .tile__open, .cards .card", label),
+      );
+    };
+    for (const label of ["Box selection", "Grouping canvas"])
+      await selectCard(label);
+    await waitFor(
+      browser,
+      `[...document.querySelectorAll('.svelte-flow__node')].filter((node) => node.classList.contains('draggable')).length === 3`,
+      "three draggable notes",
+    );
+    const pane = await evaluate(
+      browser,
+      `(() => { const r = document.querySelector('.svelte-flow__pane').getBoundingClientRect(); return { left: r.left, top: r.top }; })()`,
+    );
+    const at = (x, y) => ({ x: pane.left + x, y: pane.top + y });
+    const selected = `[...document.querySelectorAll('.svelte-flow__node.selected')].map((node) => node.dataset.id).sort().join(',')`;
+    const pair = [first, second].sort().join(",");
+
+    // Dragging over empty canvas selects only objects fully inside the box.
+    await dragBetween(browser, at(450, 200), at(1150, 470));
+    await waitFor(
+      browser,
+      `${selected} === ${JSON.stringify(pair)}`,
+      "the boxed pair",
+    );
+    assert.match(
+      await evaluate(
+        browser,
+        `document.querySelector('.selection-bar')?.textContent`,
+      ),
+      /2 objects selected/,
+    );
+
+    await press("g", "KeyG", 71, 2);
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.node-group').length === 1`,
+      "the group outline",
+    );
+    const grouped = await eventually(
+      (nodes) =>
+        nodes.get(first).groupId &&
+        nodes.get(first).groupId === nodes.get(second).groupId,
+      "the saved group",
+    );
+    assert.equal(grouped.get(outside).groupId, undefined);
+
+    // Clicking empty canvas clears the selection; dragging one member moves both.
+    await clickAt(browser, at(450, 200));
+    await waitFor(browser, `${selected} === ''`, "a cleared selection");
+    const start = await boxOf(
+      browser,
+      `.svelte-flow__node[data-id="${first}"]`,
+    );
+    await dragBetween(browser, start, { x: start.x + 120, y: start.y + 60 });
+    const moved = await eventually(
+      (nodes) => nodes.get(first).x !== 500,
+      "the dragged group to save",
+    );
+    const dx = moved.get(first).x - 500;
+    const dy = moved.get(first).y - 250;
+    assert.ok(dx > 50 && dy > 20, JSON.stringify({ dx, dy }));
+    assert.deepEqual(
+      [moved.get(second).x, moved.get(second).y],
+      [850 + dx, 250 + dy],
+      "the other member followed",
+    );
+    assert.deepEqual([moved.get(outside).x, moved.get(outside).y], [500, 580]);
+    await waitFor(
+      browser,
+      `${selected} === ${JSON.stringify(pair)}`,
+      "the whole group selected",
+    );
+
+    await press("G", "KeyG", 71, 2 | 8);
+    await waitFor(
+      browser,
+      `!document.querySelector('.node-group')`,
+      "the group to dissolve",
+    );
+    await eventually(
+      (nodes) => !nodes.get(first).groupId && !nodes.get(second).groupId,
+      "the saved ungroup",
+    );
+
+    // Delete removes the selection after confirmation.
+    await press("Delete", "Delete", 46);
+    await waitFor(
+      browser,
+      `!!document.querySelector('dialog[open]') && document.querySelector('dialog[open]').textContent.includes('Delete 2 objects?')`,
+      "the delete confirmation",
+    );
+    // Let the dialog finish its entrance transition before clicking.
+    await delay(400);
+    await clickAt(
+      browser,
+      await boxByText(browser, "dialog[open] button", "Delete 2"),
+    );
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.svelte-flow__node').length === 1`,
+      "the deleted pair",
+    );
+    const remaining = await stored();
+    assert.deepEqual([...remaining.keys()], [outside]);
+  } catch (error) {
+    if (browser)
+      error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({text:document.body.innerText.slice(-800),selected:[...document.querySelectorAll('.svelte-flow__node.selected')].length})")}`;
+    throw error;
+  } finally {
+    await browser?.close();
+    await stopBackend(backend.child);
+  }
+});
+
 test("canvas conversation previews, keyboard edits, review and cancellation work in the rendered app", async () => {
   const backend = await startBackend();
   key = backend.connectionKey;

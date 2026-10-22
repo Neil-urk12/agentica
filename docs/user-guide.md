@@ -31,6 +31,23 @@ Creating, deleting, connecting, applied proposals, and panning or zooming are
 not undoable. History belongs to the open canvas and is cleared when you leave
 it; a step for an object deleted since is skipped.
 
+### Selecting, grouping, and deleting
+
+With the Select tool, drag across empty canvas to draw a selection box; objects
+fully inside it are selected and highlighted (Ctrl/⌘-click adds or removes
+one). To pan, use the Hand tool (P), drag with the middle or right mouse
+button, or scroll the view controls. With a selection:
+
+- **Ctrl+G** (⌘G) groups two or more objects. A dashed outline marks the group;
+  clicking or dragging any member selects and moves the whole group.
+- **Ctrl+Shift+G** (⇧⌘G) ungroups every group in the selection.
+- **Delete** or **Backspace** deletes the selection; deleting several objects
+  asks for confirmation first, because deletion can't be undone.
+
+The same actions appear in a bar above the toolbar whenever two or more objects
+or a group are selected. Groups are saved with the canvas. Project groups and
+terminal tiles are not part of box selection actions; use their own controls.
+
 ## Canvas files
 
 Use **Add a file** in the canvas toolbar, the composer, or the empty-canvas

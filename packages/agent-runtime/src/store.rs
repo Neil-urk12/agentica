@@ -27,6 +27,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("schema_v10.sql"),
     include_str!("schema_v11.sql"),
     include_str!("schema_v12.sql"),
+    include_str!("schema_v13.sql"),
 ];
 pub const STORAGE_VERSION: i64 = MIGRATIONS.len() as i64;
 
@@ -878,8 +879,14 @@ mod tests {
             ]
             .iter()
             .map(|table| {
+                // Later versions add columns; compare the legacy ones.
+                let columns = if *table == "canvas_node" {
+                    "id, canvas_id, kind, artifact_id, x, y, width, height"
+                } else {
+                    "*"
+                };
                 let mut statement = conn
-                    .prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))
+                    .prepare(&format!("SELECT {columns} FROM {table} ORDER BY rowid"))
                     .unwrap();
                 let columns = statement.column_count();
                 statement
@@ -921,6 +928,15 @@ mod tests {
         drop(conn);
         let upgraded = Workspace::open(Some(temp.path()), &id).unwrap();
         assert_eq!(snapshot(&upgraded.conn), before);
+        let grouped: i64 = upgraded
+            .conn
+            .query_row(
+                "SELECT count(*) FROM canvas_node WHERE group_id IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(grouped, 0, "upgraded nodes start ungrouped");
         assert_eq!(
             header(&upgraded.conn).unwrap(),
             (APPLICATION_ID, STORAGE_VERSION)
