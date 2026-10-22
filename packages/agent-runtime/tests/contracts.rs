@@ -246,3 +246,132 @@ fn one_writer_per_workspace_across_launch_modes_and_aliases() {
     let detached = start_detached(temp.path());
     assert_eq!(code(&detached.call("workspace.open", open)), "ok");
 }
+
+#[test]
+fn files_are_copied_in_order_and_stay_out_of_canvas_metadata() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut backend = desktop(temp.path());
+    let workspace = call(&mut backend, "workspace.create", json!({ "name": "Files" }))["result"]
+        ["workspace"]["id"]
+        .clone();
+    let canvas = call(
+        &mut backend,
+        "canvas.create",
+        json!({ "workspaceId": workspace, "title": "Brief" }),
+    )["result"]["canvas"]["id"]
+        .clone();
+    let reference = json!({ "workspaceId": workspace, "canvasId": canvas });
+
+    let begun = call(
+        &mut backend,
+        "file.begin",
+        json!({ "workspaceId": workspace, "canvasId": canvas,
+            "name": "notes.txt", "mime": "text/plain", "size": 11,
+            "text": "hello world" }),
+    );
+    assert_eq!(code(&begun), "ok", "{begun}");
+    let upload = begun["result"]["uploadId"].clone();
+    let first = call(
+        &mut backend,
+        "file.chunk",
+        json!({ "workspaceId": workspace, "uploadId": upload,
+            "offset": 0, "data": "aGVsbG8g" }),
+    );
+    assert_eq!(code(&first), "ok", "{first}");
+    // A chunk must continue where the previous one stopped.
+    assert_eq!(
+        code(&call(
+            &mut backend,
+            "file.chunk",
+            json!({ "workspaceId": workspace, "uploadId": upload,
+                "offset": 0, "data": "d29ybGQ=" }),
+        )),
+        "INVALID_PARAMS"
+    );
+    assert_eq!(
+        code(&call(
+            &mut backend,
+            "file.chunk",
+            json!({ "workspaceId": workspace, "uploadId": upload,
+                "offset": 6, "data": "d29ybGQ=" }),
+        )),
+        "ok"
+    );
+    let finished = call(
+        &mut backend,
+        "file.finish",
+        json!({ "workspaceId": workspace, "canvasId": canvas,
+            "expectedRevision": 1, "uploadId": upload,
+            "x": 10, "y": 20, "width": 380, "height": 300 }),
+    );
+    assert_eq!(code(&finished), "ok", "{finished}");
+    let artifact = &finished["result"]["artifact"];
+    assert_eq!(artifact["type"], "file");
+    assert_eq!(artifact["name"], "notes.txt");
+    assert_eq!(artifact["size"], 11);
+    assert_eq!(artifact["text"], "hello world");
+    assert!(artifact.get("data").is_none());
+    let artifact_id = artifact["id"].clone();
+
+    // Canvas metadata carries the extracted text but never the bytes.
+    let opened = call(
+        &mut backend,
+        "canvas.open",
+        json!({ "workspaceId": workspace, "canvasId": canvas }),
+    );
+    let stored = opened["result"]["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == artifact_id)
+        .unwrap();
+    assert_eq!(stored["type"], "file");
+    assert_eq!(stored["text"], "hello world");
+    assert!(stored.get("data").is_none());
+    assert!(opened["result"]["canvas"].get("body").is_none());
+
+    let read = call(
+        &mut backend,
+        "file.read",
+        json!({ "workspaceId": workspace, "artifactId": artifact_id }),
+    );
+    assert_eq!(code(&read), "ok", "{read}");
+    assert_eq!(read["result"]["data"], "aGVsbG8gd29ybGQ=");
+    let (name, mime, bytes) = backend
+        .file_bytes(workspace.as_str().unwrap(), artifact_id.as_str().unwrap())
+        .unwrap();
+    assert_eq!(
+        (name.as_str(), mime.as_str(), bytes.as_slice()),
+        ("notes.txt", "text/plain", b"hello world".as_slice())
+    );
+
+    // Deleting the node removes the copied bytes with its artifact.
+    let node_id = finished["result"]["node"]["id"].clone();
+    let deleted = call(
+        &mut backend,
+        "node.delete",
+        json!({ "workspaceId": workspace, "canvasId": canvas,
+            "expectedRevision": 2, "nodeId": node_id }),
+    );
+    assert_eq!(code(&deleted), "ok", "{deleted}");
+    assert_eq!(
+        code(&call(
+            &mut backend,
+            "file.read",
+            json!({ "workspaceId": workspace, "artifactId": artifact_id }),
+        )),
+        "NOT_FOUND"
+    );
+
+    // Unsupported types and oversized declarations are refused before storage.
+    assert_eq!(
+        code(&call(
+            &mut backend,
+            "file.begin",
+            json!({ "workspaceId": workspace, "canvasId": reference["canvasId"],
+                "name": "script.exe", "mime": "application/x-msdownload",
+                "size": 4, "text": "" }),
+        )),
+        "INVALID_PARAMS"
+    );
+}

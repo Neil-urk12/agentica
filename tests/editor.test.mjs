@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { test } from "node:test";
-import { LIMITS, MAX_FRAME_BYTES } from "@agentica/protocol";
+import { FILE_LIMITS, LIMITS, MAX_FRAME_BYTES } from "@agentica/protocol";
 import { Editor } from "../apps/desktop/src/lib/editor.ts";
 import { stageOperations } from "../apps/desktop/src/lib/canvas-agent.ts";
 
@@ -54,6 +54,7 @@ async function setup(t, intercept = async () => {}) {
   };
   const calls = [];
   let sequence = 0;
+  const uploads = new Map();
   // The stub owns the lists the runtime would return after a delete.
   let workspaceList = [{ id: workspaceId, name: "Work" }];
   let canvasList = [{ id: canvasId, title: "Plan" }];
@@ -98,6 +99,58 @@ async function setup(t, intercept = async () => {}) {
         ...(method === "node.createDrawing"
           ? { drawing: params.drawing }
           : { text: params.text }),
+      };
+      disk.nodes = [...disk.nodes, node];
+      disk.artifacts = [...disk.artifacts, artifact];
+      disk.canvas = { ...disk.canvas, revision: params.expectedRevision + 1 };
+      return {
+        revision: disk.canvas.revision,
+        node: structuredClone(node),
+        artifact: structuredClone(artifact),
+      };
+    }
+    if (method === "file.begin") {
+      sequence += 1;
+      const uploadId = `00000000-0000-4000-8000-${String(700 + sequence).padStart(12, "0")}`;
+      uploads.set(uploadId, { received: 0, size: params.size });
+      return { uploadId };
+    }
+    if (method === "file.chunk") {
+      const upload = uploads.get(params.uploadId);
+      assert.ok(upload, "a chunk names its upload");
+      assert.equal(params.offset, upload.received);
+      const length = Buffer.from(params.data, "base64").length;
+      upload.received += length;
+      return { received: upload.received };
+    }
+    if (method === "file.discard") {
+      uploads.delete(params.uploadId);
+      return {};
+    }
+    if (method === "file.finish") {
+      assert.equal(params.expectedRevision, disk.canvas.revision);
+      const upload = uploads.get(params.uploadId);
+      assert.ok(upload, "finish names its upload");
+      assert.equal(upload.received, upload.size);
+      uploads.delete(params.uploadId);
+      sequence += 1;
+      const node = {
+        id: `00000000-0000-4000-8000-${String(800 + sequence).padStart(12, "0")}`,
+        artifactId: `00000000-0000-4000-8000-${String(900 + sequence).padStart(12, "0")}`,
+        x: params.x,
+        y: params.y,
+        width: params.width,
+        height: params.height,
+      };
+      const artifact = {
+        id: node.artifactId,
+        type: "file",
+        schemaVersion: 1,
+        revision: 1,
+        name: "report.txt",
+        mime: "text/plain",
+        size: upload.size,
+        text: "summary",
       };
       disk.nodes = [...disk.nodes, node];
       disk.artifacts = [...disk.artifacts, artifact];
@@ -1643,4 +1696,89 @@ test("a finish committed without an acknowledgement is found for adoption", asyn
   assert.match(editor.state.error, /already finished/);
   await editor.resolveConversation(turnId, "discard");
   assert.equal((await editor.finishedTurn(turnId)).status, "discarded");
+});
+
+test("a maximum file chunk still fits one runtime frame", () => {
+  const data = Buffer.alloc(FILE_LIMITS.chunkBytes, 7).toString("base64");
+  const bytes = frameBytes("file.chunk", {
+    workspaceId,
+    uploadId: nodeId,
+    offset: FILE_LIMITS.maxBytes - FILE_LIMITS.chunkBytes,
+    data,
+  });
+  assert.ok(bytes <= MAX_FRAME_BYTES, `${bytes} bytes`);
+  // A full 8 MiB file needs a bounded number of these requests.
+  assert.equal(Math.ceil(FILE_LIMITS.maxBytes / FILE_LIMITS.chunkBytes), 763);
+});
+
+test("files upload in bounded chunks and become saved canvas nodes", async (t) => {
+  const { editor, calls } = await setup(t);
+  const bytes = Uint8Array.from({ length: 20_000 }, (_, index) => index % 251);
+  const progress = [];
+  await editor.addFile(
+    {
+      name: "report.txt",
+      mime: "text/plain",
+      size: bytes.length,
+      text: "summary",
+      bytes,
+    },
+    { x: 5, y: 6 },
+    (fraction) => progress.push(fraction),
+  );
+  assert.equal(editor.state.error, "");
+  assert.equal(editor.state.busy, false);
+  assert.equal(editor.state.dirty, false);
+  const artifact = editor.state.document.artifacts.find(
+    (item) => item.type === "file",
+  );
+  assert.deepEqual(
+    {
+      name: artifact.name,
+      mime: artifact.mime,
+      size: artifact.size,
+      text: artifact.text,
+    },
+    {
+      name: "report.txt",
+      mime: "text/plain",
+      size: bytes.length,
+      text: "summary",
+    },
+  );
+  const node = editor.state.document.nodes.find(
+    (item) => item.artifactId === artifact.id,
+  );
+  assert.deepEqual({ x: node.x, y: node.y }, { x: 5, y: 6 });
+
+  const chunks = calls.filter((call) => call.method === "file.chunk");
+  assert.equal(chunks.length, 2);
+  const uploaded = Buffer.concat(
+    chunks.map((call) => Buffer.from(call.params.data, "base64")),
+  );
+  assert.deepEqual(new Uint8Array(uploaded), bytes);
+  assert.deepEqual(progress, [11_000 / 20_000, 1]);
+  assert.equal(calls.filter((call) => call.method === "file.finish").length, 1);
+});
+
+test("a failed file import discards its staged upload and keeps the canvas saved", async (t) => {
+  const { editor, calls } = await setup(t, async (method) => {
+    if (method === "file.chunk") throw new Error("The upload was interrupted.");
+  });
+  await editor.addFile({
+    name: "report.txt",
+    mime: "text/plain",
+    size: 4,
+    text: "",
+    bytes: Uint8Array.from([1, 2, 3, 4]),
+  });
+  assert.match(editor.state.error, /interrupted/);
+  assert.equal(
+    calls.filter((call) => call.method === "file.discard").length,
+    1,
+  );
+  assert.equal(
+    editor.state.document.artifacts.some((item) => item.type === "file"),
+    false,
+  );
 });

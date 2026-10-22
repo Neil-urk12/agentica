@@ -129,6 +129,54 @@ async fn runtime_request(
     .map_err(|error| format!("Backend task failed: {error}"))?
 }
 
+/// Write a copied canvas file to a temp path and open it with the system app.
+/// The filename is sanitized so artifact names cannot choose a directory.
+#[tauri::command]
+async fn open_file(
+    workspace_id: String,
+    artifact_id: String,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, BackendState>,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("File access is limited to the local main window.".into());
+    }
+    let backend = state.runtime.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (name, _mime, bytes) = backend
+            .lock()
+            .map_err(|_| "Backend state is unavailable.".to_owned())?
+            .file_bytes(&workspace_id, &artifact_id)
+            .map_err(|error| error.to_string())?;
+        let dir = std::env::temp_dir().join("agentica-files");
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        let base = std::path::Path::new(&name)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("file");
+        let safe: String = base
+            .chars()
+            .map(|character| {
+                if character.is_control()
+                    || matches!(
+                        character,
+                        '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+                    )
+                {
+                    '_'
+                } else {
+                    character
+                }
+            })
+            .collect();
+        let path = dir.join(format!("{artifact_id}-{safe}"));
+        std::fs::write(&path, bytes).map_err(|error| error.to_string())?;
+        tauri_plugin_opener::open_path(&path, None::<&str>).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("File task failed: {error}"))?
+}
+
 #[tauri::command]
 async fn session_request(
     request: serde_json::Value,
@@ -282,7 +330,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             runtime_request,
             session_request,
             session_subscribe,
-            session_shutdown
+            session_shutdown,
+            open_file
         ])
         .build(tauri::generate_context!())?
         .run(move |app, event| {

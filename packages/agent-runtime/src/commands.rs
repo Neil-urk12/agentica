@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -33,6 +34,26 @@ const MAX_ZOOM: f64 = 4.0;
 const MAX_REVISION: u64 = (1 << 53) - 1;
 const TEXT_SCHEMA_VERSION: i64 = 1;
 const DRAWING_SCHEMA_VERSION: i64 = 1;
+const FILE_SCHEMA_VERSION: i64 = 1;
+const MAX_FILE_NAME: usize = 120;
+const MAX_FILE_TEXT: usize = 10_000;
+const MAX_FILE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_FILE_CHUNK_BYTES: usize = 11_000;
+/// Copied canvas files kept in workspace storage; images, PDFs, Word documents,
+/// and text-like files. The frontend normalizes types before uploading.
+const FILE_MIMES: &[&str] = &[
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+    "image/svg+xml",
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/msword",
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+];
 const MAX_SHAPES: usize = 1_000;
 const MAX_POINTS: usize = 10_000;
 const MAX_STROKE_WIDTH: f64 = 64.0;
@@ -63,6 +84,11 @@ pub(crate) const METHODS: &[&str] = &[
     "edge.create",
     "artifact.saveText",
     "node.createDrawing",
+    "file.begin",
+    "file.chunk",
+    "file.finish",
+    "file.discard",
+    "file.read",
     "node.delete",
     "project.open",
     "project.delete",
@@ -133,6 +159,46 @@ pub(crate) fn label(field: &str, value: &str) -> Result<(), RuntimeError> {
         )));
     }
     Ok(())
+}
+
+fn file_name(value: &str) -> Result<(), RuntimeError> {
+    label("name", value)?;
+    if value.encode_utf16().count() > MAX_FILE_NAME {
+        return Err(invalid(format!(
+            "name must not exceed {MAX_FILE_NAME} characters."
+        )));
+    }
+    Ok(())
+}
+
+fn file_text(value: &str) -> Result<(), RuntimeError> {
+    if value.encode_utf16().count() > MAX_FILE_TEXT {
+        return Err(invalid(format!(
+            "Extracted text must not exceed {MAX_FILE_TEXT} characters."
+        )));
+    }
+    Ok(())
+}
+
+fn file_mime(value: &str) -> Result<(), RuntimeError> {
+    if FILE_MIMES.contains(&value) {
+        Ok(())
+    } else {
+        Err(invalid(
+            "Unsupported file type. Use an image, PDF, Word document, or text file.",
+        ))
+    }
+}
+
+fn file_size(value: f64) -> Result<i64, RuntimeError> {
+    if value.fract() == 0.0 && (0.0..=MAX_FILE_BYTES as f64).contains(&value) {
+        Ok(value as i64)
+    } else {
+        Err(invalid(format!(
+            "Files must be no larger than {} MiB.",
+            MAX_FILE_BYTES / (1024 * 1024)
+        )))
+    }
 }
 
 pub(crate) fn text(value: &str) -> Result<(), RuntimeError> {
@@ -409,6 +475,53 @@ struct CreateDrawing {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FileBegin {
+    workspace_id: String,
+    canvas_id: String,
+    name: String,
+    mime: String,
+    size: f64,
+    text: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FileChunk {
+    workspace_id: String,
+    upload_id: String,
+    offset: f64,
+    data: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FileFinish {
+    workspace_id: String,
+    canvas_id: String,
+    expected_revision: f64,
+    upload_id: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FileRef {
+    workspace_id: String,
+    upload_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ReadFile {
+    workspace_id: String,
+    artifact_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DeleteNode {
     workspace_id: String,
     canvas_id: String,
@@ -446,6 +559,28 @@ impl Runtime {
             return Err(invalid("Not an MCP method."));
         }
         self.call(method, params)
+    }
+
+    /// Copied bytes for the desktop's open-with-system-app action. Read-only and
+    /// limited to a file artifact in the currently open workspace.
+    pub fn file_bytes(
+        &mut self,
+        workspace_id: &str,
+        artifact_id: &str,
+    ) -> Result<(String, String, Vec<u8>), RuntimeError> {
+        id("artifactId", artifact_id)?;
+        let workspace = self.workspace(workspace_id)?;
+        workspace
+            .conn
+            .query_row(
+                "SELECT f.name, f.mime, f.body FROM artifact a
+                 JOIN file_content f ON f.id = a.content_id
+                 WHERE a.id = ?1 AND a.type = 'file'",
+                [artifact_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?
+            .ok_or_else(|| not_found("File artifact"))
     }
 
     pub(crate) fn call(&mut self, method: &str, params: Value) -> Result<Value, RuntimeError> {
@@ -792,6 +927,206 @@ impl Runtime {
                     }))
                 })
             }
+            "file.begin" => {
+                let params: FileBegin = parse(params)?;
+                id("canvasId", &params.canvas_id)?;
+                file_name(&params.name)?;
+                file_mime(&params.mime)?;
+                let size = file_size(params.size)?;
+                file_text(&params.text)?;
+                let upload_id = new_id()?;
+                self.transact(&params.workspace_id, |tx| {
+                    canvas_revision(tx, &params.canvas_id)?;
+                    // Abandoned imports should not accumulate forever.
+                    tx.execute(
+                        "DELETE FROM file_upload WHERE created_at < strftime('%s', 'now') - 3600",
+                        [],
+                    )?;
+                    tx.execute(
+                        "INSERT INTO file_upload (id, canvas_id, name, mime, size, text, created_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%s', 'now'))",
+                        (
+                            &upload_id,
+                            &params.canvas_id,
+                            &params.name,
+                            &params.mime,
+                            size,
+                            &params.text,
+                        ),
+                    )?;
+                    Ok(json!({ "uploadId": upload_id }))
+                })
+            }
+            "file.chunk" => {
+                let params: FileChunk = parse(params)?;
+                id("uploadId", &params.upload_id)?;
+                if params.offset.fract() != 0.0 || params.offset < 0.0 {
+                    return Err(invalid("offset must be a non-negative integer."));
+                }
+                if params.data.len() > 15_000 {
+                    return Err(invalid("A file chunk is too large."));
+                }
+                let chunk = BASE64
+                    .decode(params.data.as_bytes())
+                    .map_err(|_| invalid("A file chunk is not valid base64."))?;
+                if chunk.len() > MAX_FILE_CHUNK_BYTES {
+                    return Err(invalid("A file chunk is too large."));
+                }
+                self.transact(&params.workspace_id, |tx| {
+                    let size: i64 = tx
+                        .query_row(
+                            "SELECT size FROM file_upload WHERE id = ?1",
+                            [&params.upload_id],
+                            |row| row.get(0),
+                        )
+                        .optional()?
+                        .ok_or_else(|| not_found("File upload"))?;
+                    let received: i64 = tx.query_row(
+                        "SELECT COALESCE(SUM(length(body)), 0) FROM file_chunk WHERE upload_id = ?1",
+                        [&params.upload_id],
+                        |row| row.get(0),
+                    )?;
+                    if params.offset as i64 != received {
+                        return Err(invalid(
+                            "Chunks must arrive in order from the start of the file.",
+                        ));
+                    }
+                    if received + chunk.len() as i64 > size {
+                        return Err(invalid("The upload is larger than its declared size."));
+                    }
+                    tx.execute(
+                        "INSERT INTO file_chunk (upload_id, offset, body) VALUES (?1, ?2, ?3)",
+                        (params.upload_id.as_str(), params.offset as i64, chunk.as_slice()),
+                    )?;
+                    Ok(json!({ "received": received + chunk.len() as i64 }))
+                })
+            }
+            "file.finish" => {
+                let params: FileFinish = parse(params)?;
+                id("canvasId", &params.canvas_id)?;
+                id("uploadId", &params.upload_id)?;
+                let expected = revision(params.expected_revision)?;
+                let g = Geometry {
+                    x: params.x,
+                    y: params.y,
+                    width: params.width,
+                    height: params.height,
+                };
+                g.check()?;
+                let (node_id, artifact_id, content_id) = (new_id()?, new_id()?, new_id()?);
+                self.transact(&params.workspace_id, |tx| {
+                    check_canvas(tx, &params.canvas_id, expected)?;
+                    let (canvas_id, name, mime, size, text): (
+                        String,
+                        String,
+                        String,
+                        i64,
+                        String,
+                    ) = tx
+                        .query_row(
+                            "SELECT canvas_id, name, mime, size, text FROM file_upload WHERE id = ?1",
+                            [&params.upload_id],
+                            |row| {
+                                Ok((
+                                    row.get(0)?,
+                                    row.get(1)?,
+                                    row.get(2)?,
+                                    row.get(3)?,
+                                    row.get(4)?,
+                                ))
+                            },
+                        )
+                        .optional()?
+                        .ok_or_else(|| not_found("File upload"))?;
+                    if canvas_id != params.canvas_id {
+                        return Err(not_found("File upload"));
+                    }
+                    let received: i64 = tx.query_row(
+                        "SELECT COALESCE(SUM(length(body)), 0) FROM file_chunk WHERE upload_id = ?1",
+                        [&params.upload_id],
+                        |row| row.get(0),
+                    )?;
+                    if received != size {
+                        return Err(invalid(
+                            "The file upload is incomplete. Start the import again.",
+                        ));
+                    }
+                    let mut body = Vec::with_capacity(size as usize);
+                    {
+                        let mut statement = tx.prepare(
+                            "SELECT body FROM file_chunk WHERE upload_id = ?1 ORDER BY offset",
+                        )?;
+                        let chunks = statement
+                            .query_map([&params.upload_id], |row| row.get::<_, Vec<u8>>(0))?;
+                        for chunk in chunks {
+                            body.extend_from_slice(&chunk?);
+                        }
+                    }
+                    tx.execute(
+                        "INSERT INTO file_content (id, body, name, mime, size, text)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        (&content_id, body.as_slice(), &name, &mime, size, &text),
+                    )?;
+                    tx.execute(
+                        "INSERT INTO artifact (id, type, schema_version, revision, content_store, content_id)
+                         VALUES (?1, 'file', ?2, 1, 'sqlite', ?3)",
+                        (&artifact_id, FILE_SCHEMA_VERSION, &content_id),
+                    )?;
+                    tx.execute(
+                        "INSERT INTO canvas_node (id, canvas_id, kind, artifact_id, x, y, width, height)
+                         VALUES (?1, ?2, 'artifact', ?3, ?4, ?5, ?6, ?7)",
+                        (&node_id, &params.canvas_id, &artifact_id, g.x, g.y, g.width, g.height),
+                    )?;
+                    tx.execute(
+                        "DELETE FROM file_chunk WHERE upload_id = ?1",
+                        [&params.upload_id],
+                    )?;
+                    tx.execute("DELETE FROM file_upload WHERE id = ?1", [&params.upload_id])?;
+                    Ok(json!({
+                        "revision": bump(tx, &params.canvas_id, expected)?,
+                        "node": {
+                            "id": node_id, "artifactId": artifact_id,
+                            "x": g.x, "y": g.y, "width": g.width, "height": g.height,
+                        },
+                        "artifact": artifact(tx, &artifact_id)?,
+                    }))
+                })
+            }
+            "file.discard" => {
+                let params: FileRef = parse(params)?;
+                id("uploadId", &params.upload_id)?;
+                self.transact(&params.workspace_id, |tx| {
+                    tx.execute(
+                        "DELETE FROM file_chunk WHERE upload_id = ?1",
+                        [&params.upload_id],
+                    )?;
+                    tx.execute("DELETE FROM file_upload WHERE id = ?1", [&params.upload_id])?;
+                    Ok(json!({}))
+                })
+            }
+            "file.read" => {
+                let params: ReadFile = parse(params)?;
+                id("artifactId", &params.artifact_id)?;
+                self.transact(&params.workspace_id, |tx| {
+                    let (name, mime, size, body): (String, String, i64, Vec<u8>) = tx
+                        .query_row(
+                            "SELECT f.name, f.mime, f.size, f.body FROM artifact a
+                             JOIN file_content f ON f.id = a.content_id
+                             WHERE a.id = ?1 AND a.type = 'file'",
+                            [&params.artifact_id],
+                            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                        )
+                        .optional()?
+                        .ok_or_else(|| not_found("File artifact"))?;
+                    Ok(json!({
+                        "artifactId": params.artifact_id,
+                        "name": name,
+                        "mime": mime,
+                        "size": size,
+                        "data": BASE64.encode(&body),
+                    }))
+                })
+            }
             "node.delete" => {
                 let params: DeleteNode = parse(params)?;
                 id("canvasId", &params.canvas_id)?;
@@ -1010,6 +1345,19 @@ fn artifact(tx: &Transaction, artifact_id: &str) -> Result<Value, RuntimeError> 
                 "text": body, "purpose": purpose,
             }))
         }
+        "file" => {
+            let (name, mime, size, file_text): (String, String, i64, String) = tx.query_row(
+                "SELECT name, mime, size, text FROM file_content WHERE id = ?1",
+                [&content_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?;
+            Ok(json!({
+                "id": artifact_id, "type": "file",
+                "schemaVersion": schema_version,
+                "revision": revision,
+                "name": name, "mime": mime, "size": size, "text": file_text,
+            }))
+        }
         "drawing" => {
             let body: String = tx.query_row(
                 "SELECT body FROM drawing_content WHERE id = ?1",
@@ -1113,6 +1461,13 @@ fn delete_artifact_content(tx: &Transaction, artifact_id: &str) -> Result<(), Ru
         "drawing" => {
             tx.execute(
                 "DELETE FROM drawing_content WHERE id = ?1 AND NOT EXISTS
+                 (SELECT 1 FROM artifact WHERE content_id = ?1)",
+                [&content_id],
+            )?;
+        }
+        "file" => {
+            tx.execute(
+                "DELETE FROM file_content WHERE id = ?1 AND NOT EXISTS
                  (SELECT 1 FROM artifact WHERE content_id = ?1)",
                 [&content_id],
             )?;

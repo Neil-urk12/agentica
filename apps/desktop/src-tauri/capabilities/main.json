@@ -8,6 +8,7 @@
     "allow-session-request",
     "allow-session-subscribe",
     "allow-session-shutdown",
+    "allow-open-file",
     "dialog:allow-open",
     {
       "identifier": "http:default",

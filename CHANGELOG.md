@@ -12,6 +12,42 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Add images, PDFs, Word documents, and text files to the canvas
+
+- Add a `file` artifact type and manual import from the canvas toolbar, composer,
+  empty-canvas prompt, or by dropping files on the canvas. Dropped files are
+  placed under the pointer, picked files near the view centre. Images (PNG,
+  JPEG, WebP, GIF, SVG), PDFs, Word documents (DOCX and legacy DOC), and
+  text-like files (TXT, Markdown, CSV) up to 8 MB are copied into the workspace
+  instead of linked, so a canvas survives the original moving or being deleted.
+  The desktop window sets `dragDropEnabled: false` so Windows WebView2 delivers
+  HTML5 file drops, and file drops outside the canvas are swallowed rather than
+  navigating the app to the file.
+- Upload bytes in ordered 11 KB chunks through `file.begin`, `file.chunk`, and
+  `file.finish`, keeping every request inside the 16 KiB frame. A failed import
+  discards its staged upload, and abandoned uploads expire after an hour.
+  `file.read` loads bytes on demand for previews and exports; node deletion and
+  canvas deletion remove the copied content with their artifacts.
+- Render images inline, page through PDFs with PDF.js, convert DOCX to an inert
+  preview with mammoth, and show text files directly. Legacy DOC files keep
+  metadata and Open but have no preview or extracted text. **Open** uses the
+  system application on desktop (a scoped `open_file` command writes a sanitized
+  temp copy) and downloads a copy in browser mode.
+- Extract up to 10,000 characters per file at import and include it in canvas
+  context when the node is selected (and in the agent's outline as a `file`
+  object named after it), so attached documents reach the agent
+  without putting file bytes in a provider prompt. Images and scanned PDFs
+  without a text layer contribute no text.
+- Upgrade workspace storage to version 12 for copied file content and ordered
+  upload chunks while accepting the new artifact type. Bundle the PDF worker's
+  `.mjs` asset in the detached backend, whose Vite allowlist previously served
+  only `.js`, `.css`, and font files.
+- Add `tests/file-types.test.mjs`, file-artifact protocol and chunk-order tests,
+  an editor upload test that verifies bounded chunks and failed-import cleanup,
+  and a rendered-browser test that imports all four families through the picker
+  and the drop path, checks previews, drop-point placement, and stored bytes, and
+  confirms extracted text reaches the next prompt context.
+
 ## 0.1.0 — 2026-10-23
 
 First tagged pre-release. Everything below was developed before versioning began.
