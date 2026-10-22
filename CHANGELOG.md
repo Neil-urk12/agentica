@@ -227,6 +227,14 @@ released version and date. Keep validation evidence in the
   blank issues enabled and offers contact links for security advisories, the
   code of conduct, and the contributing guide.
 
+- Added GitHub Actions CI workflow in `.github/workflows/ci.yml` running on
+  push and pull requests. Validates TypeScript and frontend formatting, linting,
+  type checking, and package builds, along with multi-platform native checks
+  (Ubuntu and Windows) covering Rust formatting, clippy, unit tests, and
+  desktop application builds. CI uses explicit frontend unit tests and Rust
+  library/binary unit targets so browser and integration suites remain local
+  checks and do not require Linux-only sessions on Windows runners.
+
 ### 2026-10-21
 
 - Harden terminal streaming and session lifecycle: one shared polling and
