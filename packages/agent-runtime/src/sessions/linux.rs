@@ -77,9 +77,6 @@ fn pidfd(pid: i32) -> io::Result<OwnedFd> {
 
 pub(super) fn initialize() -> Result<(), RuntimeError> {
     pidfd(unsafe { libc::getpid() }).map_err(failure)?;
-    if unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) } != 0 {
-        return Err(failure(io::Error::last_os_error()));
-    }
     Ok(())
 }
 
@@ -143,11 +140,18 @@ pub(super) fn cleanup(
 ) -> io::Result<(Option<u32>, Option<String>)> {
     let started = Instant::now();
     let mut signaled = std::collections::HashSet::new();
-    let zombies;
+    // The launcher stays unreaped so its session ID cannot be reused until
+    // every owned job is gone. Orphans are the OS reaper's responsibility, so
+    // zombies do not count: a non-reaping init (or this process as PID 1)
+    // would otherwise keep them forever.
     loop {
         let current = members(pid)?;
-        if current.iter().all(|member| member.state == 'Z') && exited(pid)?.is_some() {
-            zombies = current;
+        let exit = exited(pid)?;
+        let jobs = current
+            .iter()
+            .filter(|member| member.pid != pid && member.state != 'Z')
+            .count();
+        if exit.is_some() && jobs == 0 {
             break;
         }
         for member in &current {
@@ -169,37 +173,6 @@ pub(super) fn cleanup(
         thread::sleep(Duration::from_millis(10));
     }
     let exit = exited(pid)?.ok_or_else(|| io::Error::other("Launcher exit details disappeared"))?;
-    let mut remaining: Vec<i32> = zombies
-        .into_iter()
-        .filter(|member| member.pid != pid)
-        .map(|member| member.pid)
-        .collect();
-    let deadline = Instant::now() + Duration::from_secs(1);
-    while !remaining.is_empty() {
-        let mut pending = Vec::new();
-        for child_pid in remaining {
-            let waited = unsafe { libc::waitpid(child_pid, std::ptr::null_mut(), libc::WNOHANG) };
-            if waited == 0 {
-                pending.push(child_pid);
-            } else if waited < 0 {
-                let error = io::Error::last_os_error();
-                if error.kind() == io::ErrorKind::Interrupted {
-                    pending.push(child_pid);
-                } else if error.raw_os_error() != Some(libc::ECHILD) || stat(child_pid).is_ok() {
-                    return Err(error);
-                }
-            }
-        }
-        remaining = pending;
-        if Instant::now() > deadline {
-            return Err(io::Error::other(
-                "Owned jobs exited but could not be reaped.",
-            ));
-        }
-        if !remaining.is_empty() {
-            thread::sleep(Duration::from_millis(10));
-        }
-    }
     child
         .wait()
         .map_err(|error| io::Error::other(error.to_string()))?;

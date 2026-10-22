@@ -209,9 +209,12 @@ export class SessionManager {
     }
     const signature = `${workspaceId}/${document.canvas.id}/${tiles.map((tile) => tile.id).join(",")}`;
     if (!force && this.signature === signature && this.connected) return;
-    if (this.reconciling) await this.reconciling;
+    while (this.reconciling) await this.reconciling;
+    // A reconciliation that finished while this call waited may have already
+    // covered an equivalent document; force remains an explicit refresh.
+    if (!force && this.signature === signature && this.connected) return;
     this.signature = signature;
-    this.reconciling = (async () => {
+    const reconciling = (async () => {
       try {
         await this.connect();
         if (!this.capabilities?.capabilities.supported) return;
@@ -267,10 +270,11 @@ export class SessionManager {
         this.changed();
       }
     })();
+    this.reconciling = reconciling;
     try {
-      await this.reconciling;
+      await reconciling;
     } finally {
-      this.reconciling = undefined;
+      if (this.reconciling === reconciling) this.reconciling = undefined;
     }
   }
 

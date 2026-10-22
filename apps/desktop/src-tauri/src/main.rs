@@ -4,7 +4,7 @@ use agentica_runtime::{
     changes, default_data_root,
     sessions::{
         wire::{SessionCommand, SessionEvent, SessionRequest, MAX_CONNECTION_SUBSCRIPTIONS},
-        SessionOwner, SessionService,
+        SessionOwner, SessionService, StreamLease,
     },
     DesktopBackend, Runtime, MAX_FRAME_BYTES,
 };
@@ -15,7 +15,6 @@ use std::{
         atomic::{AtomicBool, AtomicU8, Ordering},
         Arc, Mutex,
     },
-    time::{Duration, Instant},
 };
 use tauri::Manager;
 
@@ -195,39 +194,13 @@ async fn session_subscribe(
     })
     .await
     .map_err(|error| error.to_string())??;
-    tauri::async_runtime::spawn(async move {
-        let mut last = String::new();
-        let mut heartbeat = Instant::now();
-        loop {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-            let (service, own, session, attachment) = (
-                sessions.clone(),
-                owner.clone(),
-                session_id.clone(),
-                id.clone(),
-            );
-            let event = tauri::async_runtime::spawn_blocking(move || {
-                service.event(&own, &session, &attachment)
-            })
-            .await;
-            let Ok(Ok(event)) = event else {
-                break;
-            };
-            let status = serde_json::to_string(&event.status).unwrap_or_default();
-            if event.output.frames.is_empty()
-                && !event.output.history_gap
-                && status == last
-                && heartbeat.elapsed() < Duration::from_secs(1)
-            {
-                continue;
-            }
-            if on_event.send(event).is_err() {
-                break;
-            }
-            last = status;
-            heartbeat = Instant::now();
-        }
-        sessions.release(&owner, &session_id, &id);
+    tauri::async_runtime::spawn_blocking(move || {
+        let lease = StreamLease {
+            owner: owner.clone(),
+            session_id: session_id.clone(),
+            attachment_id: id.clone(),
+        };
+        sessions.stream(&lease, || false, |event| on_event.send(event).is_ok());
         if let Ok(mut attachments) = attachments.lock() {
             attachments.remove(&id);
         };

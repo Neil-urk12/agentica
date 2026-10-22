@@ -223,6 +223,19 @@ function setup(t, statuses) {
   return { manager, client };
 }
 
+test("concurrent reconciles coalesce into one capability and list request", async (t) => {
+  const item = status(0);
+  const { manager, client } = setup(t, [item]);
+  const saved = document([item]);
+  await Promise.all(
+    Array.from({ length: 60 }, () => manager.reconcile(workspaceId, saved)),
+  );
+  assert.equal(
+    client.calls.filter((call) => call.op === "capabilities").length,
+    1,
+  );
+  assert.equal(client.calls.filter((call) => call.op === "list").length, 1);
+});
 test("attention updates offscreen and dismissal acknowledges only the displayed sequence", async (t) => {
   const item = status(0);
   const { manager, client } = setup(t, [item]);

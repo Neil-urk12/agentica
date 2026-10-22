@@ -274,26 +274,19 @@ fn insert_node(
     body: &str,
     drawing: bool,
 ) -> Result<(), RuntimeError> {
-    id("nodeId", node_id)?;
-    id("artifactId", artifact_id)?;
-    g.check()?;
-    let content_id = new_id()?;
-    let kind = if drawing { "drawing" } else { "text" };
-    if drawing {
-        tx.execute(
-            "INSERT INTO drawing_content(id, body) VALUES (?1, ?2)",
-            (&content_id, body),
-        )?;
-    } else {
+    if !drawing {
         text(body)?;
-        tx.execute(
-            "INSERT INTO text_content(id, body, purpose) VALUES (?1, ?2, 'note')",
-            (&content_id, body),
-        )?;
     }
-    tx.execute("INSERT INTO artifact(id, type, schema_version, revision, content_store, content_id) VALUES (?1, ?2, 1, 1, 'sqlite', ?3)", (artifact_id, kind, &content_id))?;
-    tx.execute("INSERT INTO canvas_node(id, canvas_id, kind, artifact_id, x, y, width, height) VALUES (?1, ?2, 'artifact', ?3, ?4, ?5, ?6, ?7)", (node_id, canvas_id, artifact_id, g.x, g.y, g.width, g.height))?;
-    Ok(())
+    insert_artifact_node(
+        tx,
+        canvas_id,
+        node_id,
+        artifact_id,
+        g,
+        body,
+        drawing,
+        "note",
+    )
 }
 
 /// Conversation cards match the frontend layout budget (`CARD` in
@@ -363,12 +356,23 @@ fn scoped_node(
     checked: &mut HashSet<String>,
 ) -> Result<Value, RuntimeError> {
     id("nodeId", node_id)?;
-    let current = canvas_state(tx, canvas_id)?;
-    let node = current["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|n| n["id"] == node_id)
+    let node = tx
+        .query_row(
+            "SELECT id, artifact_id, x, y, width, height FROM canvas_node
+             WHERE canvas_id = ?1 AND id = ?2",
+            (canvas_id, node_id),
+            |row| {
+                Ok(json!({
+                    "id": row.get::<_, String>(0)?,
+                    "artifactId": row.get::<_, String>(1)?,
+                    "x": row.get::<_, f64>(2)?,
+                    "y": row.get::<_, f64>(3)?,
+                    "width": row.get::<_, f64>(4)?,
+                    "height": row.get::<_, f64>(5)?,
+                }))
+            },
+        )
+        .optional()?
         .ok_or_else(|| not_found("Proposal target"))?;
     if !created.contains(node_id) && !checked.contains(node_id) {
         let original = context["nodes"]
@@ -388,21 +392,20 @@ fn scoped_node(
             .iter()
             .find(|a| a["id"] == original["artifactId"])
             .unwrap();
-        let current_artifact = current["artifacts"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|a| a["id"] == node["artifactId"])
-            .unwrap();
-        if node != original || current_artifact["revision"] != original_artifact["revision"] {
+        let artifact_id = node["artifactId"].as_str().unwrap();
+        let current_revision: i64 = tx.query_row(
+            "SELECT revision FROM artifact WHERE id = ?1",
+            [artifact_id],
+            |row| row.get(0),
+        )?;
+        if node != *original || current_revision != original_artifact["revision"].as_i64().unwrap()
+        {
             return Err(RuntimeError::new("CONFLICT", "A proposal target changed. Discard this proposal and regenerate from current content; nothing was applied."));
         }
         // Editing a shared artifact must not change placements outside the captured scope.
         let mut stmt = tx.prepare("SELECT id FROM canvas_node WHERE artifact_id = ?1")?;
         let refs = stmt
-            .query_map([node["artifactId"].as_str().unwrap()], |r| {
-                r.get::<_, String>(0)
-            })?
+            .query_map([artifact_id], |r| r.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
         if refs.iter().any(|id| {
             !context["nodes"]
@@ -418,7 +421,7 @@ fn scoped_node(
         }
         checked.insert(node_id.to_owned());
     }
-    Ok(node.clone())
+    Ok(node)
 }
 
 fn apply_operations(

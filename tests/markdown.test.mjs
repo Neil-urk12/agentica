@@ -3,11 +3,18 @@ import { test } from "node:test";
 import {
   parseInline,
   parseMarkdown,
-  plainText,
   safeHref,
 } from "../apps/desktop/src/lib/markdown.ts";
 
-/** Every text value in the token tree, in order. */
+/** Concatenated text of inline nodes. */
+const plainText = (nodes) =>
+  nodes
+    .map((node) =>
+      node.t === "text" || node.t === "code" ? node.v : plainText(node.c),
+    )
+    .join("");
+
+/** Text of each block, newline-joined. */
 const texts = (blocks) =>
   blocks
     .map((block) =>
