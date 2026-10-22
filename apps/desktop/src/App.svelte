@@ -2433,17 +2433,13 @@
   ondrop={blockFileDrop}
 />
 
-<!-- One live region per screen context. The workspace and editor screens
-     share this one; the canvas screen renders its own inside its modal
-     dialog, because a modal makes the rest of the page inert. -->
-{#if stage !== "canvas"}
-  <p class="sr-only" role="status" aria-live="polite">{message}</p>
-{/if}
+<!-- Every screen is a full page, so one live region serves all of them. -->
+<p class="sr-only" role="status" aria-live="polite">{message}</p>
 
 {#snippet connectionControls()}
-  <!-- The workspace screen shows the controls on demand, so the bar stays
-       rendered there even while connected. -->
-  {#if stage === "workspace" || !connected}
+  <!-- The workspace and canvas screens show the controls on demand, so the bar
+       stays rendered there even while connected. -->
+  {#if stage === "workspace" || stage === "canvas" || !connected}
     <div
       class="connbar"
       class:connbar--ok={connected}
@@ -2514,8 +2510,8 @@
       workspaceName={editorState.workspace?.workspace.name ??
         "Unnamed workspace"}
       canvases={editorState.workspace?.canvases ?? []}
+      {connected}
       connection={connectionControls}
-      connectionMessage={message}
       busy={working}
       error={editorState.error}
       onCreate={(title) => void editor.createCanvas(title)}
@@ -2794,7 +2790,7 @@
             }}
             onmove={(_, next) => editor.setViewport(next)}
           >
-            <Background patternColor={dark ? "#2c2c30" : "#d9dbe4"} gap={24} />
+            <Background patternColor="var(--line-strong)" gap={24} size={2} />
             <ViewportPortal target="back">
               {#each nodeGroupBoxes as box (box.groupId)}
                 <div
@@ -2903,26 +2899,33 @@
         {/if}
         {#if editorState.document && editorState.document.nodes.length === 0 && editorState.document.projectGroups.length === 0}
           <div class="canvas__empty">
-            <Icon name="note_add" size={34} />
-            <p>This canvas is empty</p>
-            <button
-              class="btn btn--primary"
-              type="button"
-              disabled={!canEdit}
-              onclick={() => void editor.addText()}
-            >
-              <Icon name="add_box" size={18} />
-              Write on the canvas
-            </button>
-            <button
-              class="btn btn--soft"
-              type="button"
-              disabled={!canEdit || importing}
-              onclick={() => fileInput?.click()}
-            >
-              <Icon name="upload_file" size={18} />
-              Add a file
-            </button>
+            <div class="canvas__intro">
+              <h2>Start something on this canvas</h2>
+              <p>
+                Write a note, drop in a file, or ask the assistant to sketch an
+                idea. Everything stays together on this canvas.
+              </p>
+              <div class="canvas__actions">
+                <button
+                  class="btn btn--primary"
+                  type="button"
+                  disabled={!canEdit}
+                  onclick={() => void editor.addText()}
+                >
+                  <Icon name="add_box" size={18} />
+                  Write on the canvas
+                </button>
+                <button
+                  class="btn btn--ghost"
+                  type="button"
+                  disabled={!canEdit || importing}
+                  onclick={() => fileInput?.click()}
+                >
+                  <Icon name="upload_file" size={18} />
+                  Add a file
+                </button>
+              </div>
+            </div>
           </div>
         {/if}
 

@@ -1213,12 +1213,12 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
     );
     await waitFor(
       browser,
-      `[...document.querySelectorAll(".cards .card")].some((card) => card.textContent.includes("Handle canvas"))`,
+      `[...document.querySelectorAll(".tiles .tile__open")].some((tile) => tile.textContent.includes("Handle canvas"))`,
       "the canvas picker",
     );
     await clickAt(
       browser,
-      await boxByText(browser, ".cards .card", "Handle canvas"),
+      await boxByText(browser, ".tiles .tile__open", "Handle canvas"),
     );
     await waitFor(
       browser,
@@ -1420,7 +1420,7 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
       );
       await waitFor(
         browser,
-        `[...document.querySelectorAll('.cards .card')].some(c => c.textContent.includes('Conversation UI'))`,
+        `[...document.querySelectorAll('.tiles .tile__open')].some(c => c.textContent.includes('Conversation UI'))`,
         "the canvas gallery",
       );
       await selectCard("Conversation UI");

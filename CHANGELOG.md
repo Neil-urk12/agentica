@@ -12,6 +12,40 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-22
 
+#### Canvas adopts the start screen's visual language
+
+- The canvas top bar now uses the workspace start screen's flat, borderless bar:
+  the same solid primary logo tile and wordmark, the same 1.1rem by 2rem
+  padding, and the same 2.75rem boxed height for the connection pill and its
+  action buttons. The translucent blur and underline are gone.
+- The empty canvas shows the start screen's hero composition instead of a small
+  icon and two compact buttons: a large 600-weight heading, a short plain-answer
+  hint, and full-size primary and secondary actions.
+- The composer, floating toolbar, panel toggles, and review bar now share the
+  start screen's surfaces: 14px corners, solid `surface` fills instead of glass,
+  the heavy input border on the composer, and `shadow-sm` on floating controls.
+  The send button uses the primary gradient and keeps a readable disabled state.
+- The canvas dot grid uses the same `--line-strong` dots at the same 2px size
+  and 24px gap as the start screen, and follows the theme without a hard-coded
+  color.
+
+#### Canvas gallery matches the start screen
+
+- Choosing a canvas is now a full-page screen like the workspace picker instead
+  of a modal dialog. It uses the same dotted page, brand bar with **Ready** and
+  **Settings**, and adds a **Workspaces** back action.
+- The body repeats the start screen's composition: the “What are you working
+  on?” hero, the large 2px-bordered name field with **Start canvas**, the plain
+  hint naming the workspace, and the “Pick up where you left off” tile grid with
+  the saved-canvas count.
+- Saved canvases keep the workspace picker's paper previews, hover outline,
+  delete confirmation overlay, and focus handling when a confirmation opens,
+  closes, or deletes its tile. The empty list shows the same dashed note card
+  and hint.
+- The app-level live region now serves this screen too, since it is no longer a
+  dialog. Rendered tests that opened canvases through the old card list now use
+  the tile grid.
+
 #### Agent task node
 
 - A **Task** card appears to the left of the latest prompt card and follows

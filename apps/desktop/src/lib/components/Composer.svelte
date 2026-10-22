@@ -158,8 +158,8 @@
   }
 
   .composer__send:disabled {
-    opacity: 0.45;
     cursor: not-allowed;
+    background: var(--surface-soft);
     border-color: var(--line);
     color: var(--muted);
   }
