@@ -98,14 +98,16 @@ group. The desktop app shows a folder picker; browser mode asks for an absolute
 folder path on the backend computer. Opening a folder copies and creates nothing
 and runs no command. Groups start collapsed on every canvas visit; the header
 chevron expands one. Each group header offers **Add terminal** (your login shell,
-or `/bin/sh` as a visible fallback) and **Add agent** (the installed Codex CLI with
+or `/bin/sh` as a visible fallback; on Windows, PowerShell 7 or Windows PowerShell,
+with `cmd.exe` as the fallback) and **Add agent** (the installed Codex CLI with
 its own sign-in, prompts, and approvals). Tiles belong to their group, move with it,
 and start only when you choose **Start**. Sessions run with your user permissions;
 the project folder sets the working directory and is not a sandbox.
 
 Codex must be installed as `codex` on the PATH of the backend process (or the
-desktop app). Agentica passes no prompt, approval, or sandbox flags and never
-answers native prompts for you.
+desktop app); on Windows, `codex.exe` or the npm `codex.cmd` launcher. Agentica
+passes no prompt, approval, or sandbox flags and never answers native prompts for
+you.
 
 - **Focus terminal** sends keys, Ctrl+C, Tab, and Escape to the program.
   **Ctrl+Shift+Escape** returns focus to the tile controls; **Ctrl+Shift+C** copies
@@ -125,10 +127,14 @@ answers native prompts for you.
 - If a project folder moves, Start is disabled and **Locate folder** rebinds the
   group once its sessions are stopped.
 
-Native sessions are supported on Linux only, verified with zsh 5.9 and
-`codex-cli 0.163.0` in desktop and browser modes. On other systems project groups remain
-visible but Start explains why it is unavailable. Project paths, session
-settings, and terminal output are never added to canvas conversation context.
+Native sessions are supported on Linux and Windows. Linux is verified with zsh 5.9
+and `codex-cli 0.163.0` in desktop and browser modes. Windows 10 1809 or later
+uses ConPTY, and each session's processes run in a Job Object that is stopped with
+the session; automated tests cover PowerShell and `cmd.exe` on Windows 11, but
+interactive Codex use on Windows is not yet verified. On other systems project
+groups remain visible but Start explains why it is unavailable. Project paths,
+session settings, and terminal output are never added to canvas conversation
+context.
 
 ## Getting started
 
