@@ -118,6 +118,18 @@ fn spawn(
                 }
             }
         })?;
+    #[cfg(target_os = "linux")]
+    let mut child = {
+        // Keep the PID-1 reaper from collecting an instantly exiting launcher
+        // before cleanup can read its exit status.
+        let _spawn = linux::spawn_guard();
+        let child = pair.slave.spawn_command(command)?;
+        if let Some(pid) = child.process_id() {
+            linux::register_launcher(pid as i32);
+        }
+        child
+    };
+    #[cfg(not(target_os = "linux"))]
     let mut child = pair.slave.spawn_command(command)?;
     drop(pair.slave);
     let Some(pid) = child.process_id() else {

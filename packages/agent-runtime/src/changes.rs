@@ -774,6 +774,23 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(target_os = "linux")]
+    fn git_children_are_not_taken_by_the_orphan_reaper() {
+        // Under PID 1 the supervisor starts a reaper; it must leave Git's
+        // exit status to the try_wait loop that owns the child.
+        let _supervisor = crate::sessions::SessionSupervisor::new().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        for _ in 0..200 {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            if let Err(Unavailable::Failed(message)) =
+                git(root.path(), &["--version".into()], 1024, deadline)
+            {
+                panic!("{message}");
+            }
+        }
+    }
+
+    #[test]
     fn porcelain_v2_splits_sections_and_keeps_both_sides_of_mm() {
         let raw = b"# branch.oid 0123\0# branch.head main\0\
 1 MM N... 100644 100644 100644 aaa bbb src/both.ts\0\

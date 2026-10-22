@@ -12,6 +12,15 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-22
 
+- Reap orphaned Linux session jobs when the backend runs as PID 1. A single
+  PID-1 reaper collects jobs and escaped processes that reparented to the
+  backend, without touching live launchers whose exit status cleanup still
+  needs. Cleanup holds the spawn lock while it waits and unregisters a launcher,
+  so a new launcher that reuses the PID keeps its registration. The PID-1 tests
+  only assert when run as PID 1; `pnpm test:rust:pid1` runs them under
+  `unshare -Urpf --mount-proc`. A process that exits while its `/proc` stat is
+  read counts as gone instead of failing the scan or session cleanup.
+
 - Added native git pre-commit hooks via `.githooks/pre-commit` and configured
   `core.hooksPath` via `pnpm prepare`. Hooks execute fast checks (`oxfmt`,
   `oxlint`, and `cargo fmt`) to catch formatting and lint errors before commit.

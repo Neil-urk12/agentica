@@ -1061,10 +1061,17 @@ mod tests {
             ProcessState::Exited
         );
         // A job may linger as a zombie until its reaper (init or PID 1) collects it.
+        thread::sleep(std::time::Duration::from_millis(300));
         for pid in pids {
             if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-                let state = stat.rsplit_once(')').unwrap().1.trim_start().chars().next();
-                assert_eq!(state, Some('Z'), "job {pid} is still running");
+                let (_, fields) = stat.rsplit_once(')').unwrap();
+                let fields: Vec<_> = fields.split_whitespace().collect();
+                assert_eq!(fields[0], "Z", "job {pid} is still running");
+                assert_ne!(
+                    fields[1].parse::<u32>().unwrap(),
+                    std::process::id(),
+                    "job {pid} was retained as a zombie child"
+                );
             }
         }
         let replacement = supervisor
@@ -1154,7 +1161,7 @@ mod tests {
         spec.executable = "/bin/bash".into();
         let pidfile = root.path().join("escaped.pid");
         // setsid leaves the session cleanup signals. The child exits on its
-        // own; without subreaping the OS reaper must collect it.
+        // own; the nearest reaper (this process under PID 1) must collect it.
         spec.argv = vec![
             "-c".into(),
             format!(
@@ -1196,6 +1203,48 @@ mod tests {
                 parent,
                 Some(std::process::id()),
                 "the test process retained the escaped child as a zombie"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn stopped_session_jobs_are_not_retained_as_zombie_children() {
+        let root = tempfile::tempdir().unwrap();
+        let supervisor = Active(SessionSupervisor::new().unwrap());
+        let mut spec = shell(root.path());
+        spec.executable = "/bin/bash".into();
+        let pidfile = root.path().join("job.pid");
+        spec.argv = vec![
+            "-c".into(),
+            format!("sleep 30 & echo $! > {}; exit 0", pidfile.display()),
+        ];
+        let status = supervisor.0.start(spec.clone(), "job", 24, 80).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !pidfile.exists() && std::time::Instant::now() < deadline {
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let job: u32 = std::fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let exit = supervisor
+            .0
+            .wait_stopped(&spec.owner, &status.session_id)
+            .unwrap();
+        assert_eq!(exit.state, ProcessState::Exited);
+        // The job belongs to the launcher's session. When the launcher exits
+        // it reparents to the nearest reaper, which is this process under PID 1.
+        thread::sleep(std::time::Duration::from_millis(300));
+        if let Ok(stat) = std::fs::read_to_string(format!("/proc/{job}/stat")) {
+            let (_, fields) = stat.rsplit_once(')').expect("stat has a comm field");
+            let fields: Vec<_> = fields.split_whitespace().collect();
+            assert_eq!(fields[0], "Z", "job {job} is still running");
+            assert_ne!(
+                fields[1].parse::<u32>().unwrap(),
+                std::process::id(),
+                "the test process retained the session job as a zombie"
             );
         }
     }
