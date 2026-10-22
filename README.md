@@ -70,7 +70,9 @@ beside the reply to commit the whole proposal, or **Discard** to keep the reply
 without changing existing objects. Pending proposals survive reopening; changed
 targets cause a conflict rather than overwriting manual edits. Only one generation
 or unresolved proposal can be active on a canvas. Cancel stops generation, and
-interrupted requests require an explicit retry.
+interrupted requests require an explicit retry. **Retry request** on a failed,
+cancelled, or interrupted prompt card resends the same prompt from that card;
+the reply appears beneath it and no new prompt card is created.
 
 The first tool set supports text, labeled rectangles and ellipses, placement,
 connectors, and self-contained HTML/CSS designs. Ask for a screen (for example

@@ -45,6 +45,33 @@ async function openCard(browser, label) {
   await clickAt(browser, await boxByText(browser, item, label));
 }
 
+/**
+ * Close the open dialog with Escape and wait until it is gone. A click on
+ * Close can land during the dialog's entrance transition and be lost, which
+ * leaves the dialog open and swallows later canvas shortcuts and drags.
+ */
+async function closeDialog(browser) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    for (const type of ["keyDown", "keyUp"])
+      await browser.send(
+        "Input.dispatchKeyEvent",
+        { type, key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 },
+        browser.sessionId,
+      );
+    try {
+      await waitFor(
+        browser,
+        `!document.querySelector('dialog[open]')`,
+        "the dialog to close",
+        1_000,
+      );
+      return;
+    } catch {
+      // Retry: the first Escape can arrive before the dialog takes focus.
+    }
+  }
+  throw new Error("The dialog did not close.");
+}
 // The same Vite server answers on either loopback spelling, so a browser there
 // sends whichever one it was opened with as the Origin header.
 const LOCALHOST_FRONTEND_ORIGIN = "http://localhost:1420";
@@ -1019,10 +1046,7 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
       false,
       "drawing labels are read-only",
     );
-    await clickAt(
-      browser,
-      await boxByText(browser, "dialog[open] button", "Close"),
-    );
+    await closeDialog(browser);
     // Change the measured box to exercise the observer independently of rerenders.
     await evaluate(
       browser,
@@ -1055,10 +1079,7 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
       ),
       labels.join("\n\n"),
     );
-    await clickAt(
-      browser,
-      await boxByText(browser, "dialog[open] button", "Close"),
-    );
+    await closeDialog(browser);
     await evaluate(
       browser,
       `document.querySelectorAll('${composite} .shape-label')[1].style.height = '60px'`,
@@ -3025,6 +3046,143 @@ test("box selection groups, moves, ungroups, and deletes canvas objects", async 
   } catch (error) {
     if (browser)
       error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({text:document.body.innerText.slice(-800),selected:[...document.querySelectorAll('.svelte-flow__node.selected')].length})")}`;
+    throw error;
+  } finally {
+    await browser?.close();
+    await stopBackend(backend.child);
+  }
+});
+
+test("Retry request reuses the failed prompt card", async () => {
+  const backend = await startBackend();
+  key = backend.connectionKey;
+  let browser;
+  const rpc = async (method, params) => {
+    const reply = await send(port, {
+      body: JSON.stringify({
+        protocolVersion: 1,
+        id: crypto.randomUUID(),
+        method,
+        params,
+      }),
+    });
+    assert.equal(reply.status, 200);
+    const response = RuntimeResponseSchema.parse(JSON.parse(reply.text));
+    assert.equal(response.error, undefined, JSON.stringify(response));
+    return ResultSchemas[method].parse(response.result);
+  };
+  try {
+    const { workspace } = await rpc("workspace.create", {
+      name: "Retry workspace",
+    });
+    const { canvas } = await rpc("canvas.create", {
+      workspaceId: workspace.id,
+      title: "Retry canvas",
+    });
+    const reference = { workspaceId: workspace.id, canvasId: canvas.id };
+    const turnId = crypto.randomUUID();
+    const started = await rpc("conversation.start", {
+      ...reference,
+      turnId,
+      prompt: "Summarize the plan",
+      model: "openrouter/free",
+      anchor: { x: 0, y: 0 },
+      nodeIds: [],
+    });
+    const card = started.turn.promptNodeId;
+    await rpc("conversation.finish", {
+      ...reference,
+      turnId,
+      reply: "",
+      operations: [],
+      status: "failed",
+      error: "The provider timed out.",
+    });
+
+    browser = await launchBrowser();
+    await browser.send(
+      "Page.addScriptToEvaluateOnNewDocument",
+      {
+        source: `
+      localStorage.setItem('agentica.openrouterApiKey', 'test-only');
+      localStorage.setItem('agentica.openrouterModel', 'openrouter/free');
+      const realFetch = window.fetch.bind(window);
+      window.fetch = async (url, options) => {
+        if (!String(url).startsWith('https://openrouter.ai/')) return realFetch(url, options);
+        return new Response(JSON.stringify({choices:[{message:{content:'The plan has three steps.'},finish_reason:'stop'}]}), {headers:{'Content-Type':'application/json'}});
+      };
+    `,
+      },
+      browser.sessionId,
+    );
+    await browser.send(
+      "Page.navigate",
+      { url: `http://127.0.0.1:${port}/` },
+      browser.sessionId,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('#connection-key')`,
+      "the connection form",
+    );
+    await evaluate(
+      browser,
+      `(() => { const input = document.querySelector('#connection-key'); input.value = ${JSON.stringify(key)}; input.dispatchEvent(new Event('input', { bubbles: true })); })()`,
+    );
+    await clickAt(
+      browser,
+      await boxOf(browser, ".connbar button[type='submit']"),
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('.connbar--ok')`,
+      "the connected status",
+    );
+    for (const label of ["Retry workspace", "Retry canvas"]) {
+      const cardSelector = `[...document.querySelectorAll('.cards .card')].find((item) => item.textContent.includes(${JSON.stringify(label)}))`;
+      await waitFor(
+        browser,
+        `${cardSelector} && !(${cardSelector}).disabled`,
+        `the ${label} card`,
+      );
+      await evaluate(
+        browser,
+        `(${cardSelector}).focus(); (${cardSelector}).scrollIntoView({ block: 'center' })`,
+      );
+      await clickAt(browser, await boxByText(browser, ".cards .card", label));
+    }
+    const retry = `[data-id="${card}"] .card-retry`;
+    await waitFor(
+      browser,
+      `!!document.querySelector(${JSON.stringify(retry)}) && !document.querySelector(${JSON.stringify(retry)}).disabled`,
+      "the Retry request button",
+    );
+    await clickAt(browser, await boxOf(browser, retry));
+    await waitFor(
+      browser,
+      `[...document.querySelectorAll('.svelte-flow__node')].some((node) => node.textContent.includes('The plan has three steps.'))`,
+      "the retried reply",
+    );
+    assert.equal(
+      await countOf(browser, ".svelte-flow__node"),
+      2,
+      "one prompt card and one reply card",
+    );
+    const opened = await rpc("canvas.open", reference);
+    assert.equal(opened.nodes.length, 2);
+    assert.ok(opened.nodes.some((node) => node.id === card));
+    const { turns } = await rpc("conversation.list", {
+      ...reference,
+      before: 0,
+    });
+    assert.equal(turns.length, 1, "the retry replaced the failed turn");
+    assert.equal(turns[0].id, turnId);
+    assert.equal(turns[0].status, "complete");
+    assert.equal(turns[0].promptNodeId, card);
+    assert.equal(turns[0].error, "");
+  } catch (error) {
+    if (browser)
+      error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({text:document.body.innerText.slice(-1000)})")}`;
     throw error;
   } finally {
     await browser?.close();

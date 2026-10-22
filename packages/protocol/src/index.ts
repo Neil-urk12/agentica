@@ -470,6 +470,8 @@ const ParamSchemas = {
     nodeIds: UniqueIds,
     contextMode: z.enum(["canvas", "selection"]).optional(),
     anchor: Anchor,
+    /** Restart this failed turn in place, reusing its prompt card. */
+    retryTurnId: IdSchema.optional(),
   }),
   "conversation.finish": z.strictObject({
     ...TurnRef,

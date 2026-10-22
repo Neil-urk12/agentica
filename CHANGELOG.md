@@ -12,6 +12,21 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-22
 
+#### Retry reuses the failed prompt card
+
+- **Retry request** on a failed, cancelled, or interrupted prompt card used to
+  start a brand-new turn, placing a second copy of the prompt on the canvas.
+  `conversation.start` now accepts an optional `retryTurnId`: the runtime
+  restarts that turn in place (status back to `generating`, error and reply
+  cleared, context recaptured) and keeps its prompt card and position, so the
+  reply appears beneath the original card and the history holds one turn.
+- A retry must resend the saved prompt unchanged and is accepted only for a
+  failed, cancelled, or interrupted turn whose prompt card still exists; the
+  retried turn is left out of its own conversation history.
+- A Rust test covers reuse, prompt mismatch, repeated and completed retries;
+  a rendered browser test clicks Retry request on a failed card and checks
+  that the canvas holds one prompt and one reply and the turn completed.
+
 #### Formatted, highlighted design source
 
 - **Read HTML source** now shows the design pretty-printed and colored instead

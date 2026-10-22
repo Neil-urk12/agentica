@@ -14,6 +14,10 @@ struct Start {
     #[serde(default)]
     context_mode: Option<ContextMode>,
     anchor: Anchor,
+    /// Restart this failed, cancelled, or interrupted turn in place, keeping
+    /// its prompt card instead of creating a new one.
+    #[serde(default)]
+    retry_turn_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -711,6 +715,35 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
             if active {
                 return Err(RuntimeError::new("CONFLICT", "Resolve the current proposal or interrupt the active turn before sending another prompt."));
             }
+            let retried = match &p.retry_turn_id {
+                Some(retry) => {
+                    id("retryTurnId", retry)?;
+                    let previous = turn(tx, &p.canvas_id, retry)?;
+                    if !matches!(
+                        previous["status"].as_str(),
+                        Some("failed" | "cancelled" | "interrupted")
+                    ) {
+                        return Err(RuntimeError::new(
+                            "CONFLICT",
+                            "Only failed, cancelled, or interrupted requests can be retried.",
+                        ));
+                    }
+                    if previous["prompt"] != p.prompt.as_str() {
+                        return Err(invalid("A retry resends the saved prompt unchanged."));
+                    }
+                    let card = previous["promptNodeId"].as_str().unwrap().to_owned();
+                    let exists: bool = tx.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM canvas_node WHERE canvas_id = ?1 AND id = ?2)",
+                        (&p.canvas_id, &card),
+                        |r| r.get(0),
+                    )?;
+                    if !exists {
+                        return Err(not_found("Prompt card"));
+                    }
+                    Some(retry.clone())
+                }
+                None => None,
+            };
             if p.node_ids.len() > 128
                 || p.node_ids.iter().collect::<HashSet<_>>().len() != p.node_ids.len()
             {
@@ -764,10 +797,23 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
             }
             let mut prior = history(tx, &p.canvas_id, 0)?;
             prior.reverse();
+            // A retried turn is the request itself, not earlier conversation.
             let prior: Vec<_> = prior
                 .iter()
+                .filter(|t| retried.as_deref().is_none_or(|retry| t["id"] != retry))
                 .map(|t| json!({"prompt": t["prompt"], "reply": t["reply"], "status": t["status"]}))
                 .collect();
+            if let Some(retry) = &retried {
+                tx.execute(
+                    "UPDATE conversation_turn SET model = ?2, context = ?3, status = 'generating',
+                     reply = '', reply_node_id = NULL, operations = '[]', error = '' WHERE id = ?1",
+                    (retry, &p.model, context.to_string()),
+                )?;
+                bump(tx, &p.canvas_id, canvas_revision(tx, &p.canvas_id)?)?;
+                return Ok(
+                    json!({"turn":turn(tx,&p.canvas_id,retry)?, "context":context, "history":prior}),
+                );
+            }
             let node_id = new_id()?;
             let g = open_position(
                 tx,
