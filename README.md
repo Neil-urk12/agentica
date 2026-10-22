@@ -149,6 +149,27 @@ own terminal-focus gating. Agentica does not inspect or modify Codex configurati
 or add launch flags. Without this opt-in, bell and process-exit attention still
 work; the setup hint does not indicate whether Codex is configured.
 
+## Canvas tasks
+
+Select a plain text note and choose **Make task** to track it as a task. A task has
+a **Done** checkbox that only you change, and can be assigned to one Codex tile on
+the same canvas; a dashed line connects the note to that tile (or to its project
+header while the project is collapsed). Assigning never starts, stops, or writes to
+a session. Removing the tile or its project clears the assignment and keeps the
+task.
+
+**Send** shows the exact text that will be pasted and its size, then pastes it into
+the running Codex tile as one bracketed paste without pressing Enter, and moves
+focus to that terminal so you submit it there. Send never starts a stopped tile.
+If the tile has raised attention when the paste is written, the backend refuses
+it, nothing is pasted, and you are asked to check the tile first.
+
+Task status is factual only: when the text was last sent, **Edited since sent**
+when the note changed afterward, and the assigned tile's live attention label.
+Agentica never marks a task in progress, waiting, complete, or failed from session
+output, attention, or exit. Tasks are not shown to the canvas agent and cannot be
+changed by it.
+
 ## Running the application
 
 | Option                                                              | How to start                                                 | What opens                                            |

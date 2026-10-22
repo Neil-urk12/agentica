@@ -20,7 +20,19 @@
     type SessionStatus,
     type CanvasOperation,
   } from "@agentica/protocol";
-  import { callRuntime, desktopMode, pingRuntime } from "./lib/runtime";
+  import {
+    callRuntime,
+    desktopMode,
+    pingRuntime,
+    RuntimeCallError,
+  } from "./lib/runtime";
+  import {
+    MAX_TASK_BYTES,
+    editedSinceSent,
+    sendBlocker,
+    taskPayload,
+  } from "./lib/tasks";
+  import { clock } from "./lib/clock.svelte";
   import { Editor, type DrawingSegment } from "./lib/editor";
   import { applyTheme, readTheme, type Theme } from "./lib/theme";
   import Composer from "./lib/components/Composer.svelte";
@@ -28,7 +40,12 @@
   import ReviewBar from "./lib/components/ReviewBar.svelte";
   import CanvasNavigation from "./lib/components/CanvasNavigation.svelte";
   import AttentionQueue from "./lib/components/AttentionQueue.svelte";
-  import { isApplePlatform, isQueueShortcut } from "./lib/session-attention";
+  import {
+    attentionLabel,
+    isApplePlatform,
+    isQueueShortcut,
+    waitedLabel,
+  } from "./lib/session-attention";
   import {
     CARD,
     EXCHANGE_RESERVE,
@@ -127,6 +144,29 @@
   /** The Changes tile shown in full-screen review mode, if any. */
   let reviewTile = $state<string | null>(null);
   let pasting = $state(false);
+  // Task send preview: exactly what will be pasted, and the text revision recorded.
+  let taskSend = $state.raw<
+    | ({
+        nodeId: string;
+        tileId: string;
+        label: string;
+        text: string;
+        revision: number;
+      } & ReturnType<typeof taskPayload>)
+    | null
+  >(null);
+  let taskBusy = $state("");
+  let taskErrors = $state.raw<Record<string, string>>({});
+  // Pastes that succeeded but whose sent record failed; kept for retry.
+  let unrecorded = $state.raw<
+    Record<string, { tileId: string; label: string; revision: number }>
+  >({});
+  const hasSentTask = $derived(
+    !!editorState.document?.nodes.some((node) => node.task?.sentAt),
+  );
+  $effect(() => {
+    if (hasSentTask) return clock.hold();
+  });
   const reviewTargets = $derived.by(() => {
     void sessionRevision;
     const document = editorState.document;
@@ -999,6 +1039,9 @@
     const pastingNow = pasting;
     // Tracked so collapsing or expanding a group rerenders these nodes.
     const groupView = expandedGroups;
+    // Task controls rerender on busy, error, retry and "sent N min ago" changes.
+    const taskView = { busy: taskBusy, errors: taskErrors, unrecorded };
+    void clock.now;
     untrack(() => {
       const renderedById = new Map(
         nodes.map((node) => [node.id, node] as const),
@@ -1029,6 +1072,57 @@
         if (projectTiles) projectTiles.push(tile);
         else tilesByProject.set(tile.projectId, [tile]);
       }
+      const codex = codexTiles();
+      const taskData = (
+        node: NonNullable<typeof document>["nodes"][number],
+        revision: number,
+      ) => {
+        const task = node.task ?? null;
+        const target = codex.find((t) => t.id === task?.assignedTileId);
+        const view = target ? sessions.view(codexOwner(target.id)) : null;
+        const status = view?.status ?? null;
+        const sentAt = task?.sentAt ? Date.parse(task.sentAt) : null;
+        const retry = taskView.unrecorded[node.id];
+        return {
+          task,
+          assignees: codex,
+          sent:
+            sentAt === null
+              ? ""
+              : `Sent ${waitedLabel(sentAt, clock.now)}${task?.assignedTileId ? "" : " to a removed agent"}`,
+          edited: editedSinceSent(task, revision),
+          // Live hint only; never stored and never changes done.
+          attention:
+            target && status?.attention.raised
+              ? `${target.label}: ${attentionLabel(status)}`
+              : "",
+          blocker: sendBlocker(
+            task,
+            target && view
+              ? { label: target.label, connected: view.connected, status }
+              : null,
+          ),
+          busy: taskView.busy !== "",
+          error: taskView.errors[node.id] ?? "",
+          onMark: (enabled: boolean) =>
+            void taskAction(node.id, () => editor.setTask(node.id, enabled)),
+          onDone: (done: boolean) =>
+            void taskAction(node.id, () =>
+              editor.updateTask(node.id, { done }),
+            ),
+          onAssign: (assignedTileId: string | null) =>
+            void taskAction(node.id, () =>
+              editor.updateTask(node.id, { assignedTileId }),
+            ),
+          onSend: () => previewTask(node.id),
+          onRetry: retry
+            ? () =>
+                void taskAction(node.id, () =>
+                  recordTaskSend(node.id, retry, true),
+                )
+            : undefined,
+        };
+      };
       const asNode = (
         node: NonNullable<typeof document>["nodes"][number],
         artifacts: Map<
@@ -1083,6 +1177,11 @@
               editor.placeNode(node.id, { width, height }),
             onRetry: () => turn && void handlePromptSubmit(turn.prompt),
             onRead: preview ? undefined : () => openNodeReader(node.id),
+            // Conversation cards are not tasks.
+            task:
+              preview || turn || artifact.type !== "text"
+                ? undefined
+                : taskData(node, artifact.revision),
           },
         };
       };
@@ -1255,6 +1354,30 @@
           target: edge.targetNodeId,
           markerEnd: { type: MarkerType.ArrowClosed },
         })) ?? [];
+      // Derived task wires: not canvas edges, and they end at the project
+      // header while the project is collapsed.
+      edges = [
+        ...edges,
+        ...(document?.nodes ?? []).flatMap((node) => {
+          const target = codex.find((t) => t.id === node.task?.assignedTileId);
+          return target
+            ? [
+                {
+                  id: `task-wire-${node.id}`,
+                  source: node.id,
+                  target:
+                    groupView[target.projectId] === true
+                      ? target.id
+                      : target.projectId,
+                  class: "task-wire",
+                  selectable: false,
+                  focusable: false,
+                  deletable: false,
+                },
+              ]
+            : [];
+        }),
+      ];
       const pending = turns.find((t) => t.status === "pending");
       if (document && pending) {
         try {
@@ -1736,9 +1859,160 @@
     }
   }
 
+  /** "Project · Codex n" for each Codex tile on the open canvas, in tile order. */
+  function codexTiles() {
+    const document = editorState.document;
+    if (!document) return [];
+    return document.projectGroups.flatMap((group) =>
+      document.sessionTiles
+        .filter((t) => t.projectId === group.id && t.kind === "cli-agent")
+        .map((tile, index) => ({
+          id: tile.id,
+          projectId: group.id,
+          label: `${group.label} · Codex ${index + 1}`,
+        })),
+    );
+  }
+
+  function codexOwner(tileId: string) {
+    return {
+      workspaceId: editorState.workspace!.workspace.id,
+      canvasId: editorState.document!.canvas.id,
+      tileId,
+    };
+  }
+
+  function setTaskError(nodeId: string, error: unknown) {
+    taskErrors = {
+      ...taskErrors,
+      [nodeId]:
+        error instanceof Error ? error.message : error ? String(error) : "",
+    };
+  }
+
+  async function taskAction(nodeId: string, run: () => Promise<void>) {
+    if (taskBusy) return;
+    taskBusy = nodeId;
+    setTaskError(nodeId, "");
+    try {
+      await run();
+    } catch (error) {
+      setTaskError(nodeId, error);
+      // A stale task revision means another client changed it; show theirs.
+      if (error instanceof RuntimeCallError && error.code === "CONFLICT")
+        void editor.reloadConversation();
+    } finally {
+      taskBusy = "";
+    }
+  }
+
+  /** Open the send preview with the saved text the backend will paste. */
+  function previewTask(nodeId: string) {
+    void taskAction(nodeId, async () => {
+      const node = editorState.document?.nodes.find((n) => n.id === nodeId);
+      const target = codexTiles().find(
+        (t) => t.id === node?.task?.assignedTileId,
+      );
+      if (!target) throw new Error("Assign a Codex tile to send this task.");
+      const { text, revision } = await editor.settledText(nodeId);
+      taskSend = {
+        nodeId,
+        tileId: target.id,
+        label: target.label,
+        text,
+        revision,
+        ...taskPayload(text),
+      };
+    });
+  }
+
+  async function focusTile(tileId: string, projectId: string) {
+    expandedGroups = { ...expandedGroups, [projectId]: true };
+    await tick();
+    focusObject(tileId);
+    selectedId = tileId;
+    sessions.focus(codexOwner(tileId));
+  }
+
+  async function recordTaskSend(
+    nodeId: string,
+    sent: { tileId: string; label: string; revision: number },
+    retry = false,
+  ) {
+    try {
+      await editor.recordSent(nodeId, sent.tileId, sent.revision, retry);
+      const { [nodeId]: _, ...rest } = unrecorded;
+      unrecorded = rest;
+    } catch (error) {
+      unrecorded = { ...unrecorded, [nodeId]: sent };
+      setTaskError(
+        nodeId,
+        `Pasted into ${sent.label}, but the send was not recorded: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /** Guarded paste, then record, then hand focus to the terminal. Never presses Enter. */
+  async function confirmTaskSend() {
+    const send = taskSend;
+    if (!send || taskBusy || !send.fits || send.empty) return;
+    taskBusy = send.nodeId;
+    setTaskError(send.nodeId, "");
+    try {
+      try {
+        await sessions.paste(codexOwner(send.tileId), send.payload, {
+          refuseIfAttention: true,
+        });
+      } catch (error) {
+        setTaskError(
+          send.nodeId,
+          error instanceof RuntimeCallError && error.code === "ATTENTION_RAISED"
+            ? `${send.label} needs attention. Check it first; nothing was pasted.`
+            : error,
+        );
+        return;
+      } finally {
+        taskSend = null;
+      }
+      await recordTaskSend(send.nodeId, send);
+      const tile = codexTiles().find((t) => t.id === send.tileId);
+      if (tile) await focusTile(tile.id, tile.projectId);
+    } finally {
+      taskBusy = "";
+    }
+  }
+
+  // The preview is only valid for the text and assignee it showed.
+  $effect(() => {
+    const send = taskSend;
+    const document = editorState.document;
+    if (!send) return;
+    const node = document?.nodes.find((n) => n.id === send.nodeId);
+    const artifact = document?.artifacts.find((a) => a.id === node?.artifactId);
+    if (
+      artifact?.type !== "text" ||
+      artifact.revision !== send.revision ||
+      artifact.text !== send.text ||
+      node?.task?.assignedTileId !== send.tileId
+    ) {
+      taskSend = null;
+      untrack(() =>
+        setTaskError(
+          send.nodeId,
+          "The task changed while the preview was open. Review it again before sending.",
+        ),
+      );
+    }
+  });
+
   function onKeydown(event: KeyboardEvent) {
     const dialogOpen =
-      settingsOpen || reader || projectDialog || removal || reviewTile;
+      settingsOpen ||
+      reader ||
+      projectDialog ||
+      removal ||
+      reviewTile ||
+      taskSend;
     const target = event.target as HTMLElement | null;
     // The queue shortcut also works from tile controls (header buttons,
     // Mark seen); only the terminal itself and text fields keep Ctrl+J.
@@ -1904,6 +2178,40 @@
         onclick={() => void confirmRemoval()}
         >{removalBusy ? "Stopping…" : "Stop and remove"}</button
       >
+    </div>
+  </Modal>
+{/if}
+
+{#if taskSend}
+  {@const send = taskSend}
+  <Modal
+    title={`Send task to ${send.label}?`}
+    subtitle="This exact text is pasted as one block without Enter. You submit it in the terminal."
+    icon="send"
+    onClose={() => {
+      if (!taskBusy) taskSend = null;
+    }}
+  >
+    <pre class="task-preview" aria-label="Text to paste">{send.payload}</pre>
+    <p class:card-error={!send.fits} role={send.fits ? undefined : "alert"}>
+      {send.bytes.toLocaleString()} of {MAX_TASK_BYTES.toLocaleString()} bytes{send.fits
+        ? ""
+        : " — too large to paste. Shorten the text, then retry."}
+    </p>
+    {#if send.empty}<p role="alert">There is no text to send.</p>{/if}
+    <div class="project-dialog-actions">
+      <button
+        class="btn btn--soft"
+        type="button"
+        disabled={!!taskBusy}
+        onclick={() => (taskSend = null)}>Cancel</button
+      >{#if send.fits && !send.empty}<button
+          class="btn btn--primary"
+          type="button"
+          disabled={!!taskBusy}
+          onclick={() => void confirmTaskSend()}
+          >{taskBusy ? "Pasting…" : `Paste into ${send.label}`}</button
+        >{/if}
     </div>
   </Modal>
 {/if}

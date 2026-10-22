@@ -384,6 +384,11 @@ label {
   display: none;
 }
 
+/* A closing modal fades out without intercepting input. */
+.scrim[inert] {
+  pointer-events: none;
+}
+
 .scrim::backdrop {
   background: transparent;
 }
@@ -2217,7 +2222,88 @@ button.card-more {
   min-height: 32px;
 }
 
-.handles-hidden .svelte-flow__handle {
+.task-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--card-line);
+  font-size: var(--type-meta);
+}
+
+.task-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink);
+}
+
+.task-done input {
+  accent-color: var(--accent);
+}
+
+.task-assignee {
+  min-width: 0;
+  max-width: 14rem;
+  min-height: 28px;
+  padding: 2px 6px;
+  color: var(--ink);
+  background: var(--surface, transparent);
+  border: 1px solid var(--card-line);
+  border-radius: 6px;
+  font: inherit;
+}
+
+.task-send,
+.task-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+}
+
+.task-mark {
+  align-self: flex-start;
+}
+
+.task-status,
+.task-attention {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: var(--type-meta);
+  color: var(--muted);
+}
+
+.task-attention {
+  color: var(--warn);
+}
+
+.task-preview {
+  max-height: 40vh;
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  background: var(--card-reply);
+  border: 1px solid var(--card-line);
+  border-radius: 8px;
+  font:
+    var(--type-meta) / 1.5 ui-monospace,
+    monospace;
+}
+
+.svelte-flow__edge.task-wire path {
+  stroke: var(--accent);
+  stroke-dasharray: 6 4;
+}
+
+.handles-hidden .svelte-flow__handle,
+.svelte-flow__handle.task-anchor {
   opacity: 0;
   pointer-events: none;
 }

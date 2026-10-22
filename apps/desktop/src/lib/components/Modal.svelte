@@ -25,13 +25,19 @@
   }: Props = $props();
 
   let dialog: HTMLDialogElement;
+  let previousFocus: Element | null = null;
+  let restored = false;
+  // Close and hand focus back once, as soon as the modal starts leaving.
+  function release() {
+    dialog.close();
+    if (restored) return;
+    restored = true;
+    if (previousFocus instanceof HTMLElement) previousFocus.focus();
+  }
   onMount(() => {
-    const previousFocus = document.activeElement;
+    previousFocus = document.activeElement;
     dialog.showModal();
-    return () => {
-      dialog.close();
-      if (previousFocus instanceof HTMLElement) previousFocus.focus();
-    };
+    return release;
   });
 
   function onKeydown(event: KeyboardEvent) {
@@ -64,6 +70,22 @@
   oncancel={(event) => {
     event.preventDefault();
     onClose?.();
+  }}
+  onoutrostart={() => {
+    // Unmount waits for the fade. Meanwhile a modal dialog would keep the page
+    // inert and late focus restoration would land after later input, so release
+    // both now and fade out as an inert overlay.
+    release();
+    dialog.inert = true;
+    dialog.show();
+  }}
+  onintrostart={() => {
+    // Reopened mid-fade: Svelte reverses on the same element, so restore modality.
+    if (!dialog.inert) return;
+    restored = false;
+    dialog.inert = false;
+    dialog.close();
+    dialog.showModal();
   }}
 >
   <div

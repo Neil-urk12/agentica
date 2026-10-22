@@ -131,7 +131,12 @@ async function setup(t, intercept = async () => {}) {
       disk.canvas = { ...disk.canvas, revision: params.expectedRevision + 1 };
       return { revision: disk.canvas.revision, edge: structuredClone(edge) };
     }
-    if (method === "canvas.open") return structuredClone(disk);
+    // Like the runtime, canvas.open always reports each node's task.
+    if (method === "canvas.open")
+      return structuredClone({
+        ...disk,
+        nodes: disk.nodes.map((node) => ({ task: null, ...node })),
+      });
     if (method === "artifact.saveText") {
       assert.equal(params.expectedRevision, disk.artifacts[0].revision);
       disk.artifacts[0] = {
@@ -177,6 +182,157 @@ async function setup(t, intercept = async () => {}) {
   await editor.openCanvas(canvasId);
   return { editor, calls, disk, call };
 }
+
+async function taskSendSetup(t) {
+  const fixture = await setup(t);
+  const { editor, disk, call } = fixture;
+  const tileId = "00000000-0000-4000-8000-000000000007";
+  disk.nodes[0].task = {
+    done: false,
+    assignedTileId: tileId,
+    sentAt: null,
+    sentRevision: null,
+    revision: 2,
+  };
+  await editor.openCanvas(canvasId);
+  const records = [];
+  editor.call = async (...args) => {
+    if (args[2] !== "task.recordSent") return call(...args);
+    const params = args[3];
+    records.push(params);
+    const task = disk.nodes[0].task;
+    if (
+      params.expectedRevision !== task?.revision ||
+      params.tileId !== task?.assignedTileId ||
+      params.textRevision !== disk.artifacts[0].revision
+    )
+      throw new Error("CONFLICT: task or text changed");
+    disk.nodes[0].task = {
+      ...task,
+      revision: task.revision + 1,
+      sentAt: new Date(
+        Date.UTC(2026, 9, 22, 0, 0, records.length),
+      ).toISOString(),
+      sentRevision: params.textRevision,
+    };
+    return { task: structuredClone(disk.nodes[0].task) };
+  };
+  return { ...fixture, tileId, records };
+}
+
+test("task recording retry adopts a committed send without rewriting it or losing drafts", async (t) => {
+  const { editor, disk, tileId, records } = await taskSendSetup(t);
+  const call = editor.call;
+  editor.call = async (...args) => {
+    const result = await call(...args);
+    if (args[2] === "task.recordSent")
+      throw new TypeError("Reply lost after commit");
+    return result;
+  };
+  await assert.rejects(editor.recordSent(nodeId, tileId, 1), /Reply lost/);
+  assert.equal(editor.state.document.nodes[0].task.revision, 2);
+  assert.equal(disk.nodes[0].task.revision, 3);
+  editor.editText(artifactId, "Unsaved newer text");
+  editor.placeNode(nodeId, { x: 777 });
+  for (let attempt = 0; attempt < 3; attempt++)
+    await editor.recordSent(nodeId, tileId, 1, true);
+  assert.equal(records.length, 1);
+  assert.deepEqual(editor.state.document.nodes[0].task, disk.nodes[0].task);
+  assert.equal(editor.state.document.artifacts[0].text, "Unsaved newer text");
+  assert.equal(editor.state.document.nodes[0].x, 777);
+  assert.equal(editor.state.dirty, true);
+  // A new paste of unchanged text must still get a fresh send record.
+  editor.call = call;
+  await editor.recordSent(nodeId, tileId, 1);
+  assert.equal(records.length, 2);
+});
+
+test("task recording retry never adopts an earlier send of the same text", async (t) => {
+  const { editor, disk, tileId, records } = await taskSendSetup(t);
+  await editor.recordSent(nodeId, tileId, 1);
+  const first = disk.nodes[0].task;
+  const call = editor.call;
+  editor.call = async (...args) => {
+    if (args[2] === "task.recordSent") throw new TypeError("Network down");
+    return call(...args);
+  };
+  await assert.rejects(editor.recordSent(nodeId, tileId, 1), /Network down/);
+  assert.deepEqual(disk.nodes[0].task, first);
+  editor.call = call;
+  await editor.recordSent(nodeId, tileId, 1, true);
+  assert.equal(records.length, 2);
+  assert.notEqual(disk.nodes[0].task.sentAt, first.sentAt);
+  assert.deepEqual(editor.state.document.nodes[0].task, disk.nodes[0].task);
+});
+
+test("task recording retry records a fresh send when the attempt started before the acknowledged send", async (t) => {
+  const { editor, disk, tileId, records } = await taskSendSetup(t);
+  const live = editor.call;
+  // The previous send committed, but its reply was lost, so the next attempt
+  // starts behind the persisted stamp.
+  editor.call = async (...args) => {
+    const result = await live(...args);
+    if (args[2] === "task.recordSent")
+      throw new TypeError("Reply lost after commit");
+    return result;
+  };
+  await assert.rejects(editor.recordSent(nodeId, tileId, 1), /Reply lost/);
+  const previous = structuredClone(disk.nodes[0].task);
+  editor.call = async (...args) => {
+    if (args[2] === "task.recordSent") throw new TypeError("Network down");
+    return live(...args);
+  };
+  // Resending unchanged text fails to record before committing anything.
+  await assert.rejects(editor.recordSent(nodeId, tileId, 1), /Network down/);
+  editor.call = live;
+  // The retry must record the send instead of reporting the earlier stamp.
+  await editor.recordSent(nodeId, tileId, 1, true);
+  assert.equal(records.length, 2);
+  assert.notEqual(disk.nodes[0].task.sentAt, previous.sentAt);
+  assert.deepEqual(editor.state.document.nodes[0].task, disk.nodes[0].task);
+});
+
+test("task recording retry reconciles concurrent changes before attempting a write", async (t) => {
+  for (const change of ["none", "done", "assignee", "text", "unmarked"])
+    await t.test(change, async (t) => {
+      const { editor, disk, tileId, records } = await taskSendSetup(t);
+      if (change === "unmarked") disk.nodes[0].task = null;
+      else if (change !== "none") {
+        disk.nodes[0].task.revision++;
+        if (change === "done") disk.nodes[0].task.done = true;
+        if (change === "assignee") disk.nodes[0].task.assignedTileId = null;
+        if (change === "text") disk.artifacts[0].revision++;
+      }
+      if (change === "none" || change === "done") {
+        await editor.recordSent(nodeId, tileId, 1, true);
+        assert.equal(disk.nodes[0].task.done, change === "done");
+        assert.equal(disk.nodes[0].task.sentRevision, 1);
+      } else {
+        await assert.rejects(
+          editor.recordSent(nodeId, tileId, 1, true),
+          /CONFLICT|no longer a task/,
+        );
+        assert.equal(disk.nodes[0].task?.sentAt ?? null, null);
+      }
+      if (records.length)
+        assert.equal(records[0].expectedRevision, change === "none" ? 2 : 3);
+      assert.deepEqual(editor.state.document.nodes[0].task, disk.nodes[0].task);
+    });
+});
+
+test("task recording retry does not write when reconciliation fails", async (t) => {
+  const { editor, records } = await taskSendSetup(t);
+  const call = editor.call;
+  editor.call = async (...args) => {
+    if (args[2] === "canvas.open") throw new TypeError("Read failed");
+    return call(...args);
+  };
+  await assert.rejects(
+    editor.recordSent(nodeId, "tile", 1, true),
+    /Read failed/,
+  );
+  assert.equal(records.length, 0);
+});
 
 function deferred() {
   let resolve;

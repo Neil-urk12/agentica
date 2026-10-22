@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Handle, NodeResizer, Position } from "@xyflow/svelte";
-  import { LIMITS } from "@agentica/protocol";
+  import { LIMITS, type Task } from "@agentica/protocol";
   import { turnStatus } from "../canvas-view";
   import Icon from "./Icon.svelte";
   import Markdown from "./Markdown.svelte";
@@ -20,6 +20,22 @@
       onResize?: (width: number, height: number) => void;
       onRetry?: () => void;
       onRead?: () => void;
+      /** Present on plain text nodes that can be tasks; all labels are factual. */
+      task?: {
+        task: Task | null;
+        assignees: { id: string; label: string }[];
+        sent: string;
+        edited: boolean;
+        attention: string;
+        blocker: string;
+        busy: boolean;
+        error: string;
+        onMark: (enabled: boolean) => void;
+        onDone: (done: boolean) => void;
+        onAssign: (tileId: string | null) => void;
+        onSend: () => void;
+        onRetry?: () => void;
+      };
     };
   }
   let { data, selected = false }: Props = $props();
@@ -184,6 +200,96 @@
       onkeydown={(event) => event.stopPropagation()}
       onclick={data.onRetry}>Retry request</button
     >
+  {/if}
+  {#if data.task && !data.preview}
+    {@const t = data.task}
+    {#if t.task}
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <div
+        class="task-bar nodrag"
+        role="group"
+        aria-label="Task"
+        onkeydown={(event) => event.stopPropagation()}
+      >
+        <label class="task-done">
+          <input
+            type="checkbox"
+            checked={t.task.done}
+            disabled={t.busy || !data.editable}
+            onchange={(event) => t.onDone(event.currentTarget.checked)}
+          />
+          Done
+        </label>
+        <select
+          class="task-assignee"
+          aria-label="Assigned Codex tile"
+          value={t.task.assignedTileId ?? ""}
+          disabled={t.busy || !data.editable}
+          onchange={(event) => t.onAssign(event.currentTarget.value || null)}
+        >
+          <option value="">Unassigned</option>
+          {#each t.assignees as assignee (assignee.id)}
+            <option value={assignee.id}>{assignee.label}</option>
+          {/each}
+        </select>
+        <button
+          class="btn btn--soft task-send"
+          type="button"
+          disabled={!!t.blocker || t.busy || !data.editable}
+          title={t.blocker ||
+            "Preview the text, then paste it without pressing Enter"}
+          onclick={t.onSend}><Icon name="send" size={14} /> Send</button
+        >
+        <button
+          class="card-action"
+          type="button"
+          title="Stop tracking as a task (keeps the text)"
+          aria-label="Remove task"
+          disabled={t.busy || !data.editable}
+          onclick={() => t.onMark(false)}
+          ><Icon name="close" size={14} /></button
+        >
+      </div>
+      {#if t.sent || t.edited || (t.blocker && t.task.assignedTileId)}
+        <p class="task-status" role="status">
+          {[
+            t.sent,
+            t.edited ? "Edited since sent" : "",
+            t.task.assignedTileId ? t.blocker : "",
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </p>
+      {/if}
+      {#if t.attention}
+        <p class="task-attention" role="status">
+          <Icon name="notifications" size={14} />{t.attention}
+        </p>
+      {/if}
+    {:else if selected && data.editable}
+      <button
+        class="btn btn--soft task-mark nodrag"
+        type="button"
+        disabled={t.busy}
+        onkeydown={(event) => event.stopPropagation()}
+        onclick={() => t.onMark(true)}
+        ><Icon name="task_alt" size={14} /> Make task</button
+      >
+    {/if}
+    {#if t.error}
+      <p class="card-error" role="alert">
+        {t.error}
+        {#if t.onRetry}
+          <button
+            class="btn btn--soft nodrag"
+            type="button"
+            disabled={t.busy}
+            onkeydown={(event) => event.stopPropagation()}
+            onclick={t.onRetry}>Retry recording</button
+          >
+        {/if}
+      </p>
+    {/if}
   {/if}
   <Handle type="source" position={Position.Bottom} />
 </div>

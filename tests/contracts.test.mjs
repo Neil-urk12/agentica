@@ -187,6 +187,101 @@ test("session controls enforce ownership shape and payload, cursor and dimension
     );
 });
 
+test("task requests, results and the guarded paste are strict", () => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const ref = { workspaceId: id, canvasId: id, nodeId: id };
+  const request = (method, params) =>
+    RuntimeRequestSchema.safeParse({
+      protocolVersion: 1,
+      id: "t",
+      method,
+      params,
+    }).success;
+  assert.equal(request("task.set", { ...ref, enabled: true }), true);
+  assert.equal(
+    request("task.update", {
+      ...ref,
+      expectedRevision: 1,
+      assignedTileId: null,
+    }),
+    true,
+  );
+  assert.equal(
+    request("task.update", { ...ref, expectedRevision: 1, done: true }),
+    true,
+  );
+  assert.equal(
+    request("task.recordSent", {
+      ...ref,
+      expectedRevision: 1,
+      tileId: id,
+      textRevision: 3,
+    }),
+    true,
+  );
+  for (const [method, params] of [
+    ["task.set", { ...ref }],
+    ["task.update", { ...ref, expectedRevision: 1 }],
+    ["task.update", { ...ref, expectedRevision: 0, done: true }],
+    ["task.update", { ...ref, expectedRevision: 1, assignedTileId: "codex" }],
+    ["task.update", { ...ref, expectedRevision: 1, done: true, sentAt: "now" }],
+    ["task.recordSent", { ...ref, expectedRevision: 1, tileId: id }],
+  ])
+    assert.equal(
+      request(method, params),
+      false,
+      `${method} ${JSON.stringify(params)}`,
+    );
+  const task = {
+    done: false,
+    assignedTileId: id,
+    sentAt: null,
+    sentRevision: null,
+    revision: 1,
+  };
+  assert.equal(ResultSchemas["task.update"].safeParse({ task }).success, true);
+  assert.equal(
+    ResultSchemas["task.set"].safeParse({ task: null }).success,
+    true,
+  );
+  assert.equal(
+    ResultSchemas["task.update"].safeParse({
+      task: { ...task, sentAt: "2026-01-01T00:00:00.000Z" },
+    }).success,
+    false,
+  );
+  // Agent context nodes stay task-free.
+  const node = { id, artifactId: id, x: 0, y: 0, width: 100, height: 100 };
+  assert.equal(
+    ResultSchemas["conversation.read"].safeParse({
+      nodes: [{ ...node, task }],
+      edges: [],
+      artifacts: [],
+      remaining: { reads: 1, bytes: 1 },
+    }).success,
+    false,
+  );
+  const paste = {
+    op: "paste",
+    owner: { workspaceId: id, canvasId: id, tileId: id },
+    sessionId: id,
+    attachmentId: id,
+    text: "Do it",
+  };
+  for (const command of [paste, { ...paste, refuseIfAttention: true }])
+    assert.equal(
+      SessionRequestSchema.safeParse({ id: "p", command }).success,
+      true,
+    );
+  assert.equal(
+    SessionRequestSchema.safeParse({
+      id: "p",
+      command: { ...paste, refuseIfAttention: "yes" },
+    }).success,
+    false,
+  );
+});
+
 test("project collections validate explicit membership, geometry and saved presets", () => {
   const canvasId = "00000000-0000-4000-8000-000000000001";
   const projectId = "00000000-0000-4000-8000-000000000002";

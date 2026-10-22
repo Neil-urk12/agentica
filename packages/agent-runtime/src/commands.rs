@@ -16,6 +16,8 @@ mod conversation;
 mod projects;
 #[path = "review.rs"]
 mod review;
+#[path = "tasks.rs"]
+mod tasks;
 
 // Limits shared with packages/protocol/src/index.ts.
 const MAX_LABEL: usize = 120;
@@ -65,6 +67,9 @@ pub(crate) const METHODS: &[&str] = &[
     "project.deleteTile",
     "project.locate",
     "project.createTile",
+    "task.set",
+    "task.update",
+    "task.recordSent",
 ];
 
 pub(crate) fn invalid(message: impl Into<String>) -> RuntimeError {
@@ -448,6 +453,14 @@ impl Runtime {
                     .to_owned();
                 self.transact(&workspace_id, |tx| projects::call(tx, method, params))
             }
+            "task.set" | "task.update" | "task.recordSent" => {
+                let workspace_id = params
+                    .get("workspaceId")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| invalid("workspaceId is required."))?
+                    .to_owned();
+                self.transact(&workspace_id, |tx| tasks::call(tx, method, params))
+            }
             "conversation.start"
             | "conversation.finish"
             | "conversation.resolve"
@@ -589,7 +602,7 @@ impl Runtime {
                 let params: OpenCanvas = parse(params)?;
                 id("canvasId", &params.canvas_id)?;
                 self.transact(&params.workspace_id, |tx| {
-                    canvas_state(tx, &params.canvas_id)
+                    tasks::with_tasks(tx, canvas_state(tx, &params.canvas_id)?)
                 })
             }
             "canvas.delete" => {

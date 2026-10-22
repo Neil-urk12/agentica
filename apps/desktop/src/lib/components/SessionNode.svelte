@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { NodeResizeControl } from "@xyflow/svelte";
+  import { Handle, NodeResizeControl, Position } from "@xyflow/svelte";
   import type {
     ProjectGroup,
     SessionOwner,
@@ -85,6 +85,13 @@
   class:failed
   aria-label={`${title} in ${data.group.label}`}
 >
+  <!-- End point for derived task wires; never user-connectable. -->
+  <Handle
+    type="target"
+    position={Position.Left}
+    isConnectable={false}
+    class="task-anchor"
+  />
   <header
     class="session-drag"
     data-terminal-controls

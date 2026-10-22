@@ -12,6 +12,16 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-22
 
+- Task recording retries reconcile persisted task metadata before writing. A lost
+  reply after commit now adopts the recorded send without another write or paste;
+  concurrent task changes use the current revision while unsaved text and layout
+  stay intact. A retry adopts a recorded send only when its `sentAt` differs
+  from the one the failed attempt started from, so resending unchanged text
+  never mistakes the previous send's matching revision for the latest one.
+  Every attempt now reconciles first, not only retries: an attempt could start
+  behind the persisted stamp when a previous reply was lost, and its retry then
+  adopted that earlier send without recording the new one.
+
 - Reap orphaned Linux session jobs when the backend runs as PID 1. A single
   PID-1 reaper collects jobs and escaped processes that reparented to the
   backend, without touching live launchers whose exit status cleanup still
@@ -21,6 +31,45 @@ released version and date. Keep validation evidence in the
   `unshare -Urpf --mount-proc`. A process that exits while its `/proc` stat is
   read counts as gone instead of failing the scan or session cleanup.
 
+- Fixed closing dialogs blocking the app for the length of their fade-out.
+  `Modal` closed its `<dialog>` and restored focus only on unmount, after the
+  180–260 ms outro. Until then the page stayed inert, so a click right after
+  choosing a canvas hit `<html>` and was dropped, and focus restored late could
+  land on a node control that swallows keyboard shortcuts. The dialog now
+  releases modality and restores focus when the outro starts, fades out as an
+  inert, non-interactive overlay, and becomes modal again if reopened mid-fade.
+  This was the cause of the intermittent "drawing labels, connections and
+  inspector text edits" browser test failure, together with a test race:
+  `boxOf`/`boxByText` measured targets mid-transition (a dialog's Close button
+  18 px below its resting place during the `fly` intro), so clicks missed. They
+  now wait until no running animation covers the target and its rect is stable.
+  Verified with 12 consecutive passes.
+- Added canvas tasks: a text note can be marked as a task with a user-owned done
+  state, assigned to one Codex tile on the same canvas, and sent to it explicitly.
+  - Storage v9 adds `text_task`, keyed by artifact so node and canvas deletion
+    clean it up through existing artifact deletes; `ON DELETE SET NULL` on the tile
+    clears the assignee when a tile or project is removed. Tasks have their own
+    revision, so toggling done never bumps the text revision and "Edited since
+    sent" is exactly `text revision > sent revision`.
+  - New `task.set`, `task.update`, and `task.recordSent` RPCs. Assignees must be
+    `cli-agent` tiles on the same canvas; changing the assignee clears the sent
+    record; `recordSent` only accepts the current assignee and current text
+    revision and stamps backend time. Only `canvas.open` carries task state, so
+    canvas agent reads and proposals never see it.
+  - Session `paste` gains `refuseIfAttention`. The supervisor checks the
+    attention latch under the same session lock that queues the bytes and returns
+    `ATTENTION_RAISED` without writing, so a prompt that appeared after the user
+    last looked cannot be answered by a send. A frontend-only check would race.
+    Changes review paste is unchanged.
+  - The send flow is preview → guarded paste → record → focus the terminal. It
+    records only after a successful paste, so a failure reads "sent but not
+    recorded" with retry, never a false "sent". The preview closes if the text or
+    assignee changes while open.
+  - The desktop session command now returns `{ code, message }` errors so both
+    launch modes can tell an attention refusal apart from other failures.
+  - The task-to-tile line is derived from task state rather than stored as a
+    canvas edge, which would have changed edge foreign keys, deletes, proposals,
+    and agent reads for a line with one fixed meaning.
 - Added native git pre-commit hooks via `.githooks/pre-commit` and configured
   `core.hooksPath` via `pnpm prepare`. Hooks execute fast checks (`oxfmt`,
   `oxlint`, and `cargo fmt`) to catch formatting and lint errors before commit.

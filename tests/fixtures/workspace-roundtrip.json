@@ -541,6 +541,89 @@
       "error": "INVALID_PARAMS"
     },
     {
+      "method": "task.set",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "nodeId": "$firstNode",
+        "enabled": true
+      },
+      "expect": {
+        "task": {
+          "done": false,
+          "assignedTileId": null,
+          "sentAt": null,
+          "sentRevision": null,
+          "revision": 1
+        }
+      }
+    },
+    {
+      "method": "task.set",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "nodeId": "$drawingNode",
+        "enabled": true
+      },
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "task.update",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "nodeId": "$firstNode",
+        "expectedRevision": 1
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "task.update",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "nodeId": "$firstNode",
+        "expectedRevision": 1,
+        "assignedTileId": "00000000-0000-4000-8000-0000000000ff"
+      },
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "task.update",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "nodeId": "$firstNode",
+        "expectedRevision": 1,
+        "done": true
+      },
+      "expect": { "task": { "done": true, "revision": 2 } }
+    },
+    {
+      "method": "task.update",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "nodeId": "$firstNode",
+        "expectedRevision": 1,
+        "done": false
+      },
+      "error": "CONFLICT"
+    },
+    {
+      "method": "task.recordSent",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "nodeId": "$firstNode",
+        "expectedRevision": 2,
+        "tileId": "00000000-0000-4000-8000-0000000000ff",
+        "textRevision": 2
+      },
+      "error": "CONFLICT"
+    },
+    {
       "method": "workspace.create",
       "params": { "name": "\u0085" },
       "save": { "otherWorkspace": "/workspace/id" },
@@ -603,7 +686,14 @@
             "x": 320,
             "y": -40,
             "width": 300,
-            "height": 200
+            "height": 200,
+            "task": {
+              "done": true,
+              "assignedTileId": null,
+              "sentAt": null,
+              "sentRevision": null,
+              "revision": 2
+            }
           },
           {
             "id": "$secondNode",
@@ -611,7 +701,8 @@
             "x": -50.5,
             "y": 400,
             "width": 200,
-            "height": 120
+            "height": 120,
+            "task": null
           },
           {
             "id": "$drawingNode",
@@ -619,7 +710,8 @@
             "x": 100,
             "y": 200,
             "width": 120,
-            "height": 80
+            "height": 80,
+            "task": null
           }
         ],
         "edges": [

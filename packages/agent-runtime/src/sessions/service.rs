@@ -207,6 +207,7 @@ impl SessionService {
                 session_id,
                 attachment_id,
                 text,
+                refuse_if_attention,
             } => {
                 if super::paste::sanitize(&text).is_empty() {
                     return Err(RuntimeError::new(
@@ -215,11 +216,12 @@ impl SessionService {
                     ));
                 }
                 // Same controller, Running, and bounded-queue checks as typed input.
-                supervisor.input(
+                supervisor.write(
                     &owner,
                     &session_id,
                     &attachment_id,
                     super::paste::bracketed(&text),
+                    refuse_if_attention,
                 )?;
                 Ok(json!({}))
             }

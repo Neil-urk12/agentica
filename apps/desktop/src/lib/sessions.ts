@@ -548,8 +548,13 @@ export class SessionManager {
       .filter((target) => target.ready);
   }
 
-  /** Paste text into a running session through its existing attachment. */
-  async paste(owner: SessionOwner, text: string) {
+  /** Paste text into a running session through its existing attachment.
+   * `refuseIfAttention` makes the backend refuse with `ATTENTION_RAISED`. */
+  async paste(
+    owner: SessionOwner,
+    text: string,
+    options: { refuseIfAttention?: boolean } = {},
+  ) {
     const entry = this.entries.get(key(owner));
     const attachment = entry?.attachment;
     if (
@@ -562,7 +567,9 @@ export class SessionManager {
         "This Codex session is not running. Start it, then retry.",
       );
     // Queue behind typed input so the paste never interleaves with it.
-    const run = entry.input.then(() => attachment.paste(text));
+    const run = entry.input.then(() =>
+      attachment.paste(text, options.refuseIfAttention),
+    );
     entry.input = run.catch(() => {});
     await run;
   }

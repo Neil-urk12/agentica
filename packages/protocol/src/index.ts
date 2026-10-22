@@ -575,6 +575,32 @@ const ParamSchemas = {
     expectedRevision: Revision,
     nodeId: IdSchema,
   }),
+  "task.set": z.strictObject({
+    ...CanvasRef,
+    nodeId: IdSchema,
+    enabled: z.boolean(),
+  }),
+  "task.update": z
+    .strictObject({
+      ...CanvasRef,
+      nodeId: IdSchema,
+      expectedRevision: Revision,
+      done: z.boolean().optional(),
+      // null clears the assignee.
+      assignedTileId: IdSchema.nullable().optional(),
+    })
+    .refine(
+      (update) =>
+        update.done !== undefined || update.assignedTileId !== undefined,
+      "Change done or assignedTileId",
+    ),
+  "task.recordSent": z.strictObject({
+    ...CanvasRef,
+    nodeId: IdSchema,
+    expectedRevision: Revision,
+    tileId: IdSchema,
+    textRevision: Revision,
+  }),
 } as const;
 
 export type RuntimeMethod = "runtime.ping" | keyof typeof ParamSchemas;
@@ -632,6 +658,25 @@ export const NodeSchema = z.strictObject({
   width: z.number(),
   height: z.number(),
 });
+/** User-owned task state; only `canvas.open` carries it, never agent reads. */
+export const TaskSchema = z
+  .strictObject({
+    done: z.boolean(),
+    assignedTileId: IdSchema.nullable(),
+    sentAt: z.string().nullable(),
+    sentRevision: Revision.nullable(),
+    revision: Revision,
+  })
+  .refine(
+    (task) => (task.sentAt === null) === (task.sentRevision === null),
+    "sentAt and sentRevision are set together",
+  );
+export type Task = z.infer<typeof TaskSchema>;
+export const CanvasNodeSchema = NodeSchema.extend({
+  // Always sent by canvas.open; absent on nodes created locally before a reload.
+  task: TaskSchema.nullable().optional(),
+});
+export type CanvasNode = z.infer<typeof CanvasNodeSchema>;
 export const EdgeSchema = z.strictObject({
   id: IdSchema,
   kind: z.literal("relationship"),
@@ -723,7 +768,7 @@ export const ResultSchemas = {
           zoom: z.number(),
         }),
       }),
-      nodes: z.array(NodeSchema),
+      nodes: z.array(CanvasNodeSchema),
       edges: z.array(EdgeSchema),
       artifacts: z.array(ArtifactSchema),
       projectGroups: z.array(ProjectGroupSchema).default([]),
@@ -778,6 +823,9 @@ export const ResultSchemas = {
     artifact: DrawingArtifactSchema,
   }),
   "node.delete": z.strictObject({ revision: Revision }),
+  "task.set": z.strictObject({ task: TaskSchema.nullable() }),
+  "task.update": z.strictObject({ task: TaskSchema }),
+  "task.recordSent": z.strictObject({ task: TaskSchema }),
 } as const satisfies Record<RuntimeMethod, z.ZodType>;
 
 export type RuntimeResult<M extends RuntimeMethod> = z.infer<
@@ -800,6 +848,7 @@ export const ErrorCodeSchema = z.enum([
   "BACKPRESSURE",
   "INVALID_EVENT_ORDER",
   "BUDGET_EXCEEDED",
+  "ATTENTION_RAISED",
 ]);
 
 export const SESSION_LIMITS = {
@@ -862,6 +911,8 @@ export const SessionCommandSchema = z.discriminatedUnion("op", [
           SESSION_LIMITS.frameBytes - 12,
         "Paste text must fit one 16 KiB terminal frame",
       ),
+    // Refuse with ATTENTION_RAISED instead of writing while attention is raised.
+    refuseIfAttention: z.boolean().optional(),
   }),
   z.strictObject({
     op: z.literal("resize"),

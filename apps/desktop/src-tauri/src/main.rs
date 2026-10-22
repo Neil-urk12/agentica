@@ -99,7 +99,7 @@ async fn session_request(
     request: serde_json::Value,
     window: tauri::WebviewWindow,
     state: tauri::State<'_, BackendState>,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, serde_json::Value> {
     if window.label() != "main" {
         return Err("Session access is limited to the local main window.".into());
     }
@@ -125,9 +125,10 @@ async fn session_request(
             SessionCommand::Detach { attachment_id, .. } => Some(attachment_id.clone()),
             _ => None,
         };
+        // Keep the stable code so the UI can tell refusals (e.g. ATTENTION_RAISED) apart.
         let response = sessions
             .execute(request.command)
-            .map_err(|error| error.to_string());
+            .map_err(|error| serde_json::json!({ "code": error.code, "message": error.message }));
         if let Some(id) = detached {
             if let Ok(mut attachments) = attachments.lock() {
                 attachments.remove(&id);

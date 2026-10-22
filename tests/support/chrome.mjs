@@ -228,30 +228,40 @@ export async function waitFor(page, expression, label, timeout = 20_000) {
   }
 }
 
-/** Center and size of the first element matching a selector, or null. */
-export async function boxOf(page, selector) {
-  return evaluate(
+// Measure only once the element has settled, so a click never lands where an
+// entering dialog or panel was mid-transition: no running or pending animation
+// on it or an ancestor, and an unchanged rect (up to 2 s, then the last rect).
+const stableBox = (page, find) =>
+  evaluate(
     page,
-    `(() => {
-      const el = document.querySelector(${JSON.stringify(selector)});
+    `(async () => {
+      const el = ${find};
       if (!el) return null;
-      const r = el.getBoundingClientRect();
+      const frame = () => new Promise((resolve) => { requestAnimationFrame(resolve); setTimeout(resolve, 50); });
+      const moving = () => document.getAnimations().some((a) =>
+        a.playState !== "finished" && a.playState !== "idle" && a.effect?.target?.contains?.(el) && Number.isFinite(a.effect.getComputedTiming().endTime));
+      let r = el.getBoundingClientRect();
+      for (let still = 0, start = performance.now(); still < 2 && performance.now() - start < 2000; ) {
+        await frame();
+        const next = el.getBoundingClientRect();
+        still = !moving() && next.x === r.x && next.y === r.y && next.width === r.width && next.height === r.height ? still + 1 : 0;
+        r = next;
+      }
       return { x: r.left + r.width / 2, y: r.top + r.height / 2, width: r.width, height: r.height };
     })()`,
   );
+
+/** Center and size of the first element matching a selector, or null. */
+export async function boxOf(page, selector) {
+  return stableBox(page, `document.querySelector(${JSON.stringify(selector)})`);
 }
 
 /** Center of the element whose text contains `text`, or null. */
 export async function boxByText(page, selector, text) {
-  return evaluate(
+  return stableBox(
     page,
-    `(() => {
-      const el = [...document.querySelectorAll(${JSON.stringify(selector)})]
-        .find((node) => node.textContent.includes(${JSON.stringify(text)}));
-      if (!el) return null;
-      const r = el.getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2, width: r.width, height: r.height };
-    })()`,
+    `[...document.querySelectorAll(${JSON.stringify(selector)})]
+      .find((node) => node.textContent.includes(${JSON.stringify(text)}))`,
   );
 }
 

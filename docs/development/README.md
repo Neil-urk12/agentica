@@ -116,6 +116,19 @@ create/edit/reopen sequence. For example:
 Mutations name an `expectedRevision` and fail with `CONFLICT` on stale state.
 Errors for a valid envelope carry the request id.
 
+Changes review feedback is stored per Changes tile (schema v7) and is read and
+written one record at a time with `changes.review.load` and
+`changes.review.save`. Validated on Linux (Fedora 44) in browser mode with the
+bundled backend and headless Chrome by `tests/http.test.mjs` ("review feedback
+survives browser reload and backend restart…"). The test covers hunk and file
+comments plus unfinished composer text across a reload, then a backend restart
+with a changed hunk (marked Outdated, original range kept, and labelled in the
+preview), and Sent restoration in both layouts. Sent is seeded
+through RPC because that test has no Codex. Unverified anchors, save failures,
+conflicts, and close/removal guards are covered by state tests in
+`tests/changes.test.mjs`. Desktop restart and close-time flush in the Tauri app
+are not yet validated.
+
 To build the detached distribution, run `pnpm build:backend`, equivalent to:
 
 ```sh

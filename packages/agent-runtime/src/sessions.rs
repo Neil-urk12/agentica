@@ -433,6 +433,19 @@ impl SessionSupervisor {
         attachment: &str,
         bytes: Vec<u8>,
     ) -> Result<(), RuntimeError> {
+        self.write(owner, session_id, attachment, bytes, false)
+    }
+
+    /// Queue input; with `refuse_if_attention`, raised attention refuses it under the
+    /// same session lock that enqueues the bytes, so a recorded signal cannot be raced.
+    pub fn write(
+        &self,
+        owner: &SessionOwner,
+        session_id: &str,
+        attachment: &str,
+        bytes: Vec<u8>,
+        refuse_if_attention: bool,
+    ) -> Result<(), RuntimeError> {
         if bytes.is_empty() || bytes.len() > MAX_SESSION_FRAME_BYTES {
             return Err(RuntimeError::new(
                 "INVALID_PARAMS",
@@ -442,6 +455,9 @@ impl SessionSupervisor {
         self.with_session(owner, session_id, |session| {
             session.output.controller(attachment)?;
             if session.status.state != ProcessState::Running { return Err(RuntimeError::new("CONFLICT", "The process is not running.")); }
+            if refuse_if_attention && session.status.attention.raised {
+                return Err(RuntimeError::new("ATTENTION_RAISED", "This session needs attention. Look at its terminal first; nothing was pasted."));
+            }
             session.process.as_ref().ok_or_else(unavailable)?.input.try_send(bytes)
                 .map_err(|_| RuntimeError::new("BACKPRESSURE", "Terminal input is backpressured or closed. Input was not queued; do not replay it automatically."))
         })
@@ -649,6 +665,73 @@ mod tests {
             supervisor.status(&owner).unwrap().unwrap().state,
             ProcessState::Starting
         );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn guarded_paste_refuses_while_attention_is_raised() {
+        let root = tempfile::tempdir().unwrap();
+        let supervisor = Active(SessionSupervisor::new().unwrap());
+        let spec = shell(root.path());
+        let id = supervisor
+            .0
+            .start(spec.clone(), "start", 24, 80)
+            .unwrap()
+            .session_id;
+        let attachment = supervisor.0.attach(&spec.owner, &id, 0).unwrap();
+        running(&supervisor.0, &spec.owner);
+        supervisor
+            .0
+            .with_session(&spec.owner, &id, |session| session.push(b"\x07"))
+            .unwrap();
+        let raised = supervisor.0.status(&spec.owner).unwrap().unwrap().attention;
+        assert!(raised.raised);
+        let error = supervisor
+            .0
+            .write(
+                &spec.owner,
+                &id,
+                &attachment,
+                b"echo guarded\r".to_vec(),
+                true,
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "ATTENTION_RAISED");
+        // Unguarded input is unchanged while attention is raised.
+        supervisor
+            .0
+            .input(&spec.owner, &id, &attachment, b"echo plain-ok\r".to_vec())
+            .unwrap();
+        receive(
+            &supervisor.0,
+            &spec.owner,
+            &id,
+            &attachment,
+            b"plain-ok\r\n",
+        );
+        supervisor
+            .0
+            .clear_attention(&spec.owner, &id, raised.sequence)
+            .unwrap();
+        supervisor
+            .0
+            .write(
+                &spec.owner,
+                &id,
+                &attachment,
+                b"echo guarded-ok\r".to_vec(),
+                true,
+            )
+            .unwrap();
+        let output = receive(
+            &supervisor.0,
+            &spec.owner,
+            &id,
+            &attachment,
+            b"guarded-ok\r\n",
+        );
+        // The refused command never reached the shell, so it never printed.
+        assert!(!output.windows(10).any(|window| window == b"\nguarded\r\n"));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import {
+  ErrorCodeSchema,
   SESSION_LIMITS,
   SessionRequestSchema,
   SessionReplySchema,
@@ -10,13 +11,19 @@ import {
   type SessionOwner,
   type SessionResult,
 } from "@agentica/protocol";
-import { desktopMode } from "./runtime";
+import { desktopMode, RuntimeCallError } from "./runtime";
+
+const sessionCode = (error: object) => {
+  const code = ErrorCodeSchema.safeParse("code" in error ? error.code : null);
+  return code.success ? code.data : undefined;
+};
 
 export interface SessionAttachment {
   id: string;
   input(bytes: Uint8Array): Promise<void>;
-  /** Bracketed paste; the backend never appends Enter. */
-  paste(text: string): Promise<void>;
+  /** Bracketed paste; the backend never appends Enter. With `refuseIfAttention`,
+   * raised attention rejects it with `ATTENTION_RAISED` and nothing is written. */
+  paste(text: string, refuseIfAttention?: boolean): Promise<void>;
   resize(rows: number, cols: number, redraw?: boolean): Promise<void>;
   acknowledge(sequence: number): Promise<void>;
   detach(): Promise<void>;
@@ -102,7 +109,12 @@ class Client implements SessionClient {
         if (pending) {
           this.pending.delete(response.data.id);
           if ("error" in response.data)
-            pending.reject(new Error(response.data.error.message));
+            pending.reject(
+              new RuntimeCallError(
+                response.data.error.message,
+                response.data.error.code,
+              ),
+            );
           else pending.resolve(response.data.result);
         }
       };
@@ -138,7 +150,12 @@ class Client implements SessionClient {
     if (new TextEncoder().encode(body).length > SESSION_LIMITS.wireBytes)
       throw new Error("The session payload is too large.");
     let value: unknown;
-    if (desktopMode) value = await invoke("session_request", { request });
+    if (desktopMode)
+      value = await invoke("session_request", { request }).catch((error) => {
+        throw typeof error === "object" && error && "message" in error
+          ? new RuntimeCallError(String(error.message), sessionCode(error))
+          : new Error(String(error));
+      });
     else {
       await this.connect();
       if (this.pending.size >= 32)
@@ -216,8 +233,13 @@ class Client implements SessionClient {
           bytes: Array.from(bytes),
         });
       },
-      paste: async (text) => {
-        await this.request({ op: "paste", ...reference, text });
+      paste: async (text, refuseIfAttention) => {
+        await this.request({
+          op: "paste",
+          ...reference,
+          text,
+          ...(refuseIfAttention ? { refuseIfAttention } : {}),
+        });
       },
       resize: async (rows, cols, redraw = false) => {
         await this.request({ op: "resize", ...reference, rows, cols, redraw });

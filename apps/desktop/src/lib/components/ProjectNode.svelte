@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { NodeResizeControl } from "@xyflow/svelte";
+  import { Handle, NodeResizeControl, Position } from "@xyflow/svelte";
   import type { ProjectGroup } from "@agentica/protocol";
   import Icon from "./Icon.svelte";
   import { projectStatusItems, type ProjectCounts } from "../canvas-view";
@@ -131,6 +131,13 @@
   class:collapsed={data.group.collapsed}
   aria-label={`Project ${data.group.label}`}
 >
+  <!-- Task wires end here while the project is collapsed. -->
+  <Handle
+    type="target"
+    position={Position.Left}
+    isConnectable={false}
+    class="task-anchor"
+  />
   <div class="project-frame"></div>
   <header class="project-drag">
     <div class="legend">

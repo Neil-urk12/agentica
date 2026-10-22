@@ -199,7 +199,7 @@ fn v6_upgrade_preserves_changes_tiles_and_migration_failure_rolls_back() {
         .join(scope["workspaceId"].as_str().unwrap())
         .join("workspace.sqlite3");
     let mut conn = rusqlite::Connection::open(&path).unwrap();
-    conn.execute_batch("DROP TABLE conversation_read; DROP TABLE review_record; ALTER TABLE changes_tile DROP COLUMN review_revision; PRAGMA user_version=6;").unwrap();
+    conn.execute_batch("DROP TABLE text_task; DROP TABLE conversation_read; DROP TABLE review_record; ALTER TABLE changes_tile DROP COLUMN review_revision; PRAGMA user_version=6;").unwrap();
     let tx = conn.transaction().unwrap();
     tx.execute_batch(include_str!("../src/schema_v7.sql"))
         .unwrap();

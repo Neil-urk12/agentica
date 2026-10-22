@@ -51,6 +51,9 @@ pub enum SessionCommand {
         session_id: String,
         attachment_id: String,
         text: String,
+        /// Refuse with `ATTENTION_RAISED` instead of writing while attention is raised.
+        #[serde(default)]
+        refuse_if_attention: bool,
     },
     Resize {
         owner: SessionOwner,

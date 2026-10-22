@@ -23,6 +23,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("schema_v6.sql"),
     include_str!("schema_v7.sql"),
     include_str!("schema_v8.sql"),
+    include_str!("schema_v9.sql"),
 ];
 pub const STORAGE_VERSION: i64 = MIGRATIONS.len() as i64;
 
@@ -765,6 +766,47 @@ mod tests {
             )
             .unwrap();
         }
+    }
+
+    #[test]
+    fn v8_upgrade_keeps_text_and_starts_without_tasks() {
+        let temp = tempfile::tempdir().unwrap();
+        let id = new_id().unwrap();
+        let dir = workspaces_dir(Some(temp.path())).unwrap().join(&id);
+        fs::create_dir(&dir).unwrap();
+        let mut conn = connect(&dir.join(DATABASE_FILE), true).unwrap();
+        let tx = conn.transaction().unwrap();
+        migrate(&tx, 0, &MIGRATIONS[..8]).unwrap();
+        tx.execute(
+            "INSERT INTO workspace (id, name) VALUES (?1, 'Legacy')",
+            [&id],
+        )
+        .unwrap();
+        tx.execute_batch(
+            "INSERT INTO canvas VALUES ('c', 'Plan', 3, 0, 0, 1);
+             INSERT INTO text_content (id, body, purpose) VALUES ('t', 'Keep me', 'instruction');
+             INSERT INTO artifact VALUES ('a', 'text', 1, 5, 'sqlite', 't');
+             INSERT INTO canvas_node VALUES ('n', 'c', 'artifact', 'a', 0, 0, 100, 100);",
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        drop(conn);
+        let upgraded = Workspace::open(Some(temp.path()), &id).unwrap();
+        assert_eq!(header(&upgraded.conn).unwrap(), (APPLICATION_ID, 9));
+        let kept: (String, i64) = upgraded
+            .conn
+            .query_row(
+                "SELECT body, revision FROM text_content JOIN artifact ON content_id = text_content.id",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(kept, ("Keep me".into(), 5));
+        let tasks: i64 = upgraded
+            .conn
+            .query_row("SELECT count(*) FROM text_task", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(tasks, 0);
     }
 
     #[test]

@@ -8,6 +8,7 @@ import {
   PROJECT_PADDING,
   type ProjectGroup,
   type SessionTile,
+  type Task,
 } from "@agentica/protocol";
 import type { callRuntime } from "./runtime";
 
@@ -95,6 +96,8 @@ export class Editor {
     revision: number;
   } | null = null;
   private nodeIds = new Map<string, string>();
+  /** The `sentAt` each node's latest send attempt started from. */
+  private sendAttempts = new Map<string, string | null>();
   private savedLayout = "";
   private attemptedLayout = "";
   private savedProjectMetadata = "";
@@ -862,7 +865,11 @@ export class Editor {
       this.publish({
         document: {
           ...document,
-          nodes: [...document.nodes, ...additions.map((item) => item.node)],
+          // canvas.open always reports `task`; match it so reloads compare equal.
+          nodes: [
+            ...document.nodes,
+            ...additions.map((item) => ({ ...item.node, task: null })),
+          ],
           artifacts: [
             ...document.artifacts,
             ...additions.map((item) => item.artifact),
@@ -986,6 +993,132 @@ export class Editor {
           canvas: { ...document.canvas, revision: result.revision },
           edges: [...document.edges, result.edge],
         });
+      });
+    });
+  }
+
+  /** The saved text and revision a task send will paste, after flushing edits. */
+  async settledText(nodeId: string) {
+    await this.enqueue(() => this.settleSave());
+    const document = this.state.document;
+    const id = this.nodeIds.get(nodeId) ?? nodeId;
+    const node = document?.nodes.find((item) => item.id === id);
+    const artifact = document?.artifacts.find((a) => a.id === node?.artifactId);
+    if (
+      artifact?.type !== "text" ||
+      content(artifact) !== this.savedArtifacts.get(artifact.id)
+    )
+      throw new Error(
+        "The text has unsaved changes. Wait for it to save, then retry.",
+      );
+    return { text: artifact.text, revision: artifact.revision };
+  }
+
+  /** Mark or unmark a text node as a task. Task calls throw so callers report them in place. */
+  async setTask(nodeId: string, enabled: boolean) {
+    await this.taskCall(
+      nodeId,
+      async (scope) =>
+        (await this.call(this.key(), false, "task.set", { ...scope, enabled }))
+          .task,
+    );
+  }
+
+  async updateTask(
+    nodeId: string,
+    change: { done?: boolean; assignedTileId?: string | null },
+  ) {
+    await this.taskCall(nodeId, async (scope, task) => {
+      if (!task) throw new Error("This note is no longer a task.");
+      return (
+        await this.call(this.key(), false, "task.update", {
+          ...scope,
+          expectedRevision: task.revision,
+          ...change,
+        })
+      ).task;
+    });
+  }
+
+  async recordSent(
+    nodeId: string,
+    tileId: string,
+    textRevision: number,
+    retry = false,
+  ) {
+    // Reconcile the persisted task before every attempt: the baseline the
+    // adoption check compares against must be the truth at write time, or an
+    // attempt that starts behind the recorded send could let a retry adopt
+    // the previous send as if it were this one.
+    await this.taskCall(nodeId, async (scope) => {
+      const document = await this.call(this.key(), false, "canvas.open", {
+        workspaceId: scope.workspaceId,
+        canvasId: scope.canvasId,
+      });
+      const node = document.nodes.find((item) => item.id === scope.nodeId);
+      if (!node) throw new Error("The note is no longer on this canvas.");
+      // Refresh only task metadata; a retry must preserve unsaved text/layout.
+      return node.task ?? null;
+    });
+    await this.taskCall(nodeId, async (scope, task) => {
+      if (!task) throw new Error("This note is no longer a task.");
+      // The write may have committed even though its acknowledgement was lost;
+      // only a stamp newer than the attempt's baseline proves it was this send.
+      if (
+        retry &&
+        this.sendAttempts.has(nodeId) &&
+        task.sentAt !== this.sendAttempts.get(nodeId) &&
+        task.assignedTileId === tileId &&
+        task.sentAt !== null &&
+        task.sentRevision === textRevision
+      )
+        return task;
+      this.sendAttempts.set(nodeId, task.sentAt);
+      return (
+        await this.call(this.key(), false, "task.recordSent", {
+          ...scope,
+          expectedRevision: task.revision,
+          tileId,
+          textRevision,
+        })
+      ).task;
+    });
+  }
+
+  // Task state has its own revision, so it skips the canvas save path and only
+  // patches node task fields; unsaved text stays unsaved.
+  private async taskCall(
+    nodeId: string,
+    run: (
+      scope: { workspaceId: string; canvasId: string; nodeId: string },
+      task: Task | null,
+    ) => Promise<Task | null>,
+  ) {
+    await this.enqueue(async () => {
+      const document = this.state.document;
+      const workspace = this.state.workspace;
+      if (!document || !workspace || this.disposed) return;
+      const id = this.nodeIds.get(nodeId) ?? nodeId;
+      const node = document.nodes.find((item) => item.id === id);
+      if (!node) throw new Error("The note is no longer on this canvas.");
+      const task = await run(
+        {
+          workspaceId: workspace.workspace.id,
+          canvasId: document.canvas.id,
+          nodeId: id,
+        },
+        node.task ?? null,
+      );
+      const current = this.state.document;
+      if (current?.canvas.id !== document.canvas.id) return;
+      // Every node showing the artifact shares its task.
+      this.publish({
+        document: {
+          ...current,
+          nodes: current.nodes.map((item) =>
+            item.artifactId === node.artifactId ? { ...item, task } : item,
+          ),
+        },
       });
     });
   }
@@ -1222,7 +1355,7 @@ export class Editor {
         this.load({
           ...document,
           canvas: { ...document.canvas, revision: result.revision },
-          nodes: [...document.nodes, result.node],
+          nodes: [...document.nodes, { ...result.node, task: null }],
           artifacts: [...document.artifacts, result.artifact],
         });
       });
