@@ -1,5 +1,9 @@
 <script module lang="ts">
-  export type SettingsSection = "ai" | "appearance" | "advanced";
+  export type SettingsSection =
+    | "ai"
+    | "appearance"
+    | "preferences"
+    | "advanced";
 </script>
 
 <script lang="ts">
@@ -36,18 +40,30 @@
     connectionKey: string;
     connected: boolean;
     theme: Theme;
+    /** Whether header buttons show their text labels. */
+    showButtonText: boolean;
     /** Section to open at; without one, narrow windows start at the category list. */
     section?: SettingsSection;
     onChange: (theme: Theme) => void;
+    onShowButtonTextChange: (show: boolean) => void;
     onClose: () => void;
   }
 
-  let { theme, section, onChange, onClose, connectionKey, connected }: Props =
-    $props();
+  let {
+    theme,
+    showButtonText,
+    section,
+    onChange,
+    onShowButtonTextChange,
+    onClose,
+    connectionKey,
+    connected,
+  }: Props = $props();
 
   const sections: { id: SettingsSection; label: string; icon: string }[] = [
     { id: "ai", label: "AI assistant", icon: "smart_toy" },
     { id: "appearance", label: "Appearance", icon: "palette" },
+    { id: "preferences", label: "Preferences", icon: "toggle_on" },
     { id: "advanced", label: "Advanced", icon: "tune" },
   ];
   // svelte-ignore state_referenced_locally
@@ -434,6 +450,41 @@
               ><span class="switch__thumb"></span></span
             >
             <span class="switch__label">{dark ? "Dark" : "Light"}</span>
+          </button>
+        </section>
+      </section>
+
+      <section
+        class="settings__section"
+        aria-labelledby="settings-preferences-title"
+        hidden={selected !== "preferences"}
+      >
+        <h2 id="settings-preferences-title" class="settings__title">
+          Preferences
+        </h2>
+        <section class="setting">
+          <span class="setting__icon"
+            ><Icon name="smart_button" size={20} /></span
+          >
+          <div class="setting__text">
+            <h3>Button labels</h3>
+            <p>
+              Show text labels on the header buttons. Turn off to show icons
+              only. Remembered on this device.
+            </p>
+          </div>
+          <button
+            class="switch"
+            type="button"
+            role="switch"
+            aria-checked={showButtonText}
+            aria-label="Show button labels"
+            onclick={() => onShowButtonTextChange(!showButtonText)}
+          >
+            <span class="switch__track"
+              ><span class="switch__thumb"></span></span
+            >
+            <span class="switch__label">{showButtonText ? "On" : "Off"}</span>
           </button>
         </section>
       </section>

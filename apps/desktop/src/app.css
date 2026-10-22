@@ -1234,7 +1234,7 @@ label {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  min-height: 2.75rem;
+  min-height: 2.25rem;
   padding: 0 0.85rem;
   font-size: 0.875rem;
   font-weight: 600;
@@ -1242,6 +1242,14 @@ label {
   border: 1px solid var(--line-strong);
   background: var(--surface);
   color: var(--ink-soft);
+}
+
+/* Icons-only header: the colored dot carries the status; drop the label gap. */
+.pill--icon {
+  gap: 0;
+  width: 2.25rem;
+  padding: 0;
+  justify-content: center;
 }
 
 .pill__dot {

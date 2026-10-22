@@ -45,6 +45,7 @@
   import { callRuntime, desktopMode, pingRuntime } from "./lib/runtime";
   import { Editor, type DrawingSegment } from "./lib/editor";
   import { applyTheme, readTheme, type Theme } from "./lib/theme";
+  import { readShowButtonText, saveShowButtonText } from "./lib/preferences";
   import Composer from "./lib/components/Composer.svelte";
   import Reader from "./lib/components/Reader.svelte";
   import ReviewBar from "./lib/components/ReviewBar.svelte";
@@ -246,6 +247,7 @@
   // true opens settings without a section (narrow windows show the category list).
   let settingsOpen = $state<boolean | SettingsSection>(false);
   let theme = $state<Theme>(readTheme());
+  let showButtonText = $state(readShowButtonText());
   let recoveryCopy = $state("");
   let closeNotice = $state("");
   let tool = $state<Tool>("select");
@@ -2561,6 +2563,7 @@
             bind:open={queueOpen}
             entries={attentionEntries}
             projects={editorState.document.projectGroups}
+            {showButtonText}
             onJump={focusObject}
             onMarkSeen={(owner) => void sessions.dismiss(owner)}
           />
@@ -2568,17 +2571,23 @@
         <button
           class="btn btn--soft"
           type="button"
+          title="Open project"
+          aria-label="Open project"
           disabled={!canEdit || pickingProject}
           onclick={() => void openProject()}
-          ><Icon name="folder_open" size={18} />Open project</button
+          ><Icon name="folder_open" size={18} />{#if showButtonText}Open project{/if}</button
         >
         <span
           class="pill"
+          class:pill--icon={!showButtonText}
           class:pill--ok={!editorState.dirty && !editorState.error}
           class:pill--warn={editorState.dirty && !editorState.error}
           class:pill--bad={!!editorState.error}
+          title={saveLabel}
+          aria-label={saveLabel}
+          role="status"
         >
-          <span class="pill__dot"></span>{saveLabel}
+          <span class="pill__dot"></span>{#if showButtonText}{saveLabel}{/if}
         </span>
         <span class="topbar__divider"></span>
         <button
@@ -2603,12 +2612,13 @@
         <button
           class="btn btn--primary"
           type="button"
+          title="Save"
           aria-label="Save"
           disabled={!canSave}
           onclick={() => void editor.save()}
         >
           <Icon name="save" size={18} />
-          Save
+          {#if showButtonText}Save{/if}
         </button>
       </div>
     </header>
@@ -3386,10 +3396,15 @@
   {#if settingsOpen}
     <Settings
       {theme}
+      {showButtonText}
       {connectionKey}
       {connected}
       section={settingsOpen === true ? undefined : settingsOpen}
       onChange={(next) => (theme = next)}
+      onShowButtonTextChange={(show) => {
+        showButtonText = show;
+        saveShowButtonText(show);
+      }}
       onClose={() => (settingsOpen = false)}
     />
   {/if}

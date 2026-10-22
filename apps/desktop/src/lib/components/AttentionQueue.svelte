@@ -26,6 +26,8 @@
     entries: Entry[];
     projects: ProjectGroup[];
     open?: boolean;
+    /** When false, the trigger shows only its icon, not the waiting text. */
+    showButtonText?: boolean;
     onJump: (tileId: string) => void;
     onMarkSeen: (owner: SessionOwner) => void;
   }
@@ -33,6 +35,7 @@
     entries,
     projects,
     open = $bindable(false),
+    showButtonText = true,
     onJump,
     onMarkSeen,
   }: Props = $props();
@@ -169,8 +172,10 @@
     title={`Waiting for you (${queueShortcutLabel(apple)})`}
     onclick={() => (open ? close() : (open = true))}
   >
-    {#if count}<span class="dot" aria-hidden="true"></span>{count} waiting{:else}Nothing
-      waiting{/if}
+    <Icon name="notifications" size={18} />
+    {#if count}<span class="dot" aria-hidden="true"
+      ></span>{#if showButtonText}{count}
+        waiting{/if}{:else if showButtonText}Nothing waiting{/if}
   </button>
   <span class="sr-only" role="status" aria-live="polite" aria-atomic="true"
     >{sentence}</span
