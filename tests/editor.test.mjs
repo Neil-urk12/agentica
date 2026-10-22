@@ -896,6 +896,47 @@ test("a layout change larger than one frame is split across canvas saves", async
     );
   for (const node of disk.nodes)
     assert.equal(node.x, expected.get(node.id), `${node.id} persisted`);
+  // Every request except the last is maximal: the next changed node on its
+  // own would push it past the limit.
+  for (let index = 0; index < saves.length - 1; index++) {
+    const next = saves[index + 1].params.nodes[0];
+    const combined = {
+      ...saves[index].params,
+      nodes: [...saves[index].params.nodes, next],
+    };
+    assert.ok(
+      frameBytes("canvas.save", combined) > MAX_FRAME_BYTES,
+      `batch ${index} leaves no room for the next node`,
+    );
+  }
+});
+
+test("a project change too large for one request reports a clear error", async (t) => {
+  const { editor, disk, calls } = await projectSetup(t);
+  disk.sessionTiles = Array.from({ length: 100 }, (_, index) => ({
+    id: `00000000-0000-4000-8000-${String(7000 + index).padStart(12, "0")}`,
+    projectId: disk.projectGroups[0].id,
+    kind: "shell",
+    preset: null,
+    x: 16,
+    y: 96,
+    width: 500,
+    height: 400,
+    revision: 1,
+  }));
+  await editor.openCanvas(canvasId);
+  for (const tile of disk.sessionTiles)
+    editor.placeSessionTile(tile.id, { x: tile.x + 1 });
+  const [group] = disk.projectGroups;
+  editor.placeProject(group.id, { width: group.width + 1 });
+  await editor.save();
+
+  assert.match(editor.state.error, /one save request holds/);
+  assert.equal(
+    calls.filter((call) => call.method === "canvas.save").length,
+    0,
+    "no oversized request was sent",
+  );
 });
 
 test("a split layout save that fails midway retries only the remaining changes", async (t) => {

@@ -555,9 +555,12 @@ impl Runtime {
                 if !self.open.contains_key(&params.workspace_id) {
                     let workspace = Workspace::open(self.data_root(), &params.workspace_id)?;
                     // Only turns left by an earlier process are interrupted:
-                    // another tab may still be generating a reply here.
-                    if self.opened.insert(params.workspace_id.clone()) {
+                    // another tab may still be generating a reply here. Mark
+                    // the workspace as opened only after the interrupt commits,
+                    // so a failed open is retried instead of skipping it.
+                    if !self.opened.contains(&params.workspace_id) {
                         workspace.interrupt_generating()?;
+                        self.opened.insert(params.workspace_id.clone());
                     }
                     self.open.insert(params.workspace_id.clone(), workspace);
                 }
@@ -1318,5 +1321,64 @@ mod tests {
         );
         assert_eq!(content_rows(&runtime, &workspace, "artifact"), 0);
         assert_eq!(content_rows(&runtime, &workspace, "text_content"), 0);
+    }
+
+    #[test]
+    fn a_failed_first_open_retries_the_interrupt_before_skipping_it() {
+        let root = tempfile::tempdir().unwrap();
+        let seeded = Workspace::create(Some(root.path()), "Work").unwrap();
+        let workspace_id = seeded.id.clone();
+        let canvas_id = new_id().unwrap();
+        seeded
+            .conn
+            .execute(
+                "INSERT INTO canvas (id, title, revision, viewport_x, viewport_y, viewport_zoom)
+                 VALUES (?1, 'Plan', 1, 0, 0, 1)",
+                [&canvas_id],
+            )
+            .unwrap();
+        seeded
+            .conn
+            .execute(
+                "INSERT INTO conversation_turn
+                 (id, canvas_id, model, prompt, prompt_node_id, anchor, context, status)
+                 VALUES (?1, ?2, 'test', 'prompt', ?3, '{}', '{}', 'generating')",
+                (&new_id().unwrap(), &canvas_id, &new_id().unwrap()),
+            )
+            .unwrap();
+        seeded
+            .conn
+            .execute(
+                "CREATE TRIGGER block_interrupt BEFORE UPDATE OF status ON conversation_turn
+                 BEGIN SELECT RAISE(ABORT, 'interrupt blocked'); END",
+                [],
+            )
+            .unwrap();
+        drop(seeded);
+
+        let mut runtime = Runtime::new(Some(root.path().to_path_buf()));
+        let failed = runtime
+            .call("workspace.open", json!({ "workspaceId": &workspace_id }))
+            .unwrap_err();
+        assert!(failed.message.contains("interrupt blocked"));
+        assert!(!runtime.opened.contains(&workspace_id));
+
+        let unblocked = Workspace::open(Some(root.path()), &workspace_id).unwrap();
+        unblocked
+            .conn
+            .execute("DROP TRIGGER block_interrupt", [])
+            .unwrap();
+        drop(unblocked);
+
+        call(
+            &mut runtime,
+            "workspace.open",
+            json!({ "workspaceId": &workspace_id }),
+        );
+        let status: String = runtime.open[&workspace_id]
+            .conn
+            .query_row("SELECT status FROM conversation_turn", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(status, "interrupted");
     }
 }
