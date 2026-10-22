@@ -262,13 +262,39 @@ export class Editor {
   ): CanvasLayoutBatch[] {
     const batches: CanvasLayoutBatch[] = [];
     let batch = emptyLayoutBatch();
-    const fits = (candidate: CanvasLayoutBatch) =>
-      this.canvasSaveBytes(
-        workspaceId,
-        canvasId,
-        snapshot.viewport,
-        candidate,
-      ) <= MAX_FRAME_BYTES;
+    const encoder = new TextEncoder();
+    const itemBytes = (value: unknown) =>
+      encoder.encode(JSON.stringify(value)).length;
+    const baseBytes = this.canvasSaveBytes(
+      workspaceId,
+      canvasId,
+      snapshot.viewport,
+      emptyLayoutBatch(),
+    );
+    const projectGroupsKeyBytes = ',"projectGroups":[]'.length;
+    const sessionTilesKeyBytes = ',"sessionTiles":[]'.length;
+    let counts = { nodes: 0, projectGroups: 0, sessionTiles: 0 };
+    let bytes = baseBytes;
+    // Size a unit against the objects already in the batch without
+    // re-serializing the batch itself: array commas and the first occurrence
+    // of an optional key are the only differences from the sum of the items.
+    const unitBytes = (unit: CanvasLayoutBatch) => {
+      let size = 0;
+      let nodes = counts.nodes;
+      let groups = counts.projectGroups;
+      let tiles = counts.sessionTiles;
+      for (const node of unit.nodes)
+        size += (nodes++ > 0 ? 1 : 0) + itemBytes(node);
+      for (const group of unit.projectGroups)
+        size +=
+          (groups++ > 0 ? 1 : projectGroupsKeyBytes) +
+          itemBytes({ ...group, expectedRevision: Number.MAX_SAFE_INTEGER });
+      for (const tile of unit.sessionTiles)
+        size +=
+          (tiles++ > 0 ? 1 : sessionTilesKeyBytes) +
+          itemBytes({ ...tile, expectedRevision: Number.MAX_SAFE_INTEGER });
+      return size;
+    };
     const grouped = new Set(changes.projectGroups.map((group) => group.id));
     // The runtime checks after each request that every tile fits its project,
     // so a project travels with its changed tiles: a shrink and the tile moves
@@ -290,17 +316,29 @@ export class Editor {
         .map((tile) => ({ ...emptyLayoutBatch(), sessionTiles: [tile] })),
     ];
     for (const unit of units) {
-      const candidate = {
+      let size = unitBytes(unit);
+      if (layoutHasItems(batch) && bytes + size > MAX_FRAME_BYTES) {
+        batches.push(batch);
+        batch = emptyLayoutBatch();
+        counts = { nodes: 0, projectGroups: 0, sessionTiles: 0 };
+        bytes = baseBytes;
+        size = unitBytes(unit);
+      }
+      if (size > MAX_FRAME_BYTES)
+        throw new Error(
+          `A project and its ${unit.sessionTiles.length} moved tiles need ${size} bytes, but one save request holds ${MAX_FRAME_BYTES}. Move fewer tiles at once, then save again.`,
+        );
+      bytes += size;
+      counts = {
+        nodes: counts.nodes + unit.nodes.length,
+        projectGroups: counts.projectGroups + unit.projectGroups.length,
+        sessionTiles: counts.sessionTiles + unit.sessionTiles.length,
+      };
+      batch = {
         nodes: [...batch.nodes, ...unit.nodes],
         projectGroups: [...batch.projectGroups, ...unit.projectGroups],
         sessionTiles: [...batch.sessionTiles, ...unit.sessionTiles],
       };
-      if (layoutHasItems(batch) && !fits(candidate)) {
-        batches.push(batch);
-        batch = unit;
-      } else {
-        batch = candidate;
-      }
     }
     if (layoutHasItems(batch)) batches.push(batch);
     else if (changes.viewport) batches.push(emptyLayoutBatch());

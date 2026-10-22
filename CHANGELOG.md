@@ -88,6 +88,16 @@ released version and date. Keep validation evidence in the
   the same header and fingerprint, then recovers that hunk's text. Comments
   saved from an unmatched composer start Outdated.
 
+- Fix a failed first workspace open leaving a turn stuck in "generating". The
+  first open in a process now records the workspace as opened only after the
+  stale-turn interrupt commits, so retrying the open still interrupts turns
+  left by an earlier process instead of skipping the update.
+- Keep canvas layout batching linear in the number of changes by tracking the
+  serialized request size incrementally instead of re-serializing the whole
+  accumulated batch for each change. A project change that cannot fit in one
+  frame on its own now reports a clear error before sending, instead of an
+  oversized request rejected by the runtime.
+
 ### 2026-10-21
 
 - Harden terminal streaming and session lifecycle: one shared polling and
