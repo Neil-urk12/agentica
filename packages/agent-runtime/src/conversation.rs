@@ -92,6 +92,9 @@ fn outline_entry(artifact: &Value) -> (&'static str, String) {
     if artifact["type"] == "text" {
         return ("text", title(artifact["text"].as_str().unwrap_or_default()));
     }
+    if artifact["type"] == "file" {
+        return ("file", title(artifact["name"].as_str().unwrap_or_default()));
+    }
     let Some(shapes) = artifact["drawing"]["shapes"].as_array() else {
         return ("drawing", String::new());
     };
@@ -972,6 +975,14 @@ mod tests {
     }
 
     #[test]
+    fn file_entries_are_named_after_the_file() {
+        assert_eq!(
+            outline_entry(&json!({"type": "file", "name": "Brief.pdf", "text": "Body"})),
+            ("file", "Brief.pdf".to_owned())
+        );
+    }
+
+    #[test]
     fn a_reply_survives_another_tab_closing_the_workspace() {
         // Tabs share one runtime; `call` stands in for either tab.
         let temp = tempfile::tempdir().unwrap();
@@ -1177,6 +1188,7 @@ mod tests {
                 .len(),
             1
         );
+
         assert_eq!(
             call(
                 "conversation.list",

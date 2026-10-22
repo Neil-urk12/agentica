@@ -107,8 +107,13 @@ because any code in the webview can call `/rpc` directly.
   an exact `Host`. The key lives in memory only, never in URLs or storage.
 - **Desktop mode**: the main window may only send runtime and session requests,
   open a folder picker, and make HTTP requests to `*/chat/completions` URLs
-  (HTTPS, or HTTP on localhost). It has no file, shell, or database permissions
+  (HTTPS, or HTTP on localhost). A scoped `open_file` command writes one copied
+  canvas file to a temp path for the system application. It has no folder,
+  shell, or database permissions
   ([capabilities](apps/desktop/src-tauri/capabilities/)).
+- **Canvas files** are copied into SQLite in ordered chunks and read on demand
+  for previews. Only their extracted text can enter canvas context; file bytes
+  never reach a provider prompt.
 - **Sessions and MCP servers** run as the user with the user's permissions. A
   project folder is the working directory, not a sandbox. Agentica never answers
   an agent's prompts for it.

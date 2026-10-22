@@ -15,6 +15,7 @@ provider.
 | Feature                                                                                                                                                               | Status                                           |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
 | Canvas with text, shapes, connectors, pan/zoom, and autosave                                                                                                          | Implemented                                      |
+| [Canvas files](docs/user-guide.md#canvas-files): images, PDFs, Word documents, and text files copied into the workspace                                               | Implemented                                      |
 | [Canvas conversation](docs/user-guide.md#canvas-conversation) with OpenRouter or any OpenAI-compatible provider; model edits arrive as proposals you apply or discard | Implemented                                      |
 | [MCP tools](docs/user-guide.md#tools-from-mcp-servers) (local stdio, read-only) for the canvas agent                                                                  | Validated in browser mode on Linux               |
 | [Project groups](docs/user-guide.md#projects-and-native-sessions) with terminal and Codex CLI tiles                                                                   | Validated on Linux; other OSes not yet supported |

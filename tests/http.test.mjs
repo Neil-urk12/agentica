@@ -35,6 +35,20 @@ import {
   launchBrowser,
   waitFor,
 } from "./support/chrome.mjs";
+import { zipStore } from "./support/zip.mjs";
+
+async function openCard(browser, label) {
+  const item = ".tiles .tile__open, .cards .card";
+  const card = `[...document.querySelectorAll(${JSON.stringify(item)})].find((entry) => entry.textContent.includes(${JSON.stringify(label)}))`;
+  await waitFor(browser, `${card} && !(${card}).disabled`, `the ${label} card`);
+  // Later tests add workspaces: scroll the target into view so its measured
+  // center is inside the clickable area.
+  await evaluate(
+    browser,
+    `(${card}).focus(); (${card}).scrollIntoView({ block: 'center' })`,
+  );
+  await clickAt(browser, await boxByText(browser, item, label));
+}
 
 const FRONTEND_ORIGIN = "http://127.0.0.1:1420";
 // The same Vite server answers on either loopback spelling, so a browser there
@@ -2720,6 +2734,348 @@ wait
     await browser?.close();
     await stopBackend(backend.child);
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("picked files are copied, previewed, and shared with the next prompt", async () => {
+  const backend = await startBackend();
+  key = backend.connectionKey;
+  let browser;
+  const rpc = async (method, params) => {
+    const reply = await send(port, {
+      body: JSON.stringify({
+        protocolVersion: 1,
+        id: crypto.randomUUID(),
+        method,
+        params,
+      }),
+    });
+    assert.equal(reply.status, 200);
+    const response = RuntimeResponseSchema.parse(JSON.parse(reply.text));
+    assert.equal(response.error, undefined, JSON.stringify(response));
+    return ResultSchemas[method].parse(response.result);
+  };
+  try {
+    const workspace = await rpc("workspace.create", { name: "Files UI" });
+    const workspaceId = workspace.workspace.id;
+    const { canvas } = await rpc("canvas.create", {
+      workspaceId,
+      title: "Brief",
+    });
+    const reference = { workspaceId, canvasId: canvas.id };
+
+    browser = await launchBrowser();
+    await browser.send(
+      "Page.navigate",
+      { url: `http://127.0.0.1:${port}/` },
+      browser.sessionId,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('#connection-key')`,
+      "the connection form",
+    );
+    await evaluate(
+      browser,
+      `(() => { const input = document.querySelector('#connection-key'); input.value = ${JSON.stringify(key)}; input.dispatchEvent(new Event('input', { bubbles: true })); })()`,
+    );
+    await clickAt(
+      browser,
+      await boxOf(browser, ".connbar button[type='submit']"),
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('.connbar--ok')`,
+      "the connected status",
+    );
+    const selectCard = (label) => openCard(browser, label);
+    for (const label of ["Files UI", "Brief"]) {
+      await selectCard(label);
+      await delay(250);
+    }
+    await waitFor(
+      browser,
+      `!!document.querySelector('input[type=file]')`,
+      "the open canvas",
+      10_000,
+    );
+
+    // A real FileList through the picker input drives the same import path.
+    const png = Uint8Array.from(
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lK3Q6wAAAABJRU5ErkJggg==",
+        "base64",
+      ),
+    );
+    // A one-page PDF with one line of text exercises the real PDF.js worker.
+    const stream = "BT /F1 12 Tf 20 100 Td (Hello PDF) Tj ET\n";
+    const objects = [
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+      `<< /Length ${stream.length} >>\nstream\n${stream}endstream`,
+      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ];
+    let pdfSource = "%PDF-1.4\n";
+    const offsets = [];
+    for (const [index, object] of objects.entries()) {
+      offsets.push(pdfSource.length);
+      pdfSource += `${index + 1} 0 obj\n${object}\nendobj\n`;
+    }
+    const xref = pdfSource.length;
+    pdfSource += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    for (const offset of offsets)
+      pdfSource += `${String(offset).padStart(10, "0")} 00000 n \n`;
+    pdfSource += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+    const pdf = new Uint8Array(Buffer.from(pdfSource, "latin1"));
+    const docx = zipStore({
+      "[Content_Types].xml":
+        '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
+      "_rels/.rels":
+        '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+      "word/document.xml":
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Hello Word</w:t></w:r></w:p><w:sectPr/></w:body></w:document>',
+    });
+    await evaluate(
+      browser,
+      `(() => {
+        const input = document.querySelector('input[type=file]');
+        const transfer = new DataTransfer();
+        transfer.items.add(new File(["hello from a copied file"], "notes.txt", { type: "text/plain" }));
+        transfer.items.add(new File([new Uint8Array(${JSON.stringify([...png])})], "dot.png", { type: "image/png" }));
+        transfer.items.add(new File([new Uint8Array(${JSON.stringify([...pdf])})], "sheet.pdf", { type: "application/pdf" }));
+        transfer.items.add(new File([new Uint8Array(${JSON.stringify([...docx])})], "memo.docx", { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }));
+        input.files = transfer.files;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      })()`,
+    );
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.file').length === 4`,
+      "all imported file nodes",
+    );
+    await waitFor(
+      browser,
+      `[...document.querySelectorAll('.file__name')].some((node) => node.textContent.includes('notes.txt'))`,
+      "the text file label",
+    );
+    await waitFor(
+      browser,
+      `document.querySelector('.file__text')?.textContent.includes('hello from a copied file')`,
+      "the text preview",
+    );
+    await waitFor(
+      browser,
+      `document.querySelector('.file__image')?.naturalWidth === 1`,
+      "the image preview",
+    );
+    await waitFor(
+      browser,
+      `[...document.querySelectorAll('.file__page')].some((page) => page.width > 0 && page.height > 0)`,
+      "the PDF page preview",
+    );
+    await waitFor(
+      browser,
+      `[...document.querySelectorAll('.file__pager')].some((node) => node.textContent.includes('1 / 1'))`,
+      "the PDF page count",
+    );
+    await waitFor(
+      browser,
+      `[...document.querySelectorAll('.file__docx')].some((frame) => frame.contentDocument?.body?.innerText.includes('Hello Word'))`,
+      "the Word preview",
+    );
+    assert.equal(
+      await evaluate(
+        browser,
+        `[...document.querySelectorAll('.file__size')].some((node) => node.textContent.includes('B'))`,
+      ),
+      true,
+      "file sizes are shown",
+    );
+
+    // The canvas stores metadata only, and reading returns the copied bytes.
+    let stored;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      stored = await rpc("canvas.open", reference);
+      if (stored.artifacts.filter((item) => item.type === "file").length === 4)
+        break;
+      await delay(100);
+    }
+    const artifacts = stored.artifacts.filter((item) => item.type === "file");
+    assert.equal(artifacts.length, 4, JSON.stringify(stored.artifacts));
+    const notes = artifacts.find((item) => item.name === "notes.txt");
+    assert.equal(notes.text, "hello from a copied file");
+    assert.equal(notes.mime, "text/plain");
+    assert.equal(notes.size, 24);
+    const sheet = artifacts.find((item) => item.name === "sheet.pdf");
+    assert.match(sheet.text, /Hello PDF/);
+    const memo = artifacts.find((item) => item.name === "memo.docx");
+    assert.match(memo.text, /Hello Word/);
+    assert.equal(
+      artifacts.some((item) => item.data),
+      false,
+    );
+    const bytes = await rpc("file.read", {
+      workspaceId,
+      artifactId: notes.id,
+    });
+    assert.equal(
+      Buffer.from(bytes.data, "base64").toString("utf8"),
+      "hello from a copied file",
+    );
+
+    // Dropping a file copies it like the picker, but at the pointer position.
+    const dropOffset = await evaluate(
+      browser,
+      `(() => {
+        const target = document.querySelector('.canvas');
+        const rect = target.getBoundingClientRect();
+        const point = {
+          x: Math.round(rect.width * 0.25),
+          y: Math.round(rect.height * 0.3),
+        };
+        const transfer = new DataTransfer();
+        transfer.items.add(new File(["dropped note"], "dropped.md", { type: "text/markdown" }));
+        target.dispatchEvent(new DragEvent("dragover", {
+          bubbles: true,
+          cancelable: true,
+          clientX: rect.left + point.x,
+          clientY: rect.top + point.y,
+          dataTransfer: transfer,
+        }));
+        return point;
+      })()`,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('.canvas__drop')`,
+      "the drop hint",
+    );
+    await evaluate(
+      browser,
+      `(() => {
+        const target = document.querySelector('.canvas');
+        const rect = target.getBoundingClientRect();
+        const transfer = new DataTransfer();
+        transfer.items.add(new File(["dropped note"], "dropped.md", { type: "text/markdown" }));
+        target.dispatchEvent(new DragEvent("drop", {
+          bubbles: true,
+          cancelable: true,
+          clientX: rect.left + ${dropOffset.x},
+          clientY: rect.top + ${dropOffset.y},
+          dataTransfer: transfer,
+        }));
+      })()`,
+    );
+    await waitFor(
+      browser,
+      `document.querySelector('.canvas__drop') === null`,
+      "the drop hint to clear",
+    );
+    // Dragging text or a canvas object is not a file import.
+    await evaluate(
+      browser,
+      `(() => {
+        const transfer = new DataTransfer();
+        transfer.setData("text/plain", "not a file");
+        document.querySelector('.canvas').dispatchEvent(new DragEvent("dragover", {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: transfer,
+        }));
+      })()`,
+    );
+    await delay(150);
+    assert.equal(
+      await evaluate(browser, `!!document.querySelector('.canvas__drop')`),
+      false,
+      "text drags never show the file hint",
+    );
+    await waitFor(
+      browser,
+      `[...document.querySelectorAll('.file')].some((card) => card.querySelector('.file__name')?.textContent.includes('dropped.md'))`,
+      "the dropped file node",
+    );
+    await waitFor(
+      browser,
+      `[...document.querySelectorAll('.file')].some((card) => card.querySelector('.file__name')?.textContent.includes('dropped.md') && card.querySelector('.file__text')?.textContent.includes('dropped note'))`,
+      "the dropped file preview",
+    );
+    let dropped;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      dropped = await rpc("canvas.open", reference);
+      if (dropped.artifacts.some((item) => item.name === "dropped.md")) break;
+      await delay(100);
+    }
+    const droppedArtifact = dropped.artifacts.find(
+      (item) => item.name === "dropped.md",
+    );
+    const droppedNode = dropped.nodes.find(
+      (node) => node.artifactId === droppedArtifact.id,
+    );
+    const { viewport } = dropped.canvas;
+    // The card centres on the pointer: half of its 380x300 default size.
+    const expected = {
+      x: (dropOffset.x - viewport.x) / viewport.zoom - 190,
+      y: (dropOffset.y - viewport.y) / viewport.zoom - 150,
+    };
+    assert.ok(
+      Math.abs(droppedNode.x - expected.x) <= 2 &&
+        Math.abs(droppedNode.y - expected.y) <= 2,
+      `the dropped file lands at the pointer: ${JSON.stringify({ node: { x: droppedNode.x, y: droppedNode.y }, expected })}`,
+    );
+    assert.equal(
+      Buffer.from(
+        (
+          await rpc("file.read", {
+            workspaceId,
+            artifactId: droppedArtifact.id,
+          })
+        ).data,
+        "base64",
+      ).toString("utf8"),
+      "dropped note",
+    );
+
+    // Selecting the file nodes sends their extracted text with the prompt.
+    const final = await rpc("canvas.open", reference);
+    const finalArtifacts = final.artifacts.filter(
+      (item) => item.type === "file",
+    );
+    const nodes = final.nodes.filter((node) =>
+      finalArtifacts.some((artifact) => artifact.id === node.artifactId),
+    );
+    const started = await rpc("conversation.start", {
+      ...reference,
+      turnId: crypto.randomUUID(),
+      prompt: "Summarize the attached notes.",
+      model: "test",
+      anchor: { x: 0, y: 0 },
+      nodeIds: nodes.map((node) => node.id),
+    });
+    assert.equal(
+      started.context.artifacts.some(
+        (artifact) =>
+          artifact.type === "file" &&
+          artifact.text === "hello from a copied file",
+      ),
+      true,
+    );
+    assert.equal(
+      started.context.artifacts.some(
+        (artifact) =>
+          artifact.type === "file" && artifact.text === "dropped note",
+      ),
+      true,
+      "dropped text reaches the prompt context",
+    );
+  } catch (error) {
+    if (browser)
+      error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({text:document.body.innerText.slice(-2000),files:document.querySelectorAll('.file').length})")}`;
+    throw error;
+  } finally {
+    await browser?.close();
+    await stopBackend(backend.child);
   }
 });
 

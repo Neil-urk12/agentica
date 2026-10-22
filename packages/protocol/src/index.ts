@@ -13,6 +13,34 @@ export const LIMITS = {
   maxZoom: 4,
 } as const;
 
+/**
+ * Canvas files are copied into workspace storage. Uploads travel in chunks so
+ * one request always fits the 16 KiB runtime frame, and only extracted text is
+ * part of canvas context; the bytes are fetched on demand for a preview.
+ */
+export const FILE_LIMITS = {
+  maxBytes: 8 * 1024 * 1024,
+  chunkBytes: 11_000,
+  chunkData: 15_000,
+  name: 120,
+  text: 10_000,
+} as const;
+
+export const FileMimeSchema = z.enum([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "image/svg+xml",
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/msword",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+]);
+export type FileMime = z.infer<typeof FileMimeSchema>;
+
 const RequestId = z.string().min(1).max(128);
 // Lowercase UUID identities; only explicit project operations accept paths.
 export const IdSchema = z
@@ -420,7 +448,7 @@ const OutlineSchema = z.strictObject({
     .array(
       z.strictObject({
         nodeId: IdSchema,
-        kind: z.enum(["text", "rectangle", "ellipse", "drawing"]),
+        kind: z.enum(["text", "rectangle", "ellipse", "drawing", "file"]),
         x: z.number(),
         y: z.number(),
         width: z.number(),
@@ -721,6 +749,40 @@ const ParamSchemas = {
     ...Geometry,
     drawing: DrawingSchema,
   }),
+  // Binary content is copied in bounded chunks, then finished in one atomic
+  // transaction that places the node and bumps the canvas revision.
+  "file.begin": z.strictObject({
+    ...CanvasRef,
+    name: z.string().min(1).max(FILE_LIMITS.name),
+    mime: FileMimeSchema,
+    size: z.number().int().min(0).max(FILE_LIMITS.maxBytes),
+    text: z.string().max(FILE_LIMITS.text),
+  }),
+  "file.chunk": z.strictObject({
+    ...WorkspaceRef,
+    uploadId: IdSchema,
+    offset: z.number().int().min(0).max(FILE_LIMITS.maxBytes),
+    data: z
+      .string()
+      .max(FILE_LIMITS.chunkData)
+      .regex(
+        /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/,
+      ),
+  }),
+  "file.finish": z.strictObject({
+    ...CanvasRef,
+    expectedRevision: Revision,
+    uploadId: IdSchema,
+    ...Geometry,
+  }),
+  "file.discard": z.strictObject({
+    ...WorkspaceRef,
+    uploadId: IdSchema,
+  }),
+  "file.read": z.strictObject({
+    ...WorkspaceRef,
+    artifactId: IdSchema,
+  }),
   "node.delete": z.strictObject({
     ...CanvasRef,
     expectedRevision: Revision,
@@ -839,9 +901,22 @@ export const DrawingArtifactSchema = z.strictObject({
   revision: Revision,
   drawing: DrawingSchema,
 });
+// A copied image, PDF, Word document, or text-like file. Bytes stay out of
+// canvas context and are read only when a preview or export needs them.
+export const FileArtifactSchema = z.strictObject({
+  id: IdSchema,
+  type: z.literal("file"),
+  schemaVersion: z.literal(1),
+  revision: Revision,
+  name: z.string().min(1).max(FILE_LIMITS.name),
+  mime: FileMimeSchema,
+  size: z.number().int().min(0).max(FILE_LIMITS.maxBytes),
+  text: z.string().max(FILE_LIMITS.text),
+});
 export const ArtifactSchema = z.discriminatedUnion("type", [
   TextArtifactSchema,
   DrawingArtifactSchema,
+  FileArtifactSchema,
 ]);
 export type Artifact = z.infer<typeof ArtifactSchema>;
 export const NodeSchema = z.strictObject({
@@ -1015,6 +1090,21 @@ export const ResultSchemas = {
     revision: Revision,
     node: NodeSchema,
     artifact: DrawingArtifactSchema,
+  }),
+  "file.begin": z.strictObject({ uploadId: IdSchema }),
+  "file.chunk": z.strictObject({ received: z.number().int().min(0) }),
+  "file.finish": z.strictObject({
+    revision: Revision,
+    node: NodeSchema,
+    artifact: FileArtifactSchema,
+  }),
+  "file.discard": z.strictObject({}),
+  "file.read": z.strictObject({
+    artifactId: IdSchema,
+    name: z.string(),
+    mime: FileMimeSchema,
+    size: z.number().int().min(0),
+    data: z.string(),
   }),
   "node.delete": z.strictObject({ revision: Revision }),
   "task.set": z.strictObject({ task: TaskSchema.nullable() }),

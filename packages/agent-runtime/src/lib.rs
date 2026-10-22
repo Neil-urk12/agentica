@@ -109,6 +109,21 @@ impl DesktopBackend {
         self.connected.clone()
     }
 
+    /// Copied file bytes for the desktop's open-with-system-app action.
+    pub fn file_bytes(
+        &mut self,
+        workspace_id: &str,
+        artifact_id: &str,
+    ) -> Result<(String, String, Vec<u8>), RuntimeError> {
+        if !self.connected.load(Ordering::SeqCst) {
+            return Err(RuntimeError::new(
+                "BACKPRESSURE",
+                "Backend disconnected. Reconnect to start it.",
+            ));
+        }
+        self.runtime.file_bytes(workspace_id, artifact_id)
+    }
+
     pub fn request(&mut self, request: &Value, connect: bool) -> Result<Value, String> {
         let bytes = serde_json::to_vec(request).map_err(|error| error.to_string())?;
         if bytes.len() > MAX_FRAME_BYTES {

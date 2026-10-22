@@ -51,7 +51,7 @@ fn main() {
     entries.sort();
     for path in entries {
         let mime = match path.extension().and_then(|value| value.to_str()) {
-            Some("js") => "text/javascript; charset=utf-8",
+            Some("js") | Some("mjs") => "text/javascript; charset=utf-8",
             Some("css") => "text/css; charset=utf-8",
             Some("woff") => "font/woff",
             Some("woff2") => "font/woff2",

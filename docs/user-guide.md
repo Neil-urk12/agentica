@@ -4,6 +4,7 @@ How to use each Agentica feature. To install and start the app, see
 [Running Agentica](running.md).
 
 - [Canvas basics](#canvas-basics)
+- [Canvas files](#canvas-files)
 - [Canvas conversation](#canvas-conversation)
 - [Tools from MCP servers](#tools-from-mcp-servers)
 - [Projects and native sessions](#projects-and-native-sessions)
@@ -29,6 +30,29 @@ edit. While a text field has focus, the shortcuts use that field's own undo.
 Creating, deleting, connecting, applied proposals, and panning or zooming are
 not undoable. History belongs to the open canvas and is cleared when you leave
 it; a step for an object deleted since is skipped.
+
+## Canvas files
+
+Use **Add a file** in the canvas toolbar, the composer, or the empty-canvas
+prompt, or drag files onto the canvas, to place an image (PNG, JPEG, WebP, GIF,
+SVG), PDF, Word document (DOCX or legacy DOC), or text-like file (TXT, Markdown,
+CSV) on the canvas. Dropped files land where the pointer is; picked files land
+near the middle of the view. Files up to 8 MB are copied into the open
+workspace, so they survive the original moving or being deleted. The import
+streams in ordered chunks to keep every runtime request inside the 16 KiB frame;
+abandoned imports expire after an hour.
+
+Images render inline, PDFs page through with a page count, DOCX files show a
+converted preview, and text files show their content. Legacy DOC files have no
+in-app preview and no extractable text, but can still be opened. Word and PDF
+preview frames are inert: scripts never run. **Open** launches the copied file
+with the system application on desktop; in browser mode it downloads a copy.
+
+Imported text is capped at 10,000 characters per file and is shared with the
+agent when the file node is selected, exactly like note text. File bytes are
+never included in canvas context or a provider prompt; select the node to attach
+its extracted text to the next request. Images and scanned PDFs without a text
+layer contribute no text. The canvas agent cannot create or upload files itself.
 
 ## Canvas conversation
 

@@ -8,6 +8,8 @@
     loading?: boolean;
     disabled?: boolean;
     onToggleToolbar: () => void;
+    onAddFile?: () => void;
+    addFileDisabled?: boolean;
     onSubmit?: (prompt: string) => boolean | Promise<boolean>;
     /** Short scope line, such as "2 selected objects · recent conversation". */
     scope?: string;
@@ -25,6 +27,8 @@
     loading = false,
     disabled = false,
     onToggleToolbar,
+    onAddFile,
+    addFileDisabled = false,
     onSubmit,
     scope = "",
     provider = "",
@@ -93,6 +97,18 @@
     >
       <Icon name="build" size={20} />
     </button>
+    {#if onAddFile}
+      <button
+        class="composer__lead"
+        type="button"
+        title="Add a file — images, PDF, Word, and text files are copied onto the canvas"
+        aria-label="Add a file"
+        disabled={addFileDisabled}
+        onclick={onAddFile}
+      >
+        <Icon name="attach_file" size={20} />
+      </button>
+    {/if}
 
     <label class="sr-only" for="canvas-prompt">Prompt</label>
     <textarea
@@ -130,6 +146,11 @@
 </div>
 
 <style>
+  .composer__lead:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
   .composer__send:disabled {
     opacity: 0.45;
     cursor: not-allowed;
