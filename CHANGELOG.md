@@ -90,6 +90,16 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-21
 
+- Harden terminal streaming and session lifecycle: one shared polling and
+  heartbeat loop that stops on the first terminal error and releases its
+  attachment when the stream ends, stale-session termination, validated state
+  transitions, idempotent stop, and launcher-only Linux cleanup without
+  subreaping. Reduce desktop work with coalesced reconciliation, map-based
+  canvas lookups, geometry-only placement writes, and scoped artifact cleanup
+  that preserves shared placements and instruction notes; orphaned content left
+  by earlier builds is no longer swept. Remove unused history
+  validation, the legacy OpenRouter request path, and build-time API/model
+  fallbacks.
 - Save only changed canvas objects, splitting large layout deltas across
   frame-sized `canvas.save` requests. A canvas with hundreds of nodes now
   persists placement, project layout, and viewport changes without hitting the

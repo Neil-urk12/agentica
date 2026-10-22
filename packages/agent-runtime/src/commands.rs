@@ -159,11 +159,11 @@ fn in_range(field: &str, value: f64, min: f64, max: f64) -> Result<(), RuntimeEr
     }
 }
 
-struct Geometry {
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
+pub(super) struct Geometry {
+    pub(super) x: f64,
+    pub(super) y: f64,
+    pub(super) width: f64,
+    pub(super) height: f64,
 }
 
 impl Geometry {
@@ -614,22 +614,8 @@ impl Runtime {
                     // Artifacts are independent of placement, so only the ones
                     // this canvas was the last to reference are removed.
                     for artifact_id in &artifacts {
-                        tx.execute(
-                            "DELETE FROM artifact WHERE id = ?1 AND NOT EXISTS
-                             (SELECT 1 FROM canvas_node WHERE artifact_id = ?1)",
-                            [artifact_id],
-                        )?;
+                        delete_artifact_content(tx, artifact_id)?;
                     }
-                    tx.execute(
-                        "DELETE FROM text_content WHERE NOT EXISTS
-                         (SELECT 1 FROM artifact WHERE content_id = text_content.id)",
-                        [],
-                    )?;
-                    tx.execute(
-                        "DELETE FROM drawing_content WHERE NOT EXISTS
-                         (SELECT 1 FROM artifact WHERE content_id = drawing_content.id)",
-                        [],
-                    )?;
                     Ok(json!({ "canvases": canvases(tx)? }))
                 })
             }
@@ -703,22 +689,18 @@ impl Runtime {
                 };
                 g.check()?;
                 text(&params.text)?;
-                let (node_id, artifact_id, content_id) = (new_id()?, new_id()?, new_id()?);
+                let (node_id, artifact_id) = (new_id()?, new_id()?);
                 self.transact(&params.workspace_id, |tx| {
                     check_canvas(tx, &params.canvas_id, expected)?;
-                    tx.execute(
-                        "INSERT INTO text_content (id, body, purpose) VALUES (?1, ?2, ?3)",
-                        (&content_id, &params.text, params.purpose.as_str()),
-                    )?;
-                    tx.execute(
-                        "INSERT INTO artifact (id, type, schema_version, revision, content_store, content_id)
-                         VALUES (?1, 'text', ?2, 1, 'sqlite', ?3)",
-                        (&artifact_id, TEXT_SCHEMA_VERSION, &content_id),
-                    )?;
-                    tx.execute(
-                        "INSERT INTO canvas_node (id, canvas_id, kind, artifact_id, x, y, width, height)
-                         VALUES (?1, ?2, 'artifact', ?3, ?4, ?5, ?6, ?7)",
-                        (&node_id, &params.canvas_id, &artifact_id, g.x, g.y, g.width, g.height),
+                    insert_artifact_node(
+                        tx,
+                        &params.canvas_id,
+                        &node_id,
+                        &artifact_id,
+                        &g,
+                        &params.text,
+                        false,
+                        params.purpose.as_str(),
                     )?;
                     Ok(json!({
                         "revision": bump(tx, &params.canvas_id, expected)?,
@@ -744,22 +726,18 @@ impl Runtime {
                 params.drawing.check()?;
                 let body = serde_json::to_string(&params.drawing)
                     .map_err(|error| invalid(format!("Invalid drawing: {error}.")))?;
-                let (node_id, artifact_id, content_id) = (new_id()?, new_id()?, new_id()?);
+                let (node_id, artifact_id) = (new_id()?, new_id()?);
                 self.transact(&params.workspace_id, |tx| {
                     check_canvas(tx, &params.canvas_id, expected)?;
-                    tx.execute(
-                        "INSERT INTO drawing_content (id, body) VALUES (?1, ?2)",
-                        (&content_id, &body),
-                    )?;
-                    tx.execute(
-                        "INSERT INTO artifact (id, type, schema_version, revision, content_store, content_id)
-                         VALUES (?1, 'drawing', ?2, 1, 'sqlite', ?3)",
-                        (&artifact_id, DRAWING_SCHEMA_VERSION, &content_id),
-                    )?;
-                    tx.execute(
-                        "INSERT INTO canvas_node (id, canvas_id, kind, artifact_id, x, y, width, height)
-                         VALUES (?1, ?2, 'artifact', ?3, ?4, ?5, ?6, ?7)",
-                        (&node_id, &params.canvas_id, &artifact_id, g.x, g.y, g.width, g.height),
+                    insert_artifact_node(
+                        tx,
+                        &params.canvas_id,
+                        &node_id,
+                        &artifact_id,
+                        &g,
+                        &body,
+                        true,
+                        "",
                     )?;
                     Ok(json!({
                         "revision": bump(tx, &params.canvas_id, expected)?,
@@ -795,18 +773,7 @@ impl Runtime {
                         (&params.canvas_id, &params.node_id),
                     )?;
                     // Drop the artifact once nothing on any canvas references it.
-                    tx.execute(
-                        "DELETE FROM artifact WHERE id = ?1 AND NOT EXISTS\n                         (SELECT 1 FROM canvas_node WHERE artifact_id = ?1)",
-                        [&artifact_id],
-                    )?;
-                    tx.execute(
-                        "DELETE FROM text_content WHERE NOT EXISTS\n                         (SELECT 1 FROM artifact WHERE content_id = text_content.id)",
-                        [],
-                    )?;
-                    tx.execute(
-                        "DELETE FROM drawing_content WHERE NOT EXISTS\n                         (SELECT 1 FROM artifact WHERE content_id = drawing_content.id)",
-                        [],
-                    )?;
+                    delete_artifact_content(tx, &artifact_id)?;
                     Ok(json!({ "revision": bump(tx, &params.canvas_id, expected)? }))
                 })
             }
@@ -1026,6 +993,97 @@ fn artifact(tx: &Transaction, artifact_id: &str) -> Result<Value, RuntimeError> 
     }
 }
 
+/// Insert a text or drawing artifact together with its placement. Manual
+/// creation and proposal commits share this path; `purpose` is preserved for
+/// instruction notes.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn insert_artifact_node(
+    tx: &Transaction,
+    canvas_id: &str,
+    node_id: &str,
+    artifact_id: &str,
+    g: &Geometry,
+    body: &str,
+    drawing: bool,
+    purpose: &str,
+) -> Result<(), RuntimeError> {
+    id("nodeId", node_id)?;
+    id("artifactId", artifact_id)?;
+    g.check()?;
+    let content_id = new_id()?;
+    let (kind, schema_version) = if drawing {
+        tx.execute(
+            "INSERT INTO drawing_content (id, body) VALUES (?1, ?2)",
+            (&content_id, body),
+        )?;
+        ("drawing", DRAWING_SCHEMA_VERSION)
+    } else {
+        tx.execute(
+            "INSERT INTO text_content (id, body, purpose) VALUES (?1, ?2, ?3)",
+            (&content_id, body, purpose),
+        )?;
+        ("text", TEXT_SCHEMA_VERSION)
+    };
+    tx.execute(
+        "INSERT INTO artifact (id, type, schema_version, revision, content_store, content_id)
+         VALUES (?1, ?2, ?3, 1, 'sqlite', ?4)",
+        (artifact_id, kind, schema_version, &content_id),
+    )?;
+    tx.execute(
+        "INSERT INTO canvas_node (id, canvas_id, kind, artifact_id, x, y, width, height)
+         VALUES (?1, ?2, 'artifact', ?3, ?4, ?5, ?6, ?7)",
+        (node_id, canvas_id, artifact_id, g.x, g.y, g.width, g.height),
+    )?;
+    Ok(())
+}
+
+/// Delete an artifact only when no placement references it, then delete that
+/// artifact's specific content row. The content identity is read before the
+/// artifact disappears so unrelated content is never scanned or removed.
+fn delete_artifact_content(tx: &Transaction, artifact_id: &str) -> Result<(), RuntimeError> {
+    let content: Option<(String, String)> = tx
+        .query_row(
+            "SELECT content_id, type FROM artifact WHERE id = ?1",
+            [artifact_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((content_id, kind)) = content else {
+        return Ok(());
+    };
+    let deleted = tx.execute(
+        "DELETE FROM artifact WHERE id = ?1 AND NOT EXISTS
+         (SELECT 1 FROM canvas_node WHERE artifact_id = ?1)",
+        [artifact_id],
+    )?;
+    if deleted == 0 {
+        return Ok(());
+    }
+    match kind.as_str() {
+        "text" => {
+            tx.execute(
+                "DELETE FROM text_content WHERE id = ?1 AND NOT EXISTS
+                 (SELECT 1 FROM artifact WHERE content_id = ?1)",
+                [&content_id],
+            )?;
+        }
+        "drawing" => {
+            tx.execute(
+                "DELETE FROM drawing_content WHERE id = ?1 AND NOT EXISTS
+                 (SELECT 1 FROM artifact WHERE content_id = ?1)",
+                [&content_id],
+            )?;
+        }
+        _ => {
+            return Err(RuntimeError::new(
+                "STORAGE_ERROR",
+                "A stored artifact has an unknown type.",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn canvas_state(tx: &Transaction, canvas_id: &str) -> Result<Value, RuntimeError> {
     let canvas = tx
         .query_row(
@@ -1092,4 +1150,173 @@ fn canvas_state(tx: &Transaction, canvas_id: &str) -> Result<Value, RuntimeError
         json!({ "canvas": canvas, "nodes": nodes, "edges": edges, "artifacts": artifacts,
         "projectGroups": groups, "sessionTiles": tiles }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn call(runtime: &mut Runtime, method: &str, params: Value) -> Value {
+        runtime.call(method, params).unwrap()
+    }
+
+    fn content_rows(runtime: &Runtime, workspace_id: &str, table: &str) -> i64 {
+        runtime.open[workspace_id]
+            .conn
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap()
+    }
+
+    fn text_params(workspace_id: &str, canvas_id: &str, revision: i64, text: &str) -> Value {
+        json!({
+            "workspaceId": workspace_id, "canvasId": canvas_id,
+            "expectedRevision": revision,
+            "x": 0, "y": 0, "width": 240, "height": 160,
+            "text": text,
+        })
+    }
+
+    #[test]
+    fn deleting_a_node_removes_only_its_own_text_or_drawing_content() {
+        let root = tempfile::tempdir().unwrap();
+        let mut runtime = Runtime::new(Some(root.path().to_path_buf()));
+        let workspace = call(&mut runtime, "workspace.create", json!({ "name": "Work" }))
+            ["workspace"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let canvas = call(
+            &mut runtime,
+            "canvas.create",
+            json!({ "workspaceId": workspace, "title": "Plan" }),
+        )["canvas"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let mut params = text_params(&workspace, &canvas, 1, "Keep me");
+        params["purpose"] = json!("instruction");
+        let note = call(&mut runtime, "node.createText", params);
+        let note_artifact = note["artifact"]["id"].as_str().unwrap().to_owned();
+        assert_eq!(note["artifact"]["purpose"], "instruction");
+
+        let drawing = call(
+            &mut runtime,
+            "node.createDrawing",
+            json!({
+                "workspaceId": workspace, "canvasId": canvas, "expectedRevision": 2,
+                "x": 300, "y": 0, "width": 160, "height": 120,
+                "drawing": { "shapes": [{ "kind": "rectangle", "x": 0, "y": 0,
+                    "width": 80, "height": 60, "color": "#123456" }] },
+            }),
+        );
+        let drawing_node = drawing["node"]["id"].as_str().unwrap().to_owned();
+
+        let doomed = call(
+            &mut runtime,
+            "node.createText",
+            text_params(&workspace, &canvas, 3, "Remove me"),
+        );
+        let doomed_node = doomed["node"]["id"].as_str().unwrap().to_owned();
+        call(
+            &mut runtime,
+            "node.delete",
+            json!({ "workspaceId": workspace, "canvasId": canvas,
+                "expectedRevision": 4, "nodeId": doomed_node }),
+        );
+
+        let state = call(
+            &mut runtime,
+            "canvas.open",
+            json!({ "workspaceId": workspace, "canvasId": canvas }),
+        );
+        assert_eq!(state["nodes"].as_array().unwrap().len(), 2);
+        let artifact = state["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|artifact| artifact["id"] == note_artifact.as_str())
+            .expect("the surviving note is readable");
+        assert_eq!(artifact["text"], "Keep me");
+        assert_eq!(artifact["purpose"], "instruction");
+        assert_eq!(content_rows(&runtime, &workspace, "text_content"), 1);
+        assert_eq!(content_rows(&runtime, &workspace, "drawing_content"), 1);
+
+        call(
+            &mut runtime,
+            "node.delete",
+            json!({ "workspaceId": workspace, "canvasId": canvas,
+                "expectedRevision": 5, "nodeId": drawing_node }),
+        );
+        call(
+            &mut runtime,
+            "canvas.open",
+            json!({ "workspaceId": workspace, "canvasId": canvas }),
+        );
+        assert_eq!(content_rows(&runtime, &workspace, "text_content"), 1);
+        assert_eq!(content_rows(&runtime, &workspace, "drawing_content"), 0);
+        assert_eq!(content_rows(&runtime, &workspace, "artifact"), 1);
+    }
+
+    #[test]
+    fn deleting_a_shared_placement_keeps_its_artifact_and_content() {
+        let root = tempfile::tempdir().unwrap();
+        let mut runtime = Runtime::new(Some(root.path().to_path_buf()));
+        let workspace = call(&mut runtime, "workspace.create", json!({ "name": "Work" }))
+            ["workspace"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let canvas = call(
+            &mut runtime,
+            "canvas.create",
+            json!({ "workspaceId": workspace, "title": "Plan" }),
+        )["canvas"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let created = call(
+            &mut runtime,
+            "node.createText",
+            text_params(&workspace, &canvas, 1, "Shared"),
+        );
+        let node = created["node"]["id"].as_str().unwrap().to_owned();
+        let artifact = created["artifact"]["id"].as_str().unwrap().to_owned();
+        let second = new_id().unwrap();
+        runtime.open[&workspace]
+            .conn
+            .execute(
+                "INSERT INTO canvas_node (id, canvas_id, kind, artifact_id, x, y, width, height)
+                 VALUES (?1, ?2, 'artifact', ?3, 300, 0, 240, 160)",
+                (&second, &canvas, &artifact),
+            )
+            .unwrap();
+
+        call(
+            &mut runtime,
+            "node.delete",
+            json!({ "workspaceId": workspace, "canvasId": canvas,
+                "expectedRevision": 2, "nodeId": node }),
+        );
+        assert_eq!(content_rows(&runtime, &workspace, "artifact"), 1);
+        assert_eq!(content_rows(&runtime, &workspace, "text_content"), 1);
+        let state = call(
+            &mut runtime,
+            "canvas.open",
+            json!({ "workspaceId": workspace, "canvasId": canvas }),
+        );
+        assert_eq!(state["nodes"].as_array().unwrap().len(), 1);
+        assert_eq!(state["artifacts"][0]["text"], "Shared");
+
+        call(
+            &mut runtime,
+            "node.delete",
+            json!({ "workspaceId": workspace, "canvasId": canvas,
+                "expectedRevision": 3, "nodeId": second }),
+        );
+        assert_eq!(content_rows(&runtime, &workspace, "artifact"), 0);
+        assert_eq!(content_rows(&runtime, &workspace, "text_content"), 0);
+    }
 }

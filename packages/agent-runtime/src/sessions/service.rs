@@ -2,7 +2,11 @@
 use super::{wire::*, *};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde_json::{json, Value};
-use std::{path::PathBuf, sync::MutexGuard};
+use std::{
+    path::PathBuf,
+    sync::MutexGuard,
+    time::{Duration, Instant},
+};
 
 pub struct SessionService {
     supervisor: Option<SessionSupervisor>,
@@ -276,7 +280,6 @@ impl SessionService {
         session_id: &str,
         attachment: &str,
     ) -> Result<SessionEvent, RuntimeError> {
-        self.saved(owner)?;
         let supervisor = self.supervisor()?;
         let status =
             supervisor.with_session(owner, session_id, |session| Ok(session.status.clone()))?;
@@ -291,6 +294,22 @@ impl SessionService {
         })
     }
 
+    /// Poll one attachment until the host cancels delivery, removes it, or the
+    /// session turns stale, then release it so the session can be subscribed
+    /// again. Releasing twice is safe: a stale attachment is not the current
+    /// controller.
+    pub fn stream(
+        &self,
+        lease: &StreamLease,
+        cancelled: impl Fn() -> bool,
+        deliver: impl FnMut(SessionEvent) -> bool,
+    ) {
+        pump(cancelled, deliver, || {
+            self.event(&lease.owner, &lease.session_id, &lease.attachment_id)
+        });
+        self.release(&lease.owner, &lease.session_id, &lease.attachment_id);
+    }
+
     pub fn release(&self, owner: &SessionOwner, session_id: &str, attachment: &str) {
         if let Some(supervisor) = &self.supervisor {
             let _ = supervisor.detach(owner, session_id, attachment);
@@ -302,6 +321,39 @@ impl SessionService {
             supervisor.shutdown()?;
         }
         Ok(())
+    }
+}
+
+fn pump(
+    cancelled: impl Fn() -> bool,
+    mut deliver: impl FnMut(SessionEvent) -> bool,
+    mut poll: impl FnMut() -> Result<SessionEvent, RuntimeError>,
+) {
+    let mut last = String::new();
+    let mut heartbeat = Instant::now();
+    loop {
+        if cancelled() {
+            return;
+        }
+        // Any failure ends the stream. A missing session or attachment is
+        // terminal, and the remaining error is a poisoned state lock, which
+        // does not clear while this process keeps running.
+        let Ok(event) = poll() else {
+            return;
+        };
+        let status = serde_json::to_string(&event.status).unwrap_or_default();
+        if !event.output.frames.is_empty()
+            || event.output.history_gap
+            || status != last
+            || heartbeat.elapsed() >= Duration::from_secs(1)
+        {
+            if !deliver(event) {
+                return;
+            }
+            last = status;
+            heartbeat = Instant::now();
+        }
+        std::thread::sleep(Duration::from_millis(20));
     }
 }
 
@@ -331,6 +383,61 @@ fn affected(status: &SessionStatus, method: &str, params: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pump_stops_on_errors() {
+        let missing = std::cell::Cell::new(0);
+        pump(
+            || false,
+            |_| true,
+            || {
+                missing.set(missing.get() + 1);
+                Err(RuntimeError::new("NOT_FOUND", "Session not found."))
+            },
+        );
+        assert_eq!(missing.get(), 1);
+
+        let attempts = std::cell::Cell::new(0);
+        pump(
+            || false,
+            |_| true,
+            || {
+                attempts.set(attempts.get() + 1);
+                Err(RuntimeError::new("STORAGE_ERROR", "Transient failure."))
+            },
+        );
+        assert_eq!(attempts.get(), 1);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn stream_release_allows_a_new_attachment() {
+        let root = tempfile::tempdir().unwrap();
+        let service = SessionService::new(None);
+        let supervisor = service.supervisor().unwrap();
+        let owner = super::super::tests::owner();
+        let spec = LaunchSpec {
+            owner: owner.clone(),
+            project_id: new_id().unwrap(),
+            executable: "/bin/bash".into(),
+            argv: vec!["--noprofile".into(), "--norc".into(), "-i".into()],
+            directory: root.path().into(),
+            fallback: false,
+        };
+        let status = supervisor.start(spec, "stream-release", 24, 80).unwrap();
+        let attachment = supervisor.attach(&owner, &status.session_id, 0).unwrap();
+        service.stream(
+            &StreamLease {
+                owner: owner.clone(),
+                session_id: status.session_id.clone(),
+                attachment_id: attachment,
+            },
+            || false,
+            |_| false,
+        );
+        supervisor.attach(&owner, &status.session_id, 0).unwrap();
+        let _ = service.shutdown();
+    }
 
     /// A reservation without a worker never reaches `exited`, which is how a
     /// cleanup that cannot finish looks to every removal path.

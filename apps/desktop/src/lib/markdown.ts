@@ -291,12 +291,3 @@ export function parseInline(text: string, depth = 0): Inline[] {
   }
   return out;
 }
-
-/** Plain text for previews and accessible names. */
-export function plainText(nodes: Inline[]): string {
-  return nodes
-    .map((node) =>
-      node.t === "text" || node.t === "code" ? node.v : plainText(node.c),
-    )
-    .join("");
-}

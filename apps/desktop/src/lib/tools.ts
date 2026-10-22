@@ -82,8 +82,6 @@ export const PRIMARY_TOOLS = TOOLS.filter((item) => item.tool === "select");
 /** Everything from pan to text: the creation/action tools, shown together. */
 export const ACTION_TOOLS = TOOLS.filter((item) => item.tool !== "select");
 
-export const DRAWING_TOOLS: Tool[] = ["draw", "rectangle", "ellipse"];
-
 /** Single-key shortcuts, matching tldraw where the tools overlap. */
 export const TOOL_KEYS: Record<string, Tool> = Object.fromEntries(
   TOOLS.map((item) => [item.key.toLowerCase(), item.tool]),

@@ -1,5 +1,5 @@
 use super::*;
-use crate::sessions::{wire::*, SessionOwner};
+use crate::sessions::{wire::*, SessionOwner, StreamLease};
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
     http::Uri,
@@ -13,6 +13,7 @@ struct Lease {
     owner: SessionOwner,
     session: String,
     attachment: String,
+    cancel: Arc<std::sync::atomic::AtomicBool>,
 }
 
 pub(super) fn route() -> axum::routing::MethodRouter<Arc<HttpState>> {
@@ -112,49 +113,6 @@ async fn connection(mut socket: WebSocket, state: Arc<HttpState>) {
             }
         }
     });
-    let service = state.sessions.clone();
-    let stream_leases = leases.clone();
-    let streamer = tokio::spawn(async move {
-        let mut last = std::collections::HashMap::<String, (String, Instant)>::new();
-        loop {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-            let current = match stream_leases.lock() {
-                Ok(leases) => leases.clone(),
-                Err(_) => break,
-            };
-            last.retain(|id, _| current.iter().any(|lease| &lease.attachment == id));
-            for lease in current {
-                let Ok(permit) = output.try_reserve() else {
-                    continue;
-                };
-                let (service, item) = (service.clone(), lease.clone());
-                let event = tokio::task::spawn_blocking(move || {
-                    service.event(&item.owner, &item.session, &item.attachment)
-                })
-                .await;
-                let Ok(Ok(event)) = event else {
-                    continue;
-                };
-                let status = serde_json::to_string(&event.status).unwrap_or_default();
-                if event.output.frames.is_empty()
-                    && !event.output.history_gap
-                    && last.get(&lease.attachment).is_some_and(|(previous, time)| {
-                        previous == &status && time.elapsed() < Duration::from_secs(1)
-                    })
-                {
-                    continue;
-                }
-                let Ok(encoded) = serde_json::to_string(&event) else {
-                    break;
-                };
-                if encoded.len() > MAX_SESSION_WIRE_BYTES {
-                    break;
-                }
-                last.insert(lease.attachment.clone(), (status, Instant::now()));
-                permit.send(Message::Text(encoded.into()));
-            }
-        }
-    });
     let mut rate_started = Instant::now();
     let mut rate_count = 0;
     let inflight = Arc::new(tokio::sync::Semaphore::new(16));
@@ -239,12 +197,18 @@ async fn connection(mut socket: WebSocket, state: Arc<HttpState>) {
                 owner,
                 session,
                 attachment: attachment.into(),
+                cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             })
         } else {
             None
         };
         if let Some(id) = detach {
             if let Ok(mut leases) = leases.lock() {
+                for lease in leases.iter().filter(|lease| lease.attachment == id) {
+                    lease
+                        .cancel
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                }
                 leases.retain(|lease| lease.attachment != id);
             }
         }
@@ -257,22 +221,59 @@ async fn connection(mut socket: WebSocket, state: Arc<HttpState>) {
             break;
         }
         // The writer prioritizes the queued reply. Only then expose this lease
-        // to the output worker, so initial output cannot outrun subscribe's reply.
+        // to its output stream, so initial output cannot outrun subscribe's reply.
         if let Some(lease) = new_lease {
             if let Ok(mut leases) = leases.lock() {
-                leases.push(lease);
+                leases.push(lease.clone());
             } else {
                 state
                     .sessions
                     .release(&lease.owner, &lease.session, &lease.attachment);
                 break;
             }
+            let target = StreamLease {
+                owner: lease.owner.clone(),
+                session_id: lease.session.clone(),
+                attachment_id: lease.attachment.clone(),
+            };
+            let (service, output, current) =
+                (state.sessions.clone(), output.clone(), leases.clone());
+            let cancel = lease.cancel.clone();
+            let attachment = lease.attachment.clone();
+            let spawn = std::thread::Builder::new()
+                .name("terminal-stream".into())
+                .spawn(move || {
+                    service.stream(
+                        &target,
+                        || cancel.load(std::sync::atomic::Ordering::SeqCst),
+                        |event| {
+                            let Ok(encoded) = serde_json::to_string(&event) else {
+                                return false;
+                            };
+                            if encoded.len() > MAX_SESSION_WIRE_BYTES {
+                                return false;
+                            }
+                            output.blocking_send(Message::Text(encoded.into())).is_ok()
+                        },
+                    );
+                    // A stale session or removed attachment ends this stream.
+                    if let Ok(mut leases) = current.lock() {
+                        leases.retain(|item| item.attachment != attachment);
+                    }
+                });
+            // The lease is already in the cleanup list, so the connection
+            // releases it; the client sees no output and reconnects.
+            if spawn.is_err() {
+                break;
+            }
         }
     }
-    streamer.abort();
     writer.abort();
     if let Ok(leases) = leases.lock() {
         for lease in leases.iter() {
+            lease
+                .cancel
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             state
                 .sessions
                 .release(&lease.owner, &lease.session, &lease.attachment);

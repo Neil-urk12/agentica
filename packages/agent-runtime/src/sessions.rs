@@ -50,6 +50,15 @@ impl SessionOwner {
     }
 }
 
+/// One attached terminal stream. Hosts deliver events and cancel the stream;
+/// `SessionService` owns polling, heartbeat suppression, and error handling.
+#[derive(Clone, Debug)]
+pub struct StreamLease {
+    pub owner: SessionOwner,
+    pub session_id: String,
+    pub attachment_id: String,
+}
+
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ProcessState {
@@ -115,6 +124,55 @@ impl Session {
         if !self.focused && !self.stop.load(std::sync::atomic::Ordering::SeqCst) {
             self.status.attention.raise(kind, None);
         }
+    }
+
+    /// Validate lifecycle changes on every path that mutates status. Repeated
+    /// Stopping requests are cleanup retries, not invalid transitions.
+    fn transition(
+        &mut self,
+        state: ProcessState,
+        exit_code: Option<u32>,
+        exit_signal: Option<String>,
+        error: Option<String>,
+    ) -> Result<(), RuntimeError> {
+        let current = self.status.state;
+        if current == state {
+            if state == ProcessState::Stopping {
+                return Ok(());
+            }
+            return Err(RuntimeError::new(
+                "CONFLICT",
+                "Invalid session lifecycle transition.",
+            ));
+        }
+        if !matches!(
+            (current, state),
+            (
+                ProcessState::Starting,
+                ProcessState::Running | ProcessState::Stopping | ProcessState::Failed
+            ) | (
+                ProcessState::Running,
+                ProcessState::Stopping | ProcessState::Exited | ProcessState::Failed
+            ) | (
+                ProcessState::Stopping,
+                ProcessState::Exited | ProcessState::Failed
+            )
+        ) {
+            return Err(RuntimeError::new(
+                "CONFLICT",
+                "Invalid session lifecycle transition.",
+            ));
+        }
+        self.status.state = state;
+        self.status.exit_code = exit_code;
+        self.status.exit_signal = exit_signal;
+        self.status.error = error;
+        match state {
+            ProcessState::Exited => self.exit_attention(AttentionKind::Exited),
+            ProcessState::Failed => self.exit_attention(AttentionKind::Failed),
+            _ => {}
+        }
+        Ok(())
     }
 }
 
@@ -442,7 +500,7 @@ impl SessionSupervisor {
                 session
                     .stop
                     .store(true, std::sync::atomic::Ordering::SeqCst);
-                session.status.state = ProcessState::Stopping;
+                session.transition(ProcessState::Stopping, None, None, None)?;
             }
             Ok(session.status.clone())
         })
@@ -516,34 +574,7 @@ impl SessionSupervisor {
                     "This session identity is stale or belongs to another tile.",
                 )
             })?;
-        let current = session.status.state;
-        if !matches!(
-            (current, state),
-            (
-                ProcessState::Starting,
-                ProcessState::Running | ProcessState::Stopping | ProcessState::Failed
-            ) | (
-                ProcessState::Running,
-                ProcessState::Stopping | ProcessState::Exited | ProcessState::Failed
-            ) | (
-                ProcessState::Stopping,
-                ProcessState::Exited | ProcessState::Failed
-            )
-        ) {
-            return Err(RuntimeError::new(
-                "CONFLICT",
-                "Invalid session lifecycle transition.",
-            ));
-        }
-        session.status.state = state;
-        session.status.exit_code = exit_code;
-        session.status.exit_signal = exit_signal;
-        session.status.error = error;
-        match state {
-            ProcessState::Exited => session.exit_attention(AttentionKind::Exited),
-            ProcessState::Failed => session.exit_attention(AttentionKind::Failed),
-            _ => {}
-        }
+        session.transition(state, exit_code, exit_signal, error)?;
         Ok(session.status.clone())
     }
 }
@@ -695,6 +726,98 @@ mod tests {
             )
             .unwrap();
         assert!(!stopped.attention.raised);
+    }
+
+    #[test]
+    fn repeated_stop_and_cleanup_transitions_are_idempotent() {
+        let supervisor = SessionSupervisor::new().unwrap();
+        let owner = owner();
+        let (status, _) = supervisor.reserve_start(owner.clone(), "startup").unwrap();
+        assert_eq!(
+            supervisor
+                .request_stop(&owner, &status.session_id)
+                .unwrap()
+                .state,
+            ProcessState::Stopping
+        );
+        // Stop while starting and a repeated cleanup retry are both no-ops.
+        assert_eq!(
+            supervisor
+                .request_stop(&owner, &status.session_id)
+                .unwrap()
+                .state,
+            ProcessState::Stopping
+        );
+        assert_eq!(
+            supervisor
+                .transition(
+                    &owner,
+                    &status.session_id,
+                    ProcessState::Stopping,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap()
+                .state,
+            ProcessState::Stopping
+        );
+        let exited = supervisor
+            .transition(
+                &owner,
+                &status.session_id,
+                ProcessState::Exited,
+                Some(0),
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(exited.state, ProcessState::Exited);
+        // Stop-initiated exits do not raise attention.
+        assert!(!exited.attention.raised);
+    }
+
+    #[test]
+    fn terminal_attention_is_emitted_once() {
+        let supervisor = SessionSupervisor::new().unwrap();
+        let owner = owner();
+        let (status, _) = supervisor.reserve_start(owner.clone(), "start").unwrap();
+        supervisor
+            .transition(
+                &owner,
+                &status.session_id,
+                ProcessState::Running,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let exited = supervisor
+            .transition(
+                &owner,
+                &status.session_id,
+                ProcessState::Exited,
+                Some(0),
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(exited.attention.kind, Some(AttentionKind::Exited));
+        let count = exited.attention.count;
+        assert!(supervisor
+            .transition(
+                &owner,
+                &status.session_id,
+                ProcessState::Exited,
+                Some(0),
+                None,
+                None,
+            )
+            .is_err());
+        assert_eq!(
+            supervisor.status(&owner).unwrap().unwrap().attention.count,
+            count
+        );
     }
 
     #[test]
@@ -937,8 +1060,12 @@ mod tests {
                 .state,
             ProcessState::Exited
         );
+        // A job may linger as a zombie until its reaper (init or PID 1) collects it.
         for pid in pids {
-            assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
+            if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+                let state = stat.rsplit_once(')').unwrap().1.trim_start().chars().next();
+                assert_eq!(state, Some('Z'), "job {pid} is still running");
+            }
         }
         let replacement = supervisor
             .0
@@ -1025,10 +1152,27 @@ mod tests {
         let supervisor = Active(SessionSupervisor::new().unwrap());
         let mut spec = shell(root.path());
         spec.executable = "/bin/bash".into();
-        // setsid leaves the session cleanup signals but keeps the terminal open.
-        spec.argv = vec!["-c".into(), "setsid -f sleep 3; sleep 30".into()];
+        let pidfile = root.path().join("escaped.pid");
+        // setsid leaves the session cleanup signals. The child exits on its
+        // own; without subreaping the OS reaper must collect it.
+        spec.argv = vec![
+            "-c".into(),
+            format!(
+                "setsid -f sh -c 'echo $$ > {}; exit 0'; sleep 30",
+                pidfile.display()
+            ),
+        ];
         let status = supervisor.0.start(spec.clone(), "escaped", 24, 80).unwrap();
         running(&supervisor.0, &spec.owner);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !pidfile.exists() && std::time::Instant::now() < deadline {
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let escaped: u32 = std::fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
         thread::sleep(std::time::Duration::from_millis(300));
         supervisor
             .0
@@ -1039,6 +1183,21 @@ mod tests {
             .wait_stopped(&spec.owner, &status.session_id)
             .unwrap();
         assert_eq!(exit.state, ProcessState::Exited);
+        // The escaped child is reaped by PID 1 or the nearest subreaper, so
+        // /proc may keep it as a zombie. Only a zombie owned by this process
+        // would mean the test leaked it.
+        if let Ok(stat) = std::fs::read_to_string(format!("/proc/{escaped}/stat")) {
+            let (_, fields) = stat.rsplit_once(')').expect("stat has a comm field");
+            let parent = fields
+                .split_whitespace()
+                .nth(1)
+                .and_then(|pid| pid.parse::<u32>().ok());
+            assert_ne!(
+                parent,
+                Some(std::process::id()),
+                "the test process retained the escaped child as a zombie"
+            );
+        }
     }
 
     #[test]

@@ -1000,17 +1000,47 @@
     // Tracked so collapsing or expanding a group rerenders these nodes.
     const groupView = expandedGroups;
     untrack(() => {
+      const renderedById = new Map(
+        nodes.map((node) => [node.id, node] as const),
+      );
+      const artifactsById = new Map(
+        (document?.artifacts ?? []).map(
+          (artifact) => [artifact.id, artifact] as const,
+        ),
+      );
+      const turnsByNodeId = new Map<string, (typeof turns)[number]>();
+      for (const turn of turns) {
+        if (!turnsByNodeId.has(turn.promptNodeId))
+          turnsByNodeId.set(turn.promptNodeId, turn);
+        if (turn.replyNodeId && !turnsByNodeId.has(turn.replyNodeId))
+          turnsByNodeId.set(turn.replyNodeId, turn);
+      }
+      const groupsById = new Map(
+        (document?.projectGroups ?? []).map(
+          (group) => [group.id, group] as const,
+        ),
+      );
+      const tilesByProject = new Map<
+        string,
+        NonNullable<typeof document>["sessionTiles"]
+      >();
+      for (const tile of document?.sessionTiles ?? []) {
+        const projectTiles = tilesByProject.get(tile.projectId);
+        if (projectTiles) projectTiles.push(tile);
+        else tilesByProject.set(tile.projectId, [tile]);
+      }
       const asNode = (
         node: NonNullable<typeof document>["nodes"][number],
-        artifacts: NonNullable<typeof document>["artifacts"],
+        artifacts: Map<
+          string,
+          NonNullable<typeof document>["artifacts"][number]
+        >,
         preview = false,
       ): Node => {
-        const artifact = artifacts.find((a) => a.id === node.artifactId)!;
-        const turn = turns.find(
-          (t) => t.promptNodeId === node.id || t.replyNodeId === node.id,
-        );
+        const artifact = artifacts.get(node.artifactId)!;
+        const turn = turnsByNodeId.get(node.id);
         return {
-          ...nodes.find((item) => item.id === node.id),
+          ...renderedById.get(node.id),
           id: preview ? `preview-${node.id}` : node.id,
           type: artifact.type === "drawing" ? "drawing" : "text",
           position: { x: node.x, y: node.y },
@@ -1066,9 +1096,7 @@
         const workspaceId = editorState.workspace.workspace.id;
         for (const group of document.projectGroups) {
           const collapsed = groupView[group.id] !== true;
-          const tiles = document.sessionTiles.filter(
-            (t) => t.projectId === group.id,
-          );
+          const tiles = tilesByProject.get(group.id) ?? [];
           const changesTile = tiles.find((t) => t.kind === "changes");
           const processTiles = tiles.filter((t) => t.kind !== "changes");
           const running = sessions.summary(
@@ -1077,7 +1105,7 @@
             group.id,
           );
           rendered.push({
-            ...nodes.find((n) => n.id === group.id),
+            ...renderedById.get(group.id),
             id: group.id,
             type: "project",
             position: { x: group.x, y: group.y },
@@ -1138,9 +1166,7 @@
           });
         }
         for (const tile of document.sessionTiles) {
-          const group = document.projectGroups.find(
-            (g) => g.id === tile.projectId,
-          )!;
+          const group = groupsById.get(tile.projectId)!;
           const owner = {
             workspaceId,
             canvasId: document.canvas.id,
@@ -1148,7 +1174,7 @@
           };
           if (tile.kind === "changes") {
             rendered.push({
-              ...nodes.find((n) => n.id === tile.id),
+              ...renderedById.get(tile.id),
               id: tile.id,
               type: "changes",
               parentId: group.id,
@@ -1188,7 +1214,7 @@
             continue;
           }
           rendered.push({
-            ...nodes.find((n) => n.id === tile.id),
+            ...renderedById.get(tile.id),
             id: tile.id,
             type: "session",
             parentId: group.id,
@@ -1220,8 +1246,7 @@
         }
       }
       rendered.push(
-        ...(document?.nodes.map((node) => asNode(node, document.artifacts)) ??
-          []),
+        ...(document?.nodes.map((node) => asNode(node, artifactsById)) ?? []),
       );
       edges =
         document?.edges.map((edge) => ({
@@ -1241,10 +1266,15 @@
                 : [op.nodeId],
             ),
           );
+          const stagedArtifacts = new Map(
+            staged.artifacts.map(
+              (artifact) => [artifact.id, artifact] as const,
+            ),
+          );
           rendered.push(
             ...staged.nodes
               .filter((n) => touched.has(n.id))
-              .map((n) => asNode(n, staged.artifacts, true)),
+              .map((n) => asNode(n, stagedArtifacts, true)),
           );
           edges.push(
             ...staged.edges
@@ -1321,17 +1351,37 @@
       void sessions.reconcile(workspaceId, document);
   });
   $effect(() => {
+    const document = editorState.document;
     const placements = nodes.map(({ id, position, type }) => ({
       id,
       position,
       type,
     }));
     untrack(() => {
+      if (!document) return;
+      const nodeById = new Map(
+        document.nodes.map((node) => [node.id, node] as const),
+      );
+      const groupById = new Map(
+        document.projectGroups.map((group) => [group.id, group] as const),
+      );
+      const tileById = new Map(
+        document.sessionTiles.map((tile) => [tile.id, tile] as const),
+      );
       for (const { id, position, type } of placements) {
-        if (type === "project") editor.placeProject(id, position);
-        else if (type === "session" || type === "changes")
-          editor.placeSessionTile(id, position);
-        else editor.placeNode(id, position);
+        if (type === "project") {
+          const group = groupById.get(id);
+          if (group && (group.x !== position.x || group.y !== position.y))
+            editor.placeProject(id, position);
+        } else if (type === "session" || type === "changes") {
+          const tile = tileById.get(id);
+          if (tile && (tile.x !== position.x || tile.y !== position.y))
+            editor.placeSessionTile(id, position);
+        } else {
+          const node = nodeById.get(id);
+          if (node && (node.x !== position.x || node.y !== position.y))
+            editor.placeNode(id, position);
+        }
       }
     });
   });
@@ -2541,34 +2591,6 @@
               {/each}
             </fieldset>
           {/if}
-
-          <!--
-          <fieldset class="grid" disabled={editorState.busy}>
-            <legend>Canvas view</legend>
-            {#each ["x", "y", "zoom"] as field}
-              {@const property = field as "x" | "y" | "zoom"}
-              <label for={`view-${field}`}>View {field}</label>
-              <input
-                id={`view-${field}`}
-                type="number"
-                step="any"
-                min={field === "zoom" ? LIMITS.minZoom : -LIMITS.coordinate}
-                max={field === "zoom" ? LIMITS.maxZoom : LIMITS.coordinate}
-                value={editorState.document.canvas.viewport[property]}
-                oninput={(event) => {
-                  if (
-                    event.currentTarget.validity.valid &&
-                    event.currentTarget.value !== ""
-                  )
-                    editor.setViewport({
-                      ...editorState.document!.canvas.viewport,
-                      [property]: event.currentTarget.valueAsNumber,
-                    });
-                }}
-              />
-            {/each}
-          </fieldset>
-          -->
         </aside>
       {/if}
     </div>

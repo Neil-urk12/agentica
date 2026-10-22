@@ -41,11 +41,12 @@ pub(super) fn launch(
     let result = spawn(&supervisor, spec, &session_id, &stop, size);
     if let Err(error) = result {
         let _ = supervisor.with_session(&owner, &session_id, |session| {
-            session.status.state = ProcessState::Failed;
-            session.status.error =
-                Some(format!("Session launch failed: {error}. Retry explicitly."));
-            session.exit_attention(AttentionKind::Failed);
-            Ok(())
+            session.transition(
+                ProcessState::Failed,
+                None,
+                None,
+                Some(format!("Session launch failed: {error}. Retry explicitly.")),
+            )
         });
     }
 }
@@ -130,11 +131,17 @@ fn spawn(
     };
     if supervisor
         .with_session(&spec.owner, session_id, |session| {
-            session.status.state = if stop.load(Ordering::SeqCst) {
+            let state = if stop.load(Ordering::SeqCst) {
                 ProcessState::Stopping
             } else {
                 ProcessState::Running
             };
+            if let Err(error) = session.transition(state, None, None, None) {
+                // A stop request may win the race while the child is spawning.
+                if session.status.state != ProcessState::Stopping {
+                    return Err(error);
+                }
+            }
             session.status.executable = Some(spec.executable.to_string_lossy().into_owned());
             session.status.shell_fallback = spec.fallback;
             session.status.project_id = Some(spec.project_id.clone());
@@ -155,8 +162,7 @@ fn spawn(
             _ => {}
         }
         let _ = supervisor.with_session(&spec.owner, session_id, |session| {
-            session.status.state = ProcessState::Stopping;
-            Ok(())
+            session.transition(ProcessState::Stopping, None, None, None)
         });
         match linux::cleanup(pid as i32, child.as_mut()) {
             Ok((code, signal)) => {
@@ -174,13 +180,9 @@ fn spawn(
                 // detachment, so later output from an escaped process is dropped.
                 detached.store(true, Ordering::SeqCst);
                 let _ = supervisor.with_session(&spec.owner, session_id, |session| {
-                    session.status.state = ProcessState::Exited;
-                    session.status.exit_code = code;
-                    session.status.exit_signal = signal;
+                    let result = session.transition(ProcessState::Exited, code, signal, None);
                     session.process = None;
-                    session.status.error = None;
-                    session.exit_attention(AttentionKind::Exited);
-                    Ok(())
+                    result
                 });
                 return Ok(());
             }
