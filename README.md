@@ -105,6 +105,16 @@ rejected edit a third time; edits staged before then remain a partial proposal.
 The whole turn's time limit defaults to 180 seconds and can be changed in
 **Settings > Advanced > Agent time limit** (30–600 seconds) for slow models.
 
+A **Task** card to the left of the latest prompt shows what the agent is
+working on: the goal (the prompt's first line), the current step (reading the
+canvas, waiting for the model, or staging edits, with the request count), and
+a checklist of staged edits in plain words, rejected edits, and the model's
+own notes about its plan. When the turn ends it shows the outcome, for example
+"1 change proposed · review to apply", "Applied 2 changes", or the error. The
+card is a view of the turn and is never saved: after a reload it is rebuilt
+from the saved proposal (without rejected edits or notes). Drag it aside for
+this session or hide a finished one with its close button.
+
 ## Canvas files
 
 Use **Add a file** in the canvas toolbar, the composer, or the empty-canvas

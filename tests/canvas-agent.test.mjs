@@ -766,6 +766,8 @@ test("progress reports each request, staged edit, and rejection", async (t) => {
     stagedEdits: 0,
     rejectedToolCalls: 0,
     toolsEnabled: true,
+    phase: "thinking",
+    steps: [],
   });
   assert.ok(
     progress.some(
@@ -778,7 +780,16 @@ test("progress reports each request, staged edit, and rejection", async (t) => {
     stagedEdits: 1,
     rejectedToolCalls: 1,
     toolsEnabled: true,
+    phase: "thinking",
+    steps: [
+      { kind: "edit", text: "Rewrite text “Staged”" },
+      {
+        kind: "rejected",
+        text: progress.at(-1).steps[1].text,
+      },
+    ],
   });
+  assert.match(progress.at(-1).steps[1].text, /context|target/i);
 });
 
 test("progress labels stay compact and distinguish staged from rejected calls", () => {

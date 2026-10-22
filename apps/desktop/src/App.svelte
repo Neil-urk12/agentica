@@ -14,6 +14,9 @@
   import ViewportSync from "./lib/components/ViewportSync.svelte";
   import DesignReview from "./lib/components/DesignReview.svelte";
   import SelectionBar from "./lib/components/SelectionBar.svelte";
+  import TaskNode from "./lib/components/TaskNode.svelte";
+  import { TASK_NODE, taskView } from "./lib/agent-task.ts";
+  import type { CanvasAgentStep } from "./lib/canvas-harness.ts";
   import {
     expandToGroups,
     followGroups,
@@ -125,6 +128,7 @@
     project: ProjectNode,
     session: SessionNode,
     changes: ChangesNode,
+    task: TaskNode,
   };
 
   const editor = new Editor(
@@ -248,6 +252,14 @@
   let toolbarOpen = $state(false);
   let generating = $state(false);
   let agentProgress = $state<CanvasAgentProgress | null>(null);
+  /** The turn whose live progress `agentProgress` reports. */
+  let agentTurnId = $state("");
+  /** Finished turns' harness logs, kept for this page session. */
+  let taskLogs = $state.raw<Record<string, CanvasAgentStep[]>>({});
+  /** Tasks hidden with their close button, per canvas in browser storage. */
+  let dismissedTasks = $state.raw<Set<string>>(new Set());
+  /** Where a task node was dragged to; task nodes are never saved. */
+  let taskPositions: Record<string, { x: number; y: number }> = {};
   let promptError = $state("");
   let toolsNotice = $state("");
   let conversationAbort: AbortController | undefined;
@@ -290,7 +302,8 @@
           !n.id.startsWith("preview-") &&
           n.type !== "project" &&
           n.type !== "session" &&
-          n.type !== "changes",
+          n.type !== "changes" &&
+          n.type !== "task",
       )
       .map((n) => n.id),
   );
@@ -693,6 +706,43 @@
     return generationTask;
   }
 
+  const dismissedKey = (canvasId: string) =>
+    `agentica.dismissedTasks.${canvasId}`;
+
+  /** Hide a finished task node; the choice is kept for this canvas. */
+  function dismissTask(canvasId: string, turnId: string) {
+    dismissedTasks = new Set([...dismissedTasks, turnId]);
+    try {
+      localStorage.setItem(
+        dismissedKey(canvasId),
+        JSON.stringify([...dismissedTasks].slice(-50)),
+      );
+    } catch {
+      // Hiding still works for this session when storage is unavailable.
+    }
+  }
+
+  // Each canvas restores its own hidden tasks.
+  let dismissedCanvasId = "";
+  $effect(() => {
+    const canvasId = editorState.document?.canvas.id ?? "";
+    if (canvasId === dismissedCanvasId) return;
+    dismissedCanvasId = canvasId;
+    taskPositions = {};
+    let hidden: string[] = [];
+    try {
+      const raw = canvasId
+        ? localStorage.getItem(dismissedKey(canvasId))
+        : null;
+      const parsed: unknown = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(parsed))
+        hidden = parsed.filter((id): id is string => typeof id === "string");
+    } catch {
+      hidden = [];
+    }
+    dismissedTasks = new Set(hidden);
+  });
+
   function openReview(nodeId: string) {
     const document = editorState.document;
     if (!document) return;
@@ -852,6 +902,15 @@
             "The prompt could not be saved. Retry after saving your edits.",
         );
       turnId = start.turn.id;
+      agentTurnId = turnId;
+      // A retried turn starts a fresh task log and is shown again.
+      if (taskLogs[turnId] || dismissedTasks.has(turnId)) {
+        const { [turnId]: _previous, ...rest } = taskLogs;
+        taskLogs = rest;
+        const shown = new Set(dismissedTasks);
+        shown.delete(turnId);
+        dismissedTasks = shown;
+      }
       controller.signal.throwIfAborted();
       const { reply, operations } = await runCanvasAgent(start, {
         signal: controller.signal,
@@ -897,6 +956,13 @@
       }
       return !!turnId;
     } finally {
+      // Remember the live log so the finished task keeps rejected edits and
+      // the model's notes until the page is reloaded. The progress callback
+      // assigns it, which control-flow narrowing cannot see.
+      const finalProgress = agentProgress as CanvasAgentProgress | null;
+      if (turnId && finalProgress)
+        taskLogs = { ...taskLogs, [turnId]: finalProgress.steps };
+      agentTurnId = "";
       generating = false;
       agentProgress = null;
       if (conversationAbort === controller) conversationAbort = undefined;
@@ -1259,6 +1325,11 @@
     const currentTool = tool;
     const editable = connected && !editorState.busy;
     const turns = editorState.turns;
+    // Tracked so the task node follows live agent progress.
+    const progress = agentProgress;
+    const progressTurn = agentTurnId;
+    const logs = taskLogs;
+    const hiddenTasks = dismissedTasks;
     const revision = sessionRevision;
     const pastingNow = pasting;
     // Tracked so collapsing or expanding a group rerenders these nodes.
@@ -1594,6 +1665,44 @@
             "The proposal preview is stale. Discard it and regenerate from current content.";
         }
       }
+      // The latest turn's task sits left of its prompt card. It is a view of
+      // the turn, never saved; dragging it only moves it for this session.
+      const latest = turns.reduce<(typeof turns)[number] | undefined>(
+        (best, turn) => (!best || turn.sequence > best.sequence ? turn : best),
+        undefined,
+      );
+      const promptCard =
+        latest &&
+        document?.nodes.find((node) => node.id === latest.promptNodeId);
+      if (latest && promptCard && !hiddenTasks.has(latest.id)) {
+        const id = `task-${latest.id}`;
+        const task = taskView(
+          latest,
+          progressTurn === latest.id ? progress : null,
+          logs[latest.id] ?? null,
+        );
+        rendered.push({
+          id,
+          type: "task",
+          position: taskPositions[id] ?? {
+            x: promptCard.x - TASK_NODE.width - TASK_NODE.gap,
+            y: promptCard.y,
+          },
+          width: TASK_NODE.width,
+          selectable: false,
+          connectable: false,
+          focusable: false,
+          deletable: false,
+          zIndex: 500,
+          data: {
+            task,
+            onDismiss:
+              task.state === "working"
+                ? undefined
+                : () => dismissTask(document!.canvas.id, latest.id),
+          },
+        });
+      }
       nodes = rendered;
       if (document && selectionCanvasId !== document.canvas.id) {
         selectionCanvasId = document.canvas.id;
@@ -1658,13 +1767,17 @@
       const positions = followGroups(
         new Map(
           placements
-            .filter(({ type }) => type !== "project" && type !== "session")
+            .filter(
+              ({ type }) =>
+                type !== "project" && type !== "session" && type !== "task",
+            )
             .map(({ id, position }) => [id, position]),
         ),
         documentNodes,
       );
       for (const { id, position, type } of placements) {
-        if (type === "project") editor.placeProject(id, position);
+        if (type === "task") taskPositions[id] = position;
+        else if (type === "project") editor.placeProject(id, position);
         else if (type === "session" || type === "changes")
           editor.placeSessionTile(id, position);
         else editor.placeNode(id, positions.get(id) ?? position);

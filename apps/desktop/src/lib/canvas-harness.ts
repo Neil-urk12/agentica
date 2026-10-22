@@ -11,6 +11,7 @@ import {
   stageOperations,
   systemPrompt,
 } from "./canvas-agent.ts";
+import { describeOperation } from "./agent-task.ts";
 
 /** Limits the harness owns; reads are budgeted by the runtime instead. */
 export const BUDGET = Object.freeze({
@@ -36,6 +37,12 @@ const BUDGET_NAMES: Record<keyof Budget, string> = {
   ms: "time",
 };
 
+/** One line of a turn's task log, shown in the task node. */
+export interface CanvasAgentStep {
+  kind: "edit" | "rejected" | "note";
+  text: string;
+}
+
 /** Live counters shown while a turn generates. */
 export interface CanvasAgentProgress {
   requests: number;
@@ -43,6 +50,10 @@ export interface CanvasAgentProgress {
   stagedEdits: number;
   rejectedToolCalls: number;
   toolsEnabled: boolean;
+  /** Waiting for the model, or applying the edits it asked for. */
+  phase: "thinking" | "staging";
+  /** Edits staged or rejected, and the model's own notes, in order. */
+  steps: CanvasAgentStep[];
 }
 
 /** One compact line for the composer, for example "Request 2 of 8 · 1 edit staged". */
@@ -176,6 +187,8 @@ export async function runCanvasTurn(
   const callIds = new Set<string>();
   let requests = 0;
   let rejectedToolCalls = 0;
+  let phase: CanvasAgentProgress["phase"] = "thinking";
+  const steps: CanvasAgentStep[] = [];
   /** Identical rejected calls, keyed by tool name and arguments. */
   const rejections = new Map<string, number>();
   const report = () =>
@@ -185,12 +198,15 @@ export async function runCanvasTurn(
       stagedEdits: operations.length,
       rejectedToolCalls,
       toolsEnabled: deps.tools,
+      phase,
+      steps: [...steps],
     });
 
   async function loop(): Promise<TurnResult> {
     for (let round = 0; round < budget.rounds; round++) {
       signal.throwIfAborted();
       requests = round + 1;
+      phase = "thinking";
       report();
       const body = JSON.stringify({
         ...deps.request,
@@ -254,7 +270,11 @@ export async function runCanvasTurn(
           `The model requested ${calls.length} canvas edits in one response; at most ${budget.perResponse} are allowed.`,
         );
       toolCalls += calls.length;
-      if (message.content?.trim()) lastText = message.content.trim();
+      // Text sent alongside tool calls is the model's own account of its plan.
+      const note = message.content?.trim();
+      if (note) steps.push({ kind: "note", text: note.slice(0, 500) });
+      if (note) lastText = note;
+      phase = "staging";
       messages.push({
         role: "assistant",
         content: message.content ?? null,
@@ -347,10 +367,12 @@ export async function runCanvasTurn(
       stageOperations(start.context, next);
       operations = next;
       lastToolError = "";
+      steps.push({ kind: "edit", text: describeOperation(operation) });
       return { status: "preview-only", operation };
     } catch (error) {
       lastToolError =
         error instanceof Error ? error.message : "Invalid canvas operation.";
+      steps.push({ kind: "rejected", text: lastToolError });
       return { status: "rejected", error: lastToolError };
     }
   }
