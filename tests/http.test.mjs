@@ -2360,17 +2360,7 @@ test("dragging a reopened canvas pans from its saved viewport", async () => {
       "the connected status",
     );
     for (const label of ["Saved view", "Panned canvas"]) {
-      const card = `[...document.querySelectorAll('.cards .card')].find((item) => item.textContent.includes(${JSON.stringify(label)}))`;
-      await waitFor(
-        browser,
-        `${card} && !(${card}).disabled`,
-        `the ${label} card`,
-      );
-      await evaluate(
-        browser,
-        `(${card}).focus(); (${card}).scrollIntoView({ block: 'center' })`,
-      );
-      await clickAt(browser, await boxByText(browser, ".cards .card", label));
+      await openCard(browser, label);
     }
     const transform = `(() => {
       const match = /translate\\(([-\\d.]+)px, ([-\\d.]+)px\\) scale\\(([-\\d.]+)\\)/.exec(document.querySelector('.svelte-flow__viewport')?.style.transform ?? '');
@@ -2495,17 +2485,7 @@ test("Ctrl+Z undoes an accidental drag in the rendered app and saves it", async 
       "the connected status",
     );
     for (const label of ["Undo history", "Undo canvas"]) {
-      const card = `[...document.querySelectorAll('.cards .card')].find((item) => item.textContent.includes(${JSON.stringify(label)}))`;
-      await waitFor(
-        browser,
-        `${card} && !(${card}).disabled`,
-        `the ${label} card`,
-      );
-      await evaluate(
-        browser,
-        `(${card}).focus(); (${card}).scrollIntoView({ block: 'center' })`,
-      );
-      await clickAt(browser, await boxByText(browser, ".cards .card", label));
+      await openCard(browser, label);
     }
     const nodeSelector = `.svelte-flow__node[data-id="${node.id}"]`;
     await waitFor(
@@ -2649,7 +2629,8 @@ test("annotating a design proposes a revised copy beside the original", async ()
         const body = JSON.parse(options.body);
         window.__providerRequests.push(body);
         if (body.messages.at(-1).role === 'user') {
-          const input = JSON.parse(body.messages.at(-1).content);
+          const content = body.messages.at(-1).content;
+          const input = JSON.parse(content.slice(content.indexOf('<canvas-data>') + 14, content.lastIndexOf('</canvas-data>')));
           const operation = {op:'createHtml',...input.proposalAnchor,width:960,height:640,html:'<!doctype html><h1>Launch faster, today</h1>'};
           return new Response(JSON.stringify({choices:[{message:{content:null,tool_calls:[{id:crypto.randomUUID(),type:'function',function:{name:'canvas_edit',arguments:JSON.stringify(operation)}}]}}]}), {headers:{'Content-Type':'application/json'}});
         }
@@ -2683,17 +2664,7 @@ test("annotating a design proposes a revised copy beside the original", async ()
       "the connected status",
     );
     for (const label of ["Design review", "Landing review"]) {
-      const card = `[...document.querySelectorAll('.cards .card')].find((item) => item.textContent.includes(${JSON.stringify(label)}))`;
-      await waitFor(
-        browser,
-        `${card} && !(${card}).disabled`,
-        `the ${label} card`,
-      );
-      await evaluate(
-        browser,
-        `(${card}).focus(); (${card}).scrollIntoView({ block: 'center' })`,
-      );
-      await clickAt(browser, await boxByText(browser, ".cards .card", label));
+      await openCard(browser, label);
     }
     const annotate = `[data-id="${designId}"] [aria-label^="Annotate design"]`;
     await waitFor(
@@ -2767,25 +2738,25 @@ test("annotating a design proposes a revised copy beside the original", async ()
       `!document.querySelector('.review') && !!document.querySelector('.design.preview')`,
       "the proposed revision",
     );
-    const request = JSON.parse(
-      await evaluate(
-        browser,
-        `JSON.stringify(window.__providerRequests[0].messages.at(-1).content)`,
-      ),
+    const request = await evaluate(
+      browser,
+      `window.__providerRequests[0].messages.at(-1).content`,
     );
-    const input = JSON.parse(request);
-    assert.match(input.prompt, new RegExp(`^Revise design ${designId} `));
+    const input = JSON.parse(
+      /<canvas-data>\n([\s\S]*)\n<\/canvas-data>/.exec(request)[1],
+    );
+    assert.match(request, new RegExp(`Revise design ${designId} `));
     assert.match(
-      input.prompt,
+      request,
       /1\. \[At 50% across, 1\d% down, on header > h1\.hero "Launch faster"\] Make the headline bolder/,
     );
-    assert.match(input.prompt, /2\. \[Whole design\] Use a warmer palette/);
+    assert.match(request, /2\. \[Whole design\] Use a warmer palette/);
     assert.deepEqual(
-      input.canvasContext.nodes.map((node) => node.id),
+      input.writeScope.nodes.map((node) => node.id),
       [designId],
       "only the reviewed design is sent as context",
     );
-    assert.equal(input.canvasContext.artifacts[0].html, original);
+    assert.equal(input.writeScope.artifacts[0].html, original);
 
     // The task node beside the prompt card lists what the agent staged.
     const taskText = () =>
@@ -2969,17 +2940,7 @@ test("box selection groups, moves, ungroups, and deletes canvas objects", async 
       "the connected status",
     );
     for (const label of ["Box selection", "Grouping canvas"]) {
-      const card = `[...document.querySelectorAll('.cards .card')].find((item) => item.textContent.includes(${JSON.stringify(label)}))`;
-      await waitFor(
-        browser,
-        `${card} && !(${card}).disabled`,
-        `the ${label} card`,
-      );
-      await evaluate(
-        browser,
-        `(${card}).focus(); (${card}).scrollIntoView({ block: 'center' })`,
-      );
-      await clickAt(browser, await boxByText(browser, ".cards .card", label));
+      await openCard(browser, label);
     }
     await waitFor(
       browser,
@@ -3177,17 +3138,7 @@ test("Retry request reuses the failed prompt card", async () => {
       "the connected status",
     );
     for (const label of ["Retry workspace", "Retry canvas"]) {
-      const cardSelector = `[...document.querySelectorAll('.cards .card')].find((item) => item.textContent.includes(${JSON.stringify(label)}))`;
-      await waitFor(
-        browser,
-        `${cardSelector} && !(${cardSelector}).disabled`,
-        `the ${label} card`,
-      );
-      await evaluate(
-        browser,
-        `(${cardSelector}).focus(); (${cardSelector}).scrollIntoView({ block: 'center' })`,
-      );
-      await clickAt(browser, await boxByText(browser, ".cards .card", label));
+      await openCard(browser, label);
     }
     const retry = `[data-id="${card}"] .card-retry`;
     await waitFor(

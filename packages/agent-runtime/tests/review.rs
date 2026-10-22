@@ -200,7 +200,7 @@ fn v6_upgrade_preserves_changes_tiles_and_migration_failure_rolls_back() {
         .join("workspace.sqlite3");
     let mut conn = rusqlite::Connection::open(&path).unwrap();
     // Remove everything later migrations add so the file really is version 6.
-    conn.execute_batch("DROP TABLE file_chunk; DROP TABLE file_upload; DROP TABLE file_content; DROP TABLE conversation_read; DROP TABLE review_record; ALTER TABLE changes_tile DROP COLUMN review_revision; PRAGMA user_version=6;").unwrap();
+    conn.execute_batch("DROP TABLE file_chunk; DROP TABLE file_upload; DROP TABLE file_content; DROP TABLE conversation_read; DROP TABLE review_record; DROP INDEX canvas_node_group; ALTER TABLE canvas_node DROP COLUMN group_id; ALTER TABLE changes_tile DROP COLUMN review_revision; PRAGMA user_version=6;").unwrap();
     let tx = conn.transaction().unwrap();
     tx.execute_batch(include_str!("../src/schema_v7.sql"))
         .unwrap();

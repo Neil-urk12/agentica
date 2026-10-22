@@ -416,6 +416,10 @@ mod tests {
             retried["result"]["history"].as_array().unwrap().is_empty(),
             "the retried turn is not its own history"
         );
+        assert!(
+            retried["result"]["outline"].is_object(),
+            "a retried turn still returns the canvas outline"
+        );
         let opened = call("canvas.open", reference.clone());
         assert_eq!(nodes(&opened), 1, "no new prompt card");
         let listed = call("conversation.list", with(json!({"before": 0})));

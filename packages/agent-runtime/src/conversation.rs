@@ -810,8 +810,9 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                     (retry, &p.model, context.to_string()),
                 )?;
                 bump(tx, &p.canvas_id, canvas_revision(tx, &p.canvas_id)?)?;
+                let outline = outline(tx, &p.canvas_id, &context, (p.anchor.x, p.anchor.y))?;
                 return Ok(
-                    json!({"turn":turn(tx,&p.canvas_id,retry)?, "context":context, "history":prior}),
+                    json!({"turn":turn(tx,&p.canvas_id,retry)?, "context":context, "outline":outline, "history":prior}),
                 );
             }
             let node_id = new_id()?;
