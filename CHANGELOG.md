@@ -217,6 +217,16 @@ released version and date. Keep validation evidence in the
   a reopen or delete reported it as open in another window. Dropping the lock
   now unlocks explicitly, and the lock tests no longer need to run serially.
 
+- Added GitHub issue templates under `.github/ISSUE_TEMPLATE/`. Bug reports
+  collect launch mode, OS, environment, repro steps, impact, and
+  troubleshooting with a `type: bug` label; feature requests collect problem,
+  proposal, alternatives, area, priority, scope, and readiness with a
+  `type: feature` label, asking for alignment before implementation.
+  `REPORT_VULNERABILITY.yaml` is internal-only and redirects security reports
+  to GitHub Security Advisories instead of public issues. `config.yaml` keeps
+  blank issues enabled and offers contact links for security advisories, the
+  code of conduct, and the contributing guide.
+
 ### 2026-10-21
 
 - Harden terminal streaming and session lifecycle: one shared polling and
