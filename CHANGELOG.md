@@ -35,6 +35,53 @@ released version and date. Keep validation evidence in the
   Editor tests cover held and aborted drags, collapse, reload, and which
   conversation steps clear history.
 
+- Landing-page camera navigation now adds section fragments to browser history,
+  so destinations can be bookmarked and Back/Forward restores the camera,
+  including returning to the initial URL without a fragment. Repeated clicks on
+  the same fragment avoid duplicate entries; stacked layouts retain native links.
+
+- Redesigned the landing page as one canvas the visitor tours by scrolling. A
+  pinned stage shows five clusters (hero, canvas conversation, projects and
+  sessions, tasks, download); scroll position drives a camera that pans and
+  zooms between them, with an overview of the whole canvas before download.
+  Each cluster's board assembles as the camera arrives, from dashed placeholders
+  to nodes, connectors, a moving cursor, and finally the attention ring. A zoom
+  readout and minimap mirror the app's canvas chrome. Chosen over a document page
+  on a dot-grid backdrop and a single zoom-out hero, after HTML prototypes of all
+  three, because it is the only one where the page itself behaves like the
+  product.
+  - The page reacts to scroll position and never intercepts scrolling. Nav links
+    and "Skip to download" jump instantly when the target is more than one stop
+    away, so the tour never replays at speed; `#conversation`, `#projects`,
+    `#tasks`, and `#download` open at their stop; keyboard focus entering a
+    cluster moves the camera to it. The stage uses `overflow: clip` so focus and
+    find-in-page cannot scroll it out from under the camera.
+  - Screens 760px wide or narrower and reduced motion get the same clusters as a
+    stacked page; the layout is chosen before first paint to avoid a flash.
+  - The hero board stays draggable by pointer and arrow keys. Pointer movement is
+    divided by camera zoom and board scale so nodes stay under the cursor, and
+    drags are ignored while the camera travels.
+  - If `main.ts` has not finished setting up the tour by the window `load`
+    event (failed download, blocked script), the pre-paint script drops the
+    camera layout for the stacked page. Without this, the pinned stage hid every
+    cluster except the hero, including download.
+  - A smooth jump that is interrupted or ends short of its stop no longer leaves
+    focus-follow disabled for that stop: wheel, touch, pointer, and key input or
+    `scrollend` clear the pending destination. Previously, Tab could move focus
+    into an off-screen cluster without moving the camera.
+  - Board script code reads the design size from the `.board` CSS box instead
+    of repeating 640 × 400.
+  - Camera math lives in `apps/landing/src/camera.ts` without DOM access and is
+    covered by `tests/landing-camera.test.mjs`. No dependencies were added.
+  - Colors now come from the desktop app's tokens. Copy covers project groups,
+    terminal and Codex tiles (Linux only), session attention, and tasks; the
+    plates, status ledger, and "How it works" steps were folded into the
+    clusters. Old `#surface` and `#how` anchors no longer exist.
+  - Checked in headless Chromium at 1440, 1024, and 400px in both themes and with
+    reduced motion. With 4× CPU throttling and no GPU, scrolling the full tour
+    held a 16.7ms median frame (33ms p95). Not yet checked on a physical
+    low-end laptop or in Firefox and Safari.
+
 ### 2026-10-22
 
 - Add **Undo** and **Redo** to the canvas navigation bar, with Ctrl+Z and Ctrl+Y
