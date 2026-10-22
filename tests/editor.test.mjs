@@ -201,10 +201,13 @@ async function setup(t, intercept = async () => {}) {
         viewport: params.viewport,
         revision: params.expectedRevision + 1,
       };
-      disk.nodes = disk.nodes.map((node) => ({
-        ...node,
-        ...params.nodes.find((item) => item.id === node.id),
-      }));
+      // Like the runtime, a saved layout states each node's full grouping.
+      disk.nodes = disk.nodes.map((node) => {
+        const update = params.nodes.find((item) => item.id === node.id);
+        if (!update) return node;
+        const { groupId: _previous, ...rest } = node;
+        return { ...rest, ...update };
+      });
       for (const collection of ["projectGroups", "sessionTiles"])
         if (params[collection])
           disk[collection] = disk[collection].map((item) => {
@@ -912,6 +915,38 @@ test("undo covers text edits, skips deleted objects, and resets per canvas", asy
   assert.equal(editor.state.canUndo, false);
   editor.undo();
   assert.equal(editor.state.document.nodes[0].x, 77);
+});
+
+test("grouping and ungrouping save through the layout and undo as one step", async (t) => {
+  const { editor, clock, calls } = await setup(t);
+  clock.now += 1000;
+  const other = await editor.addText({ x: 400, y: 0 }, "Second");
+  const ids = [nodeId, other.node.id];
+  assert.equal(editor.groupNodes([nodeId]), "", "one object is not a group");
+  const groupId = editor.groupNodes(ids);
+  assert.match(groupId, /^[0-9a-f-]{36}$/);
+  assert.ok(editor.state.document.nodes.every((n) => n.groupId === groupId));
+  await editor.save();
+  const saved = calls.findLast(({ method }) => method === "canvas.save");
+  assert.ok(saved.params.nodes.every((n) => n.groupId === groupId));
+  assert.equal(editor.state.dirty, false);
+
+  // Ungrouping one member dissolves the whole group.
+  clock.now += 1000;
+  editor.ungroupNodes([other.node.id]);
+  assert.ok(editor.state.document.nodes.every((n) => !("groupId" in n)));
+  await editor.save();
+  assert.ok(
+    calls
+      .findLast(({ method }) => method === "canvas.save")
+      .params.nodes.every((n) => !("groupId" in n)),
+  );
+  editor.undo();
+  assert.ok(editor.state.document.nodes.every((n) => n.groupId === groupId));
+  editor.undo();
+  assert.ok(editor.state.document.nodes.every((n) => !n.groupId));
+  editor.redo();
+  assert.ok(editor.state.document.nodes.every((n) => n.groupId === groupId));
 });
 
 test("newer text and layout edits survive in-flight saves, including a reverted draft", async (t) => {

@@ -30,7 +30,7 @@ integration tests check compatibility.
 ## Persistence
 
 - Each workspace is a directory holding an exclusive `writer.lock` and one
-  SQLite database (storage version 7). Both modes take the lock before any write
+  SQLite database (storage version 8). Both modes take the lock before any write
   and reject a second writer, in either mode, with an actionable error.
 - Protocol version 1 covers workspaces, canvases, text and drawing nodes, links,
   layout and viewport saves, batched artifact edits, conversations and

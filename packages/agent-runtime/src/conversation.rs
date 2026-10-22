@@ -289,7 +289,17 @@ fn scoped_node(
             .iter()
             .find(|a| a["id"] == node["artifactId"])
             .unwrap();
-        if node != original || current_artifact["revision"] != original_artifact["revision"] {
+        // Grouping is arrangement, not content: it never invalidates a proposal.
+        let ungrouped = |value: &Value| {
+            let mut value = value.clone();
+            if let Some(object) = value.as_object_mut() {
+                object.remove("groupId");
+            }
+            value
+        };
+        if ungrouped(node) != ungrouped(original)
+            || current_artifact["revision"] != original_artifact["revision"]
+        {
             return Err(RuntimeError::new("CONFLICT", "A proposal target changed. Discard this proposal and regenerate from current content; nothing was applied."));
         }
         // Editing a shared artifact must not change placements outside the captured scope.

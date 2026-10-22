@@ -54,7 +54,10 @@ export interface EditorState {
 
 type Geometry = { x: number; y: number; width: number; height: number };
 /** One undoable value: an object's geometry or a text artifact's content. */
-type HistoryKey = `${"node" | "project" | "tile"}:${string}` | `text:${string}`;
+type HistoryKey =
+  | `${"node" | "project" | "tile"}:${string}`
+  | `text:${string}`
+  | `group:${string}`;
 type HistoryValue = Geometry | string;
 /** One user gesture: the value of every object it touched, before and after. */
 interface HistoryEntry {
@@ -68,6 +71,13 @@ const HISTORY_LIMIT = 100;
 
 function pickGeometry({ x, y, width, height }: Geometry): Geometry {
   return { x, y, width, height };
+}
+
+/** A placement with `groupId` set, or removed for "" and undefined. */
+function withGroup(node: Placement, groupId: string | undefined): Placement {
+  if (groupId === undefined) return node;
+  const { groupId: _previous, ...rest } = node;
+  return groupId ? { ...rest, groupId } : rest;
 }
 
 // One buffer and save queue for either transport; acknowledgements never replace drafts.
@@ -134,12 +144,13 @@ export class Editor {
       viewport: document.canvas.viewport,
       nodes: document.nodes
         .filter((node) => !pending.has(node.artifactId))
-        .map(({ id, x, y, width, height }) => ({
+        .map(({ id, x, y, width, height, groupId }) => ({
           id,
           x,
           y,
           width,
           height,
+          ...(groupId ? { groupId } : {}),
         }))
         .sort((left, right) => left.id.localeCompare(right.id)),
       ...((document.projectGroups ?? []).length
@@ -1056,6 +1067,55 @@ export class Editor {
     this.historyBreak = true;
   }
 
+  /**
+   * Put two or more canvas objects into one new group, replacing any groups
+   * they were in. Returns the group ID, or "" when nothing was grouped.
+   */
+  groupNodes(ids: string[]): string {
+    const document = this.state.document;
+    if (!document || this.state.busy) return "";
+    const targets = new Set(ids);
+    const members = document.nodes.filter((node) => targets.has(node.id));
+    if (members.length < 2) return "";
+    const groupId = crypto.randomUUID();
+    this.regroup(document, new Map(members.map((node) => [node.id, groupId])));
+    return groupId;
+  }
+
+  /** Dissolve every group that contains one of these objects. */
+  ungroupNodes(ids: string[]) {
+    const document = this.state.document;
+    if (!document || this.state.busy) return;
+    const targets = new Set(ids);
+    const groups = new Set(
+      document.nodes
+        .filter((node) => targets.has(node.id) && node.groupId)
+        .map((node) => node.groupId),
+    );
+    if (!groups.size) return;
+    this.regroup(
+      document,
+      new Map(
+        document.nodes
+          .filter((node) => groups.has(node.groupId))
+          .map((node) => [node.id, ""]),
+      ),
+    );
+  }
+
+  /** Apply group IDs ("" for none) as one undoable step. */
+  private regroup(document: CanvasDocument, next: Map<string, string>) {
+    this.historyBreak = true;
+    for (const node of document.nodes)
+      if (next.has(node.id))
+        this.record(`group:${node.id}`, node.groupId ?? "", next.get(node.id)!);
+    this.historyBreak = true;
+    this.edit({
+      ...document,
+      nodes: document.nodes.map((node) => withGroup(node, next.get(node.id))),
+    });
+  }
+
   /** Undo the last move, resize, or text edit on this canvas. */
   undo() {
     this.travel(this.undoStack, this.redoStack, "before");
@@ -1132,7 +1192,16 @@ export class Editor {
       const split = key.indexOf(":");
       const kind = key.slice(0, split);
       const recorded = key.slice(split + 1);
-      if (kind === "text") {
+      if (kind === "group") {
+        const id = this.nodeIds.get(recorded) ?? recorded;
+        if (!next.nodes.some((node) => node.id === id)) continue;
+        next = {
+          ...next,
+          nodes: next.nodes.map((node) =>
+            node.id === id ? withGroup(node, value as string) : node,
+          ),
+        };
+      } else if (kind === "text") {
         if (
           !next.artifacts.some(
             (artifact) => artifact.id === recorded && artifact.type === "text",
