@@ -12,6 +12,23 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-22
 
+#### Formatted, highlighted design source
+
+- **Read HTML source** now shows the design pretty-printed and colored instead
+  of one long line: one element per line with two-space nesting, short
+  `<tag>text</tag>` runs kept on one line, and `<style>` blocks laid out one
+  rule and declaration per line. Tags, attributes, values, comments, CSS
+  selectors, at-rules, and properties use theme-aware colors for light and
+  dark mode, and long lines wrap at their indentation. **Copy** copies the
+  formatted text.
+- The formatter (`html-format.ts`) is a small tokenizer with no new
+  dependency. It only produces text tokens rendered as Svelte text nodes, so a
+  design's markup, scripts, and styles are displayed but never parsed by the
+  app or executed. The stored source is unchanged.
+- Unit tests cover indentation, token kinds, CSS layout, and malformed or
+  hostile input; the rendered design test checks the colored, indented view
+  and that no design elements are created in the dialog.
+
 #### Box selection, grouping, and bulk delete
 
 - Dragging across empty canvas with the Select tool now draws a selection box

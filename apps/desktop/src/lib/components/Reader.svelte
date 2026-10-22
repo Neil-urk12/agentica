@@ -3,6 +3,7 @@
   import { LIMITS } from "@agentica/protocol";
   import Modal from "./Modal.svelte";
   import Markdown from "./Markdown.svelte";
+  import CodeView from "./CodeView.svelte";
 
   interface Props {
     title: string;
@@ -11,6 +12,8 @@
     text: string;
     /** Labels render as plain text; text artifacts use the Markdown subset. */
     markdown?: boolean;
+    /** Show the text as formatted, highlighted source code. */
+    code?: "html";
     /** Present only for editable text; labels and proposals are read-only. */
     onEdit?: (text: string) => void;
     editDisabled?: boolean;
@@ -22,6 +25,7 @@
     subtitle,
     text,
     markdown = true,
+    code,
     onEdit,
     editDisabled = false,
     startEditing = false,
@@ -32,6 +36,18 @@
   let editing = $state(untrack(() => startEditing && !!onEdit));
   let closeButton = $state<HTMLButtonElement>();
   let textarea = $state<HTMLTextAreaElement>();
+  let codeView = $state<CodeView>();
+  let copied = $state("");
+
+  async function copyCode() {
+    try {
+      await navigator.clipboard.writeText(codeView?.text() ?? text);
+      copied = "Copied";
+    } catch {
+      copied = "Copy failed";
+    }
+    setTimeout(() => (copied = ""), 1500);
+  }
 
   // The dialog's own autofocus lands on the first control; move it to the
   // most useful one once rendered.
@@ -43,6 +59,14 @@
 
 <Modal {title} {subtitle} icon="article" wide {onClose}>
   {#snippet actions()}
+    {#if code && text.trim()}
+      <button
+        class="btn btn--soft"
+        type="button"
+        aria-live="polite"
+        onclick={() => void copyCode()}>{copied || "Copy"}</button
+      >
+    {/if}
     {#if onEdit}
       <button
         class="btn btn--soft"
@@ -70,6 +94,10 @@
       maxlength={LIMITS.text}
       disabled={editDisabled}
       oninput={(event) => onEdit?.(event.currentTarget.value)}></textarea>
+  {:else if code && text.trim()}
+    <div class="reader__code" tabindex="-1">
+      <CodeView bind:this={codeView} source={text} />
+    </div>
   {:else}
     <div class="reader__content" tabindex="-1">
       {#if !text.trim()}
