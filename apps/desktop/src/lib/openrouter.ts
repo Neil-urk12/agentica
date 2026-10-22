@@ -7,12 +7,14 @@ import {
   CANVAS_AGENT_LIMITS,
   runCanvasAgentHarness,
   type CanvasAgentProgress,
+  type CanvasAgentStep,
   type HarnessMessage,
   type HarnessModel,
   type HarnessToolCall,
   type HarnessToolDefinition,
 } from "./canvas-harness.ts";
 import { checkedToolOperation, stageOperations } from "./canvas-agent.ts";
+import { describeOperation } from "./agent-task.ts";
 import {
   getRequestTimeoutMs,
   validateProvider,
@@ -303,6 +305,8 @@ export async function runCanvasAgent(
   let operations: CanvasOperation[] = [];
   let requests = 0;
   let rejectedToolCalls = 0;
+  let phase: CanvasAgentProgress["phase"] = "thinking";
+  const steps: CanvasAgentStep[] = [];
   const report = () => {
     options.onProgress?.({
       requests,
@@ -310,6 +314,8 @@ export async function runCanvasAgent(
       stagedEdits: operations.length,
       rejectedToolCalls,
       toolsEnabled: options.tools,
+      phase,
+      steps: [...steps],
     });
   };
 
@@ -396,9 +402,16 @@ export async function runCanvasAgent(
     onEvent: (event) => {
       if (event.type === "request") {
         requests = event.index;
+        phase = "thinking";
         report();
+      } else if (event.type === "note") {
+        steps.push({ kind: "note", text: event.text });
+        report();
+      } else if (event.type === "tool") {
+        phase = "staging";
       } else if (event.type === "rejected") {
         rejectedToolCalls += 1;
+        steps.push({ kind: "rejected", text: event.error });
         report();
       }
     },
@@ -419,6 +432,7 @@ export async function runCanvasAgent(
               const next = [...operations, operation];
               stageOperations(start.context, next);
               operations = next;
+              steps.push({ kind: "edit", text: describeOperation(operation) });
               report();
               return { status: "preview-only", operation };
             },

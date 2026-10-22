@@ -12,6 +12,26 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-22
 
+#### Agent task node
+
+- A **Task** card appears to the left of the latest prompt card and follows
+  the canvas agent through the turn: the goal (the prompt's first line), the
+  current activity with the request count, and a checklist of each staged edit
+  described in plain words ("Create a 960×640 design", "Add rectangle
+  “Idea”"), each rejected edit with its reason, and the model's interim notes.
+  When the turn ends it shows the outcome (proposed, applied, discarded,
+  answered, failed, cancelled, or interrupted).
+- The harness emits a `note` event for text the model sends alongside tool
+  calls, and `CanvasAgentProgress` now carries a `phase` and the ordered
+  `steps`. The live log is kept in memory after the turn; after a reload the
+  card is rebuilt from the saved turn's operations.
+- The card is a view, not canvas content: it is never saved, selected, sent
+  as context, or part of box selection. It can be dragged aside for the
+  session, and a finished task can be hidden per canvas.
+- Unit tests cover operation descriptions, live and saved task states, and
+  the note event; rendered tests check the card's steps, placement, applied
+  outcome, hiding, and that it is never stored.
+
 #### Retry reuses the failed prompt card
 
 - **Retry request** on a failed, cancelled, or interrupted prompt card used to

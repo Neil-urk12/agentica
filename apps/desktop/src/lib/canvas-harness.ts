@@ -41,6 +41,12 @@ export const CANVAS_AGENT_LIMITS: CanvasAgentLimits = {
   requestTimeoutMs: 90_000,
 };
 
+/** One line of a turn's task log, shown in the task node. */
+export interface CanvasAgentStep {
+  kind: "edit" | "rejected" | "note";
+  text: string;
+}
+
 /** Live counters shown while a turn generates. */
 export interface CanvasAgentProgress {
   requests: number;
@@ -48,6 +54,10 @@ export interface CanvasAgentProgress {
   stagedEdits: number;
   rejectedToolCalls: number;
   toolsEnabled: boolean;
+  /** Waiting for the model, or applying the edits it asked for. */
+  phase: "thinking" | "staging";
+  /** Edits staged or rejected, and the model's own notes, in order. */
+  steps: CanvasAgentStep[];
 }
 
 /** One compact line for the composer, for example "Request 2 of 8 · 1 edit staged". */
@@ -129,6 +139,7 @@ export interface HarnessTool {
 
 export type CanvasHarnessEvent =
   | { type: "request"; index: number }
+  | { type: "note"; text: string }
   | { type: "tool"; index: number; callId: string }
   | { type: "rejected"; callId: string; error: string }
   | { type: "completed"; requests: number; toolCalls: number };
@@ -281,6 +292,13 @@ export async function runCanvasAgentHarness(
       content: completion.content ?? null,
       tool_calls: calls,
     });
+    // Text sent alongside tool calls is the model's own account of its plan.
+    const note = completion.content?.trim();
+    if (note)
+      options.onEvent?.({
+        type: "note",
+        text: note.slice(0, limits.maxFeedbackChars),
+      });
 
     for (const call of calls) {
       options.signal.throwIfAborted();

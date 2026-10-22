@@ -2549,6 +2549,25 @@ test("annotating a design proposes a revised copy beside the original", async ()
     );
     assert.equal(input.canvasContext.artifacts[0].html, original);
 
+    // The task node beside the prompt card lists what the agent staged.
+    const taskText = () =>
+      evaluate(
+        browser,
+        `(() => { const task = document.querySelector('.svelte-flow__node-task'); return task ? { goal: task.querySelector('.task__goal').textContent, status: task.querySelector('.task__status').textContent.trim(), steps: [...task.querySelectorAll('.task__step-text')].map((step) => step.textContent) } : null; })()`,
+      );
+    const proposed = await taskText();
+    assert.equal(proposed.goal, "Revise a design from review comments");
+    assert.match(proposed.status, /1 change proposed/);
+    assert.deepEqual(proposed.steps, ["Create a 960×640 design"]);
+    const card = await evaluate(
+      browser,
+      `(() => { const task = document.querySelector('.svelte-flow__node-task').getBoundingClientRect(); const prompt = [...document.querySelectorAll('.svelte-flow__node-text')].find((node) => node.textContent.includes('Revise design')).getBoundingClientRect(); return { taskRight: task.right, promptLeft: prompt.left, sameTop: Math.abs(task.top - prompt.top) < 2 }; })()`,
+    );
+    assert.ok(
+      card.taskRight < card.promptLeft && card.sameTop,
+      `the task sits left of its prompt card: ${JSON.stringify(card)}`,
+    );
+
     await clickAt(
       browser,
       await boxByText(browser, ".review-bar button", "Apply"),
@@ -2558,7 +2577,26 @@ test("annotating a design proposes a revised copy beside the original", async ()
       `document.querySelectorAll('.design:not(.preview)').length === 2 && !document.querySelector('.design__badge')`,
       "the applied revision and a cleared draft",
     );
+    await waitFor(
+      browser,
+      `document.querySelector('.svelte-flow__node-task .task__status')?.textContent.includes('Applied 1 change')`,
+      "the task to report the applied change",
+    );
+    // A finished task can be hidden, and stays hidden on this canvas.
+    await evaluate(
+      browser,
+      `document.querySelector('.svelte-flow__node-task [aria-label="Hide this task"]').click()`,
+    );
+    await waitFor(
+      browser,
+      `!document.querySelector('.svelte-flow__node-task')`,
+      "the hidden task",
+    );
     const stored = await rpc("canvas.open", reference);
+    assert.ok(
+      stored.nodes.every((node) => !node.id.startsWith("task-")),
+      "task nodes are never saved",
+    );
     const designs = stored.artifacts.filter(
       (artifact) => artifact.type === "html",
     );
@@ -2926,9 +2964,17 @@ test("Retry request reuses the failed prompt card", async () => {
       "the retried reply",
     );
     assert.equal(
-      await countOf(browser, ".svelte-flow__node"),
+      await countOf(browser, ".svelte-flow__node:not(.svelte-flow__node-task)"),
       2,
       "one prompt card and one reply card",
+    );
+    assert.match(
+      await evaluate(
+        browser,
+        `document.querySelector('.svelte-flow__node-task .task__status')?.textContent`,
+      ),
+      /Answered without changing the canvas/,
+      "the task node reports the retried turn's outcome",
     );
     const opened = await rpc("canvas.open", reference);
     assert.equal(opened.nodes.length, 2);

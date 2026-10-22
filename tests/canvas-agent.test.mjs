@@ -329,6 +329,8 @@ test("the canvas agent reports live request, staged-edit, and rejection progress
     stagedEdits: 0,
     rejectedToolCalls: 0,
     toolsEnabled: true,
+    phase: "thinking",
+    steps: [],
   });
   assert.ok(
     progress.some(
@@ -344,7 +346,16 @@ test("the canvas agent reports live request, staged-edit, and rejection progress
     stagedEdits: 1,
     rejectedToolCalls: 1,
     toolsEnabled: true,
+    phase: "thinking",
+    steps: [
+      { kind: "edit", text: "Rewrite text “Staged”" },
+      {
+        kind: "rejected",
+        text: progress.at(-1).steps[1].text,
+      },
+    ],
   });
+  assert.match(progress.at(-1).steps[1].text, /context|target/i);
 });
 
 test("provider prompts may exceed the runtime 16 KiB frame limit", async (t) => {
