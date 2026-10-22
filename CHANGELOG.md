@@ -12,6 +12,12 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-22
 
+- Fixed closing a dialog leaving focus on the page body instead of the control
+  that opened it. The outro restored focus and then re-showed the `<dialog>` as
+  an inert overlay; `show()` runs the dialog focusing steps, which took focus
+  back, and the unmount restore was already spent. Focus is now restored after
+  `show()`.
+
 - Task recording retries reconcile persisted task metadata before writing. A lost
   reply after commit now adopts the recorded send without another write or paste;
   concurrent task changes use the current revision while unsaved text and layout

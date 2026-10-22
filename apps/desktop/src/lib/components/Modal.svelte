@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fade, fly } from "svelte/transition";
+  import { fade, fly, type FadeParams } from "svelte/transition";
   import { onMount, type Snippet } from "svelte";
   import Icon from "./Icon.svelte";
 
@@ -27,17 +27,38 @@
   let dialog: HTMLDialogElement;
   let previousFocus: Element | null = null;
   let restored = false;
-  // Close and hand focus back once, as soon as the modal starts leaving.
-  function release() {
-    dialog.close();
+  let released = false;
+  // Hand focus back once, as soon as the modal starts leaving.
+  function restoreFocus() {
     if (restored) return;
     restored = true;
     if (previousFocus instanceof HTMLElement) previousFocus.focus();
   }
+  // Unmount waits for the fade. Meanwhile a modal dialog keeps the rest of the
+  // page inert, so focus moved there (or restored late) would be lost: release
+  // modality and focus now and fade out as an inert overlay.
+  function release() {
+    if (released) return;
+    released = true;
+    dialog.close();
+    dialog.inert = true;
+    dialog.show();
+    // After show(): its dialog focusing steps would otherwise take focus back.
+    restoreFocus();
+  }
+  // Svelte calls this synchronously when the outro begins; `outrostart` only
+  // fires a frame later, after callers may already have moved focus.
+  function leave(node: Element, params: FadeParams) {
+    release();
+    return fade(node, params);
+  }
   onMount(() => {
     previousFocus = document.activeElement;
     dialog.showModal();
-    return release;
+    return () => {
+      dialog.close();
+      restoreFocus();
+    };
   });
 
   function onKeydown(event: KeyboardEvent) {
@@ -64,25 +85,18 @@
   bind:this={dialog}
   class="scrim"
   class:scrim--full={fullscreen}
-  transition:fade={{ duration: 180 }}
+  in:fade={{ duration: 180 }}
+  out:leave={{ duration: 180 }}
   aria-label={title}
   onkeydown={onKeydown}
   oncancel={(event) => {
     event.preventDefault();
     onClose?.();
   }}
-  onoutrostart={() => {
-    // Unmount waits for the fade. Meanwhile a modal dialog would keep the page
-    // inert and late focus restoration would land after later input, so release
-    // both now and fade out as an inert overlay.
-    release();
-    dialog.inert = true;
-    dialog.show();
-  }}
   onintrostart={() => {
-    // Reopened mid-fade: Svelte reverses on the same element, so restore modality.
-    if (!dialog.inert) return;
-    restored = false;
+    // Reopened mid-fade: Svelte reuses the element, so restore modality.
+    if (!released) return;
+    released = restored = false;
     dialog.inert = false;
     dialog.close();
     dialog.showModal();

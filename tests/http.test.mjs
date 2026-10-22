@@ -2,7 +2,15 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { createServer, request } from "node:http";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -2036,5 +2044,237 @@ test("review feedback survives browser reload and backend restart with original 
     await browser?.close();
     await stopBackend(backend.child);
     rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("tasks send to a running Codex tile, refuse a pending notification, and survive restart and tile removal", async () => {
+  const root = mkdtempSync(join(tmpdir(), "agentica-tasks-"));
+  const project = join(root, "project");
+  const bin = join(root, "bin");
+  const received = join(root, "received");
+  const trigger = join(root, "notify");
+  for (const directory of [project, bin]) mkdirSync(directory);
+  // Stand-in for Codex: records raw PTY input and emits an OSC 9 notification
+  // once the test creates the trigger file. No real agent runs.
+  writeFileSync(
+    join(bin, "codex"),
+    String.raw`#!/bin/sh
+PATH=/usr/bin:/bin
+stty raw -echo
+cat > '${received}' <&0 &
+printf 'fake codex ready\r\n'
+while [ ! -e '${trigger}' ]; do sleep 0.05; done
+printf '\033]9;Approval requested\007'
+wait
+`,
+  );
+  chmodSync(join(bin, "codex"), 0o755);
+  const codexEnv = { ...env, PATH: bin };
+  let backend = await startBackend(codexEnv);
+  key = backend.connectionKey;
+  let browser;
+  const call = async (_key, _connect, method, params) => {
+    const reply = await send(port, {
+      body: JSON.stringify(
+        RuntimeRequestSchema.parse({
+          protocolVersion: 1,
+          id: crypto.randomUUID(),
+          method,
+          params,
+        }),
+      ),
+      timeout: 15000,
+    });
+    const response = RuntimeResponseSchema.parse(JSON.parse(reply.text));
+    if (response.error)
+      throw new Error(`${response.error.code}: ${response.error.message}`);
+    return ResultSchemas[method].parse(response.result);
+  };
+  const editor = new Editor(
+    call,
+    () => key,
+    () => {},
+  );
+  const run = (script) => evaluate(browser, script);
+  const openApp = async () => {
+    await browser.send(
+      "Page.navigate",
+      { url: `http://127.0.0.1:${port}/` },
+      browser.sessionId,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector("#connection-key")`,
+      "the connection form",
+    );
+    await run(`(() => {
+      const input = document.querySelector("#connection-key");
+      input.value = ${JSON.stringify(key)};
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    })()`);
+    await clickAt(
+      browser,
+      await boxOf(browser, ".connbar button[type='submit']"),
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector(".connbar--ok")`,
+      "the connected status",
+    );
+    for (const label of ["Task dispatch", "Task canvas"]) {
+      const item = ".tiles .tile__open, .cards .card";
+      await waitFor(
+        browser,
+        `[...document.querySelectorAll(${JSON.stringify(item)})].some((card) => card.textContent.includes(${JSON.stringify(label)}))`,
+        `the ${label} card`,
+      );
+      await clickAt(browser, await boxByText(browser, item, label));
+    }
+  };
+  const text = "Fix the flaky http test";
+  const pasted = `\x1b[200~${text}\x1b[201~`;
+  const receivedText = () =>
+    existsSync(received) ? readFileSync(received, "latin1") : "";
+  try {
+    await editor.createWorkspace("Task dispatch");
+    const workspaceId = editor.state.workspace.workspace.id;
+    await editor.createCanvas("Task canvas");
+    const canvasId = editor.state.document.canvas.id;
+    await editor.openProject(project);
+    const projectId = editor.state.document.projectGroups.at(-1).id;
+    await editor.addSessionTile(projectId, "cli-agent");
+    const tileId = editor.state.document.sessionTiles.at(-1).id;
+    const nodeId = (await editor.addText({ x: -400, y: 0 }, text)).node.id;
+    await editor.setTask(nodeId, true);
+    assert.equal(editor.state.error, "");
+    await editor.closeWorkspace();
+
+    const node = `[data-id="${nodeId}"]`;
+    const tile = `[data-id="${tileId}"]`;
+    const sendButton = `${node} .task-send`;
+    const status = `(document.querySelector('${node} .task-status')?.textContent ?? '')`;
+    browser = await launchBrowser();
+    await openApp();
+    await waitFor(
+      browser,
+      `!!document.querySelector('${node} .task-bar')`,
+      "the task controls",
+    );
+
+    // Assigning draws a wire but never starts the tile.
+    await run(`(() => {
+      const select = document.querySelector('${node} .task-assignee');
+      select.value = ${JSON.stringify(tileId)};
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await waitFor(
+      browser,
+      `!!document.querySelector('.task-wire') && ${status}.includes('not running')`,
+      "the assignment wire and not-running blocker",
+    );
+    assert.equal(
+      await run(`document.querySelector('${sendButton}').disabled`),
+      true,
+    );
+
+    await run(
+      `document.querySelector('[data-id="${projectId}"] [aria-label="Expand project"]').click()`,
+    );
+    await waitFor(
+      browser,
+      `[...document.querySelectorAll('${tile} .session-controls button')].some((b) => b.textContent.trim() === 'Start')`,
+      "the stopped Codex tile",
+    );
+    await run(
+      `[...document.querySelectorAll('${tile} .session-controls button')].find((b) => b.textContent.trim() === 'Start').click()`,
+    );
+    await waitFor(
+      browser,
+      `!document.querySelector('${sendButton}').disabled`,
+      "Send to become available once Codex runs",
+    );
+
+    // Preview shows the exact text; confirming pastes it once without Enter.
+    await run(`document.querySelector('${sendButton}').click()`);
+    await waitFor(
+      browser,
+      `document.querySelector('dialog[open] .task-preview')?.textContent === ${JSON.stringify(text)}`,
+      "the send preview",
+    );
+    const confirm = `[...document.querySelectorAll('dialog[open] .btn--primary')].find((b) => b.textContent.startsWith('Paste into')).click()`;
+    await run(confirm);
+    await waitFor(
+      browser,
+      `${status}.includes('Sent') && !!document.activeElement?.closest('${tile} [data-terminal]')`,
+      "the sent record and terminal focus",
+    );
+    for (let i = 0; i < 100 && receivedText() !== pasted; i++) await delay(50);
+    assert.equal(receivedText(), pasted, "one bracketed paste, no Enter");
+
+    // A notification raised while the preview is open makes the backend refuse.
+    await run(`document.querySelector('${sendButton}').focus()`);
+    await run(`document.querySelector('${sendButton}').click()`);
+    await waitFor(
+      browser,
+      `!!document.querySelector('dialog[open] .task-preview')`,
+      "the second preview",
+    );
+    // Let the unfocused terminal state reach the backend before the signal.
+    await delay(500);
+    writeFileSync(trigger, "");
+    await waitFor(
+      browser,
+      `document.querySelector('${node} .task-attention')?.textContent.includes('Approval requested')`,
+      "the mirrored attention hint",
+    );
+    await run(confirm);
+    await waitFor(
+      browser,
+      `document.querySelector('${node} .card-error')?.textContent.includes('needs attention')`,
+      "the attention refusal",
+    );
+    await delay(300);
+    assert.equal(receivedText(), pasted, "the refused send wrote nothing");
+    assert.doesNotMatch(
+      await run(`document.querySelector('${node} .task-status').textContent`),
+      /Edited/,
+    );
+
+    // Backend restart restores the task, assignment and sent record, stopped.
+    await stopBackend(backend.child);
+    backend = await startBackend(codexEnv);
+    key = backend.connectionKey;
+    await openApp();
+    await waitFor(
+      browser,
+      `${status}.includes('Sent') && ${status}.includes('not running') && document.querySelector('${node} .task-assignee')?.value === ${JSON.stringify(tileId)} && !!document.querySelector('.task-wire')`,
+      "the restored task",
+    );
+
+    // Removing the tile keeps the task but clears its assignee and wire.
+    await editor.openWorkspace(workspaceId);
+    await editor.openCanvas(canvasId);
+    await editor.deleteSessionTile(tileId);
+    assert.equal(editor.state.error, "");
+    await editor.closeWorkspace();
+    await openApp();
+    await waitFor(
+      browser,
+      `${status}.includes('to a removed agent') && document.querySelector('${node} .task-assignee')?.value === '' && !document.querySelector('.task-wire')`,
+      "the task without its removed agent",
+    );
+    assert.match(
+      await run(`document.querySelector('${node} .card-body').textContent`),
+      /Fix the flaky http test/,
+    );
+  } catch (error) {
+    if (browser)
+      error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({ task: [...document.querySelectorAll('.task-status, .task-attention, .card-error')].map((e) => e.textContent.trim()), focus: document.activeElement?.outerHTML.slice(0, 200), dialog: !!document.querySelector('dialog[open]') })")}\nReceived: ${JSON.stringify(receivedText())}`;
+    throw error;
+  } finally {
+    editor.dispose();
+    await browser?.close();
+    await stopBackend(backend.child);
+    rmSync(root, { recursive: true, force: true });
   }
 });
