@@ -12,6 +12,25 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-22
 
+#### Undo and redo for canvas edits
+
+- Add **Undo** and **Redo** to the canvas navigation bar, with Ctrl+Z and
+  Ctrl+Y or Ctrl+Shift+Z (⌘Z and ⇧⌘Z on macOS). They reverse moves and resizes
+  of notes, shapes, files, designs, project groups, and session tiles, and text
+  edits. Text fields keep their native undo while focused.
+- Edits less than 600 ms apart form one step, and a node drag always starts a
+  new one, so a whole drag or a burst of typing undoes at once. Each step keeps
+  every touched object's first value, holds up to 100 steps, and is cleared
+  when the canvas closes or another one opens; a new edit clears redo.
+- Undo writes through the existing autosave buffer (`canvas.save` and
+  `artifact.saveText`) instead of new runtime commands, so revision checks and
+  save recovery are unchanged. Steps whose objects were deleted are skipped.
+  Server-side mutations (create, delete, connect, applied proposals) and
+  project collapse are not undoable yet.
+- Editor unit tests cover gesture grouping, redo invalidation, text, deleted
+  objects, and per-canvas history; a rendered browser test drags a note,
+  presses Ctrl+Z, checks the saved position, and redoes with the button.
+
 #### Panning starts from the current view
 
 - Fix the first drag after opening a canvas snapping back to the origin.

@@ -1920,6 +1920,23 @@
       if (stage === "canvas") void backToWorkspaces();
       return;
     }
+    // Ctrl/Cmd+Z undoes canvas edits; text fields keep their own undo.
+    if (
+      stage === "editor" &&
+      (apple ? event.metaKey : event.ctrlKey) &&
+      !event.altKey &&
+      !isTyping(event.target)
+    ) {
+      const key = event.key.toLowerCase();
+      const redo = (key === "z" && event.shiftKey) || (key === "y" && !apple);
+      if (key === "z" || redo) {
+        event.preventDefault();
+        if (!connected) return;
+        if (redo) editor.redo();
+        else editor.undo();
+        return;
+      }
+    }
     if (stage !== "editor" || event.metaKey || event.ctrlKey || event.altKey)
       return;
     if (isTyping(event.target)) return;
@@ -2437,6 +2454,7 @@
             onconnect={({ source, target }) => {
               if (tool === "arrow") void editor.createEdge(source, target);
             }}
+            onnodedragstart={() => editor.checkpoint()}
             onmove={(_, next) => editor.setViewport(next)}
           >
             <Background patternColor={dark ? "#2c2c30" : "#d9dbe4"} gap={24} />
@@ -2556,6 +2574,11 @@
             zoom={viewport.zoom}
             canFocus={!!selectedId}
             disabled={editorState.busy}
+            canUndo={connected && editorState.canUndo}
+            canRedo={connected && editorState.canRedo}
+            {apple}
+            onUndo={() => editor.undo()}
+            onRedo={() => editor.redo()}
             onZoom={zoomBy}
             onReset={() => zoomBy(1 / viewport.zoom)}
             onFit={fitCanvas}

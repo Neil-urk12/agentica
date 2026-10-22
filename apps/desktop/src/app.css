@@ -2632,6 +2632,11 @@ span.card-more {
   border-bottom: none;
 }
 
+/* Separates history controls from view controls. */
+.canvas-nav__btn--group-end {
+  border-bottom: 3px double var(--line);
+}
+
 .canvas-nav__btn:hover:not(:disabled) {
   color: var(--ink);
   background: var(--surface-soft);

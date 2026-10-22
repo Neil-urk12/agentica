@@ -48,6 +48,26 @@ export interface EditorState {
   dirty: boolean;
   error: string;
   turns: ConversationTurn[];
+  canUndo: boolean;
+  canRedo: boolean;
+}
+
+type Geometry = { x: number; y: number; width: number; height: number };
+/** One undoable value: an object's geometry or a text artifact's content. */
+type HistoryKey = `${"node" | "project" | "tile"}:${string}` | `text:${string}`;
+type HistoryValue = Geometry | string;
+/** One user gesture: the value of every object it touched, before and after. */
+interface HistoryEntry {
+  changes: Map<HistoryKey, { before: HistoryValue; after: HistoryValue }>;
+  at: number;
+}
+
+/** Edits closer together than this belong to one gesture (a drag, a word). */
+const HISTORY_GROUP_MS = 600;
+const HISTORY_LIMIT = 100;
+
+function pickGeometry({ x, y, width, height }: Geometry): Geometry {
+  return { x, y, width, height };
 }
 
 // One buffer and save queue for either transport; acknowledgements never replace drafts.
@@ -61,6 +81,8 @@ export class Editor {
     dirty: false,
     error: "",
     turns: [],
+    canUndo: false,
+    canRedo: false,
   };
   private call: typeof callRuntime;
   private key: () => string;
@@ -80,15 +102,21 @@ export class Editor {
   private mutations: Promise<void> = Promise.resolve();
   private savingTask: Promise<void> | null = null;
   private disposed = false;
+  private undoStack: HistoryEntry[] = [];
+  private redoStack: HistoryEntry[] = [];
+  private historyBreak = true;
+  private clock: () => number;
 
   constructor(
     call: typeof callRuntime,
     key: () => string,
     changed: (state: EditorState) => void,
+    clock: () => number = Date.now,
   ) {
     this.call = call;
     this.key = key;
     this.changed = changed;
+    this.clock = clock;
   }
 
   /**
@@ -148,6 +176,9 @@ export class Editor {
   private publish(update: Partial<EditorState> = {}) {
     this.state = { ...this.state, ...update };
     const document = this.state.document;
+    if (!document) this.clearHistory();
+    this.state.canUndo = !!document && this.undoStack.length > 0;
+    this.state.canRedo = !!document && this.redoStack.length > 0;
     this.state.dirty =
       !!document &&
       (this.attemptedArtifacts.size > 0 ||
@@ -174,6 +205,7 @@ export class Editor {
   private load(document: CanvasDocument, turns?: ConversationTurn[]) {
     if (document.canvas.id !== this.state.document?.canvas.id) {
       this.nodeIds.clear();
+      this.clearHistory();
       this.state = { ...this.state, turns: [] };
     }
     this.savedArtifacts = new Map(
@@ -356,6 +388,8 @@ export class Editor {
       ),
     };
     if (JSON.stringify(next) === JSON.stringify(group)) return;
+    // Collapsing is view state; only geometry is undoable.
+    this.record(`project:${id}`, pickGeometry(group), pickGeometry(next));
     this.edit({
       ...document,
       projectGroups: document.projectGroups.map((group) =>
@@ -400,6 +434,7 @@ export class Editor {
       ),
     };
     if (JSON.stringify(next) === JSON.stringify(tile)) return;
+    this.record(`tile:${id}`, pickGeometry(tile), pickGeometry(next));
     this.edit({
       ...document,
       sessionTiles: document.sessionTiles.map((tile) =>
@@ -992,6 +1027,9 @@ export class Editor {
   editText(artifactId: string, text: string) {
     const document = this.state.document;
     if (!document || this.state.busy) return;
+    const artifact = document.artifacts.find((item) => item.id === artifactId);
+    if (artifact?.type === "text" && artifact.text !== text)
+      this.record(`text:${artifactId}`, artifact.text, text);
     this.edit({
       ...document,
       artifacts: document.artifacts.map((artifact) =>
@@ -1002,24 +1040,160 @@ export class Editor {
 
   placeNode(
     id: string,
-    geometry: Partial<Pick<Placement, "x" | "y" | "width" | "height">>,
+    change: Partial<Pick<Placement, "x" | "y" | "width" | "height">>,
   ) {
     const document = this.state.document;
     if (!document || this.state.busy) return;
     const node = document.nodes.find((item) => item.id === id);
     if (
       !node ||
-      Object.entries(geometry).every(
+      Object.entries(change).every(
         ([key, value]) => node[key as keyof Placement] === value,
       )
     )
       return;
+    this.record(
+      `node:${id}`,
+      pickGeometry(node),
+      pickGeometry({ ...node, ...change }),
+    );
     this.edit({
       ...document,
       nodes: document.nodes.map((node) =>
-        node.id === id ? { ...node, ...geometry } : node,
+        node.id === id ? { ...node, ...change } : node,
       ),
     });
+  }
+
+  /** Start a new undo step even if the next edit follows quickly. */
+  checkpoint() {
+    this.historyBreak = true;
+  }
+
+  /** Undo the last move, resize, or text edit on this canvas. */
+  undo() {
+    this.travel(this.undoStack, this.redoStack, "before");
+  }
+
+  /** Reapply the last undone step. */
+  redo() {
+    this.travel(this.redoStack, this.undoStack, "after");
+  }
+
+  private clearHistory() {
+    this.undoStack = [];
+    this.redoStack = [];
+    this.historyBreak = true;
+  }
+
+  /**
+   * Remember a buffered edit. Edits within one gesture merge so a whole drag
+   * or burst of typing undoes at once; each object keeps its first "before".
+   */
+  private record(key: HistoryKey, before: HistoryValue, after: HistoryValue) {
+    const now = this.clock();
+    const top = this.undoStack.at(-1);
+    if (top && !this.historyBreak && now - top.at < HISTORY_GROUP_MS) {
+      const existing = top.changes.get(key);
+      top.changes.set(key, {
+        before: existing ? existing.before : before,
+        after,
+      });
+      top.at = now;
+    } else {
+      this.undoStack.push({
+        changes: new Map([[key, { before, after }]]),
+        at: now,
+      });
+      if (this.undoStack.length > HISTORY_LIMIT) this.undoStack.shift();
+    }
+    this.historyBreak = false;
+    this.redoStack = [];
+  }
+
+  /**
+   * Move one step between stacks and apply its values through the normal
+   * autosave buffer. Objects removed since the step are skipped; a step whose
+   * objects are all gone is dropped and the next one is tried.
+   */
+  private travel(
+    from: HistoryEntry[],
+    to: HistoryEntry[],
+    side: "before" | "after",
+  ) {
+    if (this.state.busy || !this.state.document) return;
+    while (from.length) {
+      const entry = from.pop()!;
+      const next = this.applyHistory(this.state.document, entry, side);
+      if (!next) continue;
+      to.push(entry);
+      this.historyBreak = true;
+      this.edit(next);
+      return;
+    }
+    this.publish();
+  }
+
+  private applyHistory(
+    document: CanvasDocument,
+    entry: HistoryEntry,
+    side: "before" | "after",
+  ): CanvasDocument | null {
+    let next = document;
+    let applied = false;
+    for (const [key, change] of entry.changes) {
+      const value = change[side];
+      const split = key.indexOf(":");
+      const kind = key.slice(0, split);
+      const recorded = key.slice(split + 1);
+      if (kind === "text") {
+        if (
+          !next.artifacts.some(
+            (artifact) => artifact.id === recorded && artifact.type === "text",
+          )
+        )
+          continue;
+        next = {
+          ...next,
+          artifacts: next.artifacts.map((artifact) =>
+            artifact.id === recorded && artifact.type === "text"
+              ? { ...artifact, text: value as string }
+              : artifact,
+          ),
+        };
+      } else if (kind === "node") {
+        // Draft drawings adopt a server ID after they are created.
+        const id = this.nodeIds.get(recorded) ?? recorded;
+        if (!next.nodes.some((node) => node.id === id)) continue;
+        next = {
+          ...next,
+          nodes: next.nodes.map((node) =>
+            node.id === id ? { ...node, ...(value as Geometry) } : node,
+          ),
+        };
+      } else if (kind === "project") {
+        if (!next.projectGroups?.some((group) => group.id === recorded))
+          continue;
+        next = {
+          ...next,
+          projectGroups: next.projectGroups.map((group) =>
+            group.id === recorded
+              ? { ...group, ...(value as Geometry) }
+              : group,
+          ),
+        };
+      } else {
+        if (!next.sessionTiles?.some((tile) => tile.id === recorded)) continue;
+        next = {
+          ...next,
+          sessionTiles: next.sessionTiles.map((tile) =>
+            tile.id === recorded ? { ...tile, ...(value as Geometry) } : tile,
+          ),
+        };
+      }
+      applied = true;
+    }
+    return applied ? next : null;
   }
 
   setViewport(viewport: Viewport) {
