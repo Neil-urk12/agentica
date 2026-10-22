@@ -232,7 +232,7 @@
   );
   let busy = $state(false);
   let inspectorOpen = $state(false);
-  let drawerOpen = $state(true);
+  let drawerOpen = $state(false);
   // Groups start collapsed whenever a canvas opens. Expanding is a view-only
   // choice until the control persists it, so reopening never leaks a previous
   // expanded layout.
