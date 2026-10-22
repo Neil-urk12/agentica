@@ -78,7 +78,11 @@
     type SettingsSection,
   } from "./lib/components/Settings.svelte";
   import { runCanvasAgent, canvasToolSupport } from "./lib/openrouter";
-  import { getProviderConfig, validateProvider } from "./lib/provider";
+  import {
+    getActivePreset,
+    getProviderConfig,
+    validateProvider,
+  } from "./lib/provider";
   import WorkspacePicker from "./lib/components/WorkspacePicker.svelte";
   import CanvasPicker from "./lib/components/CanvasPicker.svelte";
   import NodeDrawer from "./lib/components/NodeDrawer.svelte";
@@ -313,7 +317,9 @@
       /* Shown as entered; validation reports it on submit. */
     }
     const name =
-      config.kind === "custom" ? `Custom provider (${host})` : "OpenRouter";
+      config.kind === "custom"
+        ? `${getActivePreset()?.name ?? "Custom provider"} (${host})`
+        : "OpenRouter";
     return `${name} · ${config.model || "no model selected"}`;
   });
   let canvasEl = $state<HTMLElement>();
