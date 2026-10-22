@@ -20,7 +20,10 @@ export type CanvasDocument = RuntimeResult<"canvas.open">;
 type Placement = CanvasDocument["nodes"][number];
 type Viewport = CanvasDocument["canvas"]["viewport"];
 type Artifact = CanvasDocument["artifacts"][number];
-type LayoutNode = Pick<Placement, "id" | "x" | "y" | "width" | "height">;
+type LayoutNode = Pick<
+  Placement,
+  "id" | "x" | "y" | "width" | "height" | "groupId"
+>;
 type LayoutGroup = Pick<
   ProjectGroup,
   "id" | "x" | "y" | "width" | "height" | "collapsed"
@@ -70,6 +73,13 @@ function content(artifact: Artifact): string {
       artifact.text,
     ]);
   return JSON.stringify(artifact.drawing);
+}
+
+/** A placement with `groupId` set, or removed for "" and undefined. */
+function withGroup(node: Placement, groupId: string | undefined): Placement {
+  if (groupId === undefined) return node;
+  const { groupId: _previous, ...rest } = node;
+  return groupId ? { ...rest, groupId } : rest;
 }
 
 export interface EditorState {
@@ -170,12 +180,13 @@ export class Editor {
       viewport: document.canvas.viewport,
       nodes: document.nodes
         .filter((node) => !pending.has(node.artifactId))
-        .map(({ id, x, y, width, height }) => ({
+        .map(({ id, x, y, width, height, groupId }) => ({
           id,
           x,
           y,
           width,
           height,
+          ...(groupId ? { groupId } : {}),
         }))
         .sort((left, right) => left.id.localeCompare(right.id)),
       ...((document.projectGroups ?? []).length
@@ -1518,6 +1529,50 @@ export class Editor {
       artifacts: document.artifacts.map((artifact) =>
         artifact.id === artifactId ? { ...artifact, text } : artifact,
       ),
+    });
+  }
+
+  /**
+   * Put two or more canvas objects into one new group, replacing any groups
+   * they were in. Returns the group ID, or "" when nothing was grouped.
+   */
+  groupNodes(ids: string[]): string {
+    const document = this.state.document;
+    if (!document || this.state.busy) return "";
+    const targets = new Set(ids);
+    const members = document.nodes.filter((node) => targets.has(node.id));
+    if (members.length < 2) return "";
+    const groupId = crypto.randomUUID();
+    this.regroup(document, new Map(members.map((node) => [node.id, groupId])));
+    return groupId;
+  }
+
+  /** Dissolve every group that contains one of these objects. */
+  ungroupNodes(ids: string[]) {
+    const document = this.state.document;
+    if (!document || this.state.busy) return;
+    const targets = new Set(ids);
+    const groups = new Set(
+      document.nodes
+        .filter((node) => targets.has(node.id) && node.groupId)
+        .map((node) => node.groupId),
+    );
+    if (!groups.size) return;
+    this.regroup(
+      document,
+      new Map(
+        document.nodes
+          .filter((node) => groups.has(node.groupId))
+          .map((node) => [node.id, ""]),
+      ),
+    );
+  }
+
+  /** Apply group IDs ("" for none) to the placements. */
+  private regroup(document: CanvasDocument, next: Map<string, string>) {
+    this.edit({
+      ...document,
+      nodes: document.nodes.map((node) => withGroup(node, next.get(node.id))),
     });
   }
 

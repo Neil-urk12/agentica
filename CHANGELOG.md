@@ -12,6 +12,31 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Box selection, grouping, and bulk delete
+
+- Dragging across empty canvas with the Select tool now draws a selection box
+  and selects the objects fully inside it (Svelte Flow `selectionOnDrag` with
+  `SelectionMode.Full`). Panning moves to the Hand tool, Space+drag, the middle
+  or right mouse button, and the view controls. The inspector follows a box
+  selection, and the selection becomes the next prompt's context as before.
+- **Ctrl+G** / **⌘G** groups two or more selected canvas objects and
+  **Ctrl+Shift+G** / **⇧⌘G** ungroups them; a selection bar offers Group,
+  Ungroup, and Delete. Selecting any member selects the whole group, and a
+  member dragged on its own brings the others along. Groups have dashed
+  outlines drawn behind the nodes.
+- **Delete** / **Backspace** deletes the selected objects; several objects need
+  confirmation because deletion is not undoable. Escape clears the selection.
+  Project groups and terminal tiles keep their own removal controls.
+- Upgrade workspace storage to version 13 with a nullable `group_id` on canvas
+  nodes. A group is the set of nodes sharing an ID and needs no row of its own;
+  `canvas.save` layouts carry optional `groupId` values (omitted means
+  ungrouped) and `canvas.open` returns them only for grouped nodes, so existing
+  fixtures keep their shape. Regrouping never makes a pending proposal conflict.
+- Rust tests cover group save, reopen, invalid IDs, ungrouping, and the
+  upgrade; Node tests cover the group helpers and editor grouping; a rendered
+  browser test box-selects two of three notes, groups them, drags one member,
+  ungroups, and deletes them after confirmation.
+
 ### Canvas undo and redo
 
 - Add **Undo** and **Redo** to the canvas navigation bar, with Ctrl+Z and Ctrl+Y

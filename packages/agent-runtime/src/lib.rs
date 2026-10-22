@@ -344,4 +344,78 @@ mod tests {
         );
         assert_eq!(closed["error"]["code"], "WORKSPACE_NOT_OPEN");
     }
+
+    #[test]
+    fn node_groups_save_reopen_and_ungroup_through_the_layout() {
+        let data = tempfile::tempdir().unwrap();
+        let mut runtime = Runtime::new(Some(data.path().into()));
+        let mut call = |method: &str, params: Value| {
+            runtime.handle_request(
+                &serde_json::to_vec(
+                    &json!({"protocolVersion": 1, "id": "g", "method": method, "params": params}),
+                )
+                .unwrap(),
+            )
+        };
+        let workspace = call("workspace.create", json!({"name": "Groups"}))["result"]["workspace"]
+            ["id"]
+            .clone();
+        let canvas = call(
+            "canvas.create",
+            json!({"workspaceId": workspace, "title": "Board"}),
+        )["result"]["canvas"]["id"]
+            .clone();
+        let mut revision = 1;
+        let mut ids = Vec::new();
+        for x in [0, 300] {
+            let created = call(
+                "node.createText",
+                json!({"workspaceId": workspace, "canvasId": canvas, "expectedRevision": revision,
+                    "x": x, "y": 0, "width": 240, "height": 160, "text": "Note"}),
+            );
+            revision = created["result"]["revision"].as_i64().unwrap();
+            ids.push(created["result"]["node"]["id"].clone());
+        }
+        let group = "00000000-0000-4000-8000-0000000000ee";
+        let layout = |revision: i64, group: Option<&str>| {
+            let nodes: Vec<_> = ids
+                .iter()
+                .enumerate()
+                .map(|(index, id)| {
+                    let mut node = json!({"id": id, "x": index as f64 * 300.0, "y": 0, "width": 240, "height": 160});
+                    if let Some(group) = group {
+                        node["groupId"] = json!(group);
+                    }
+                    node
+                })
+                .collect();
+            json!({"workspaceId": workspace, "canvasId": canvas, "expectedRevision": revision,
+                "viewport": {"x": 0, "y": 0, "zoom": 1}, "nodes": nodes})
+        };
+        let saved = call("canvas.save", layout(revision, Some(group)));
+        revision = saved["result"]["revision"].as_i64().unwrap();
+        let opened = call(
+            "canvas.open",
+            json!({"workspaceId": workspace, "canvasId": canvas}),
+        );
+        let nodes = opened["result"]["nodes"].as_array().unwrap();
+        assert!(
+            nodes.iter().all(|node| node["groupId"] == group),
+            "{opened}"
+        );
+        assert_eq!(
+            call("canvas.save", layout(revision, Some("not-an-id")))["error"]["code"],
+            "INVALID_PARAMS"
+        );
+        call("canvas.save", layout(revision, None));
+        let opened = call(
+            "canvas.open",
+            json!({"workspaceId": workspace, "canvasId": canvas}),
+        );
+        assert!(opened["result"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|node| node.get("groupId").is_none()));
+    }
 }

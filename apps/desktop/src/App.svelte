@@ -11,6 +11,13 @@
   import { ChangesManager } from "./lib/changes-manager.svelte";
   import { feedbackMessage } from "./lib/changes";
   import Modal from "./lib/components/Modal.svelte";
+  import SelectionBar from "./lib/components/SelectionBar.svelte";
+  import {
+    expandToGroups,
+    followGroups,
+    groupBoxes,
+    groupMembers,
+  } from "./lib/node-groups";
   import "@xterm/xterm/css/xterm.css";
   import {
     FILE_LIMITS,
@@ -106,7 +113,9 @@
   import {
     Background,
     MarkerType,
+    SelectionMode,
     SvelteFlow,
+    ViewportPortal,
     type Edge,
     type Node,
   } from "@xyflow/svelte";
@@ -306,6 +315,22 @@
       )
       .map((n) => n.id),
   );
+  /** Canvas objects (not projects or terminals) in the current selection. */
+  const selectedIds = $derived(contextIds);
+  const nodeGroupBoxes = $derived(
+    groupBoxes(editorState.document?.nodes ?? []),
+  );
+  const selectionGrouped = $derived.by(() => {
+    const members = groupMembers(editorState.document?.nodes ?? []);
+    return (editorState.document?.nodes ?? []).some(
+      (node) =>
+        selectedIds.includes(node.id) &&
+        !!node.groupId &&
+        members.has(node.groupId),
+    );
+  });
+  let deleteConfirm = $state.raw<string[] | null>(null);
+  let lastSelectionKey = "";
   const activeTurn = $derived(
     editorState.turns.find(
       (t) => t.status === "pending" || t.status === "generating",
@@ -1703,6 +1728,15 @@
       const tileById = new Map(
         document.sessionTiles.map((tile) => [tile.id, tile] as const),
       );
+      // A member dragged on its own brings the rest of its group along.
+      const positions = followGroups(
+        new Map(
+          placements
+            .filter(({ type }) => type !== "project" && type !== "session")
+            .map(({ id, position }) => [id, position]),
+        ),
+        document.nodes,
+      );
       for (const { id, position, type } of placements) {
         if (type === "project") {
           const group = groupById.get(id);
@@ -1714,10 +1748,29 @@
             editor.placeSessionTile(id, position);
         } else {
           const node = nodeById.get(id);
-          if (node && (node.x !== position.x || node.y !== position.y))
-            editor.placeNode(id, position);
+          const next = positions.get(id) ?? position;
+          if (node && (node.x !== next.x || node.y !== next.y))
+            editor.placeNode(id, next);
         }
       }
+    });
+  });
+
+  // Selecting any member of a group selects the whole group.
+  $effect(() => {
+    const selected = nodes
+      .filter((node) => node.selected && !node.id.startsWith("preview-"))
+      .map((node) => node.id);
+    untrack(() => {
+      const expanded = new Set(
+        expandToGroups(selected, editorState.document?.nodes ?? []),
+      );
+      if (expanded.size === selected.length) return;
+      nodes = nodes.map((node) =>
+        expanded.has(node.id) && !node.selected
+          ? { ...node, selected: true }
+          : node,
+      );
     });
   });
 
@@ -1952,6 +2005,40 @@
       removalBusy = false;
     }
   }
+  function groupSelection() {
+    if (!connected || selectedIds.length < 2) return;
+    editor.groupNodes(selectedIds);
+  }
+
+  function ungroupSelection() {
+    if (!connected || !selectionGrouped) return;
+    editor.ungroupNodes(selectedIds);
+  }
+
+  function clearSelection() {
+    selectedId = "";
+    if (nodes.some((node) => node.selected))
+      nodes = nodes.map((node) =>
+        node.selected ? { ...node, selected: false } : node,
+      );
+  }
+
+  /** Delete one object at once; several only after confirmation. */
+  function deleteSelection() {
+    if (!connected || editorState.busy || !selectedIds.length) return;
+    if (selectedIds.length === 1) void deleteObjects([...selectedIds]);
+    else deleteConfirm = [...selectedIds];
+  }
+
+  async function deleteObjects(ids: string[]) {
+    deleteConfirm = null;
+    clearSelection();
+    for (const id of ids) {
+      await editor.deleteNode(id);
+      if (editorState.error) return;
+    }
+  }
+
   async function removeObject(id: string) {
     const document = editorState.document;
     const workspaceId = editorState.workspace?.workspace.id;
@@ -2225,7 +2312,8 @@
       projectDialog ||
       removal ||
       reviewTile ||
-      taskSend;
+      taskSend ||
+      deleteConfirm;
     const target = event.target as HTMLElement | null;
     // The queue shortcut also works from tile controls (header buttons,
     // Mark seen); only the terminal itself and text fields keep Ctrl+J.
@@ -2247,6 +2335,7 @@
       return;
     if (event.key === "Escape") {
       if (stage === "canvas") void backToWorkspaces();
+      else if (stage === "editor" && !isTyping(event.target)) clearSelection();
       return;
     }
     // Ctrl/Cmd+Z undoes canvas edits; text fields keep their own undo.
@@ -2281,6 +2370,26 @@
       if (isZoomResetShortcut(event)) {
         event.preventDefault();
         zoomBy(1 / viewport.zoom);
+        return;
+      }
+    }
+    if (stage === "editor" && !isTyping(event.target)) {
+      const mod = apple ? event.metaKey : event.ctrlKey;
+      // Ctrl/Cmd+G groups, Ctrl/Cmd+Shift+G ungroups the selection.
+      if (mod && !event.altKey && event.key.toLowerCase() === "g") {
+        event.preventDefault();
+        if (event.shiftKey) ungroupSelection();
+        else groupSelection();
+        return;
+      }
+      if (
+        !mod &&
+        !event.altKey &&
+        (event.key === "Delete" || event.key === "Backspace") &&
+        selectedIds.length
+      ) {
+        event.preventDefault();
+        deleteSelection();
         return;
       }
     }
@@ -2811,7 +2920,13 @@
             nodesConnectable={tool === "arrow" && canEdit}
             elementsSelectable={tool === "select" || tool === "eraser"}
             nodesDraggable={canEdit && tool === "select"}
-            panOnDrag={!isDrawingTool && !editorState.busy}
+            selectionOnDrag={tool === "select" && !editorState.busy}
+            selectionMode={SelectionMode.Full}
+            panOnDrag={editorState.busy
+              ? false
+              : tool === "select"
+                ? [1, 2]
+                : !isDrawingTool}
             panOnScroll={!isDrawingTool && !editorState.busy}
             zoomOnScroll={false}
             zoomActivationKey={["Control", "Meta"]}
@@ -2840,9 +2955,40 @@
             }}
             onnodedragstart={() => editor.checkpoint(true)}
             onnodedragstop={() => editor.release()}
+            onselectionchange={({ nodes: chosen }) => {
+              const ids = chosen
+                .map((node) => node.id)
+                .filter((id) => !id.startsWith("preview-"));
+              // The inspector follows a new box selection; re-renders that
+              // keep the same selection never override an explicit choice.
+              const key = [...ids].sort().join(",");
+              if (key === lastSelectionKey) return;
+              lastSelectionKey = key;
+              if (ids.length && !ids.includes(selectedId)) selectedId = ids[0]!;
+            }}
             onmove={(_, next) => editor.setViewport(next)}
           >
             <Background patternColor={dark ? "#2c2c30" : "#d9dbe4"} gap={24} />
+            <ViewportPortal target="back">
+              {#each nodeGroupBoxes as box (box.groupId)}
+                <div
+                  class="node-group"
+                  class:node-group--selected={box.memberIds.some((id) =>
+                    selectedIds.includes(id),
+                  )}
+                  data-group={box.groupId}
+                  style:transform={`translate(${box.x}px, ${box.y}px)`}
+                  style:width={`${box.width}px`}
+                  style:height={`${box.height}px`}
+                  aria-hidden="true"
+                >
+                  <span class="node-group__label"
+                    ><Icon name="workspaces" size={12} /> Group · {box.memberIds
+                      .length}</span
+                  >
+                </div>
+              {/each}
+            </ViewportPortal>
           </SvelteFlow>
         {/key}
 
@@ -2972,6 +3118,17 @@
 
         <!-- One measured stack: tools, recovery, review, and composer never overlap. -->
         <div class="canvas-dock">
+          {#if editorState.document && (selectedIds.length >= 2 || selectionGrouped)}
+            <SelectionBar
+              count={selectedIds.length}
+              grouped={selectionGrouped}
+              disabled={!connected || editorState.busy}
+              {apple}
+              onGroup={groupSelection}
+              onUngroup={ungroupSelection}
+              onDelete={deleteSelection}
+            />
+          {/if}
           {#if toolbarOpen}
             <CanvasToolbar
               {tool}
@@ -3278,6 +3435,30 @@
         </button>
       </div>
     {/if}
+  {/if}
+
+  {#if deleteConfirm}
+    {@const ids = deleteConfirm}
+    <Modal
+      title={`Delete ${ids.length} objects?`}
+      subtitle="Their connections are removed too. Deleting can't be undone."
+      icon="delete"
+      onClose={() => (deleteConfirm = null)}
+    >
+      <div class="confirm-actions">
+        <button
+          class="btn btn--ghost"
+          type="button"
+          onclick={() => (deleteConfirm = null)}>Cancel</button
+        >
+        <button
+          class="btn btn--danger"
+          type="button"
+          disabled={editorState.busy}
+          onclick={() => void deleteObjects(ids)}>Delete {ids.length}</button
+        >
+      </div>
+    </Modal>
   {/if}
 
   {#if reader}

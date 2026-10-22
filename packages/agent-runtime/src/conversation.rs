@@ -401,7 +401,16 @@ fn scoped_node(
             [artifact_id],
             |row| row.get(0),
         )?;
-        if node != *original || current_revision != original_artifact["revision"].as_i64().unwrap()
+        // Grouping is arrangement, not content: it never invalidates a proposal.
+        let ungrouped = |value: &Value| {
+            let mut value = value.clone();
+            if let Some(object) = value.as_object_mut() {
+                object.remove("groupId");
+            }
+            value
+        };
+        if ungrouped(&node) != ungrouped(original)
+            || current_revision != original_artifact["revision"].as_i64().unwrap()
         {
             return Err(RuntimeError::new("CONFLICT", "A proposal target changed. Discard this proposal and regenerate from current content; nothing was applied."));
         }

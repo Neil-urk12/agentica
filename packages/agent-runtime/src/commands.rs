@@ -294,6 +294,9 @@ struct NodeLayout {
     y: f64,
     width: f64,
     height: f64,
+    /// Omitted means ungrouped; the layout always states the full grouping.
+    #[serde(default)]
+    group_id: Option<String>,
 }
 
 impl NodeLayout {
@@ -825,6 +828,9 @@ impl Runtime {
                 in_range("viewport.zoom", params.viewport.zoom, MIN_ZOOM, MAX_ZOOM)?;
                 for (index, node) in params.nodes.iter().enumerate() {
                     id("nodes.id", &node.id)?;
+                    if let Some(group) = &node.group_id {
+                        id("nodes.groupId", group)?;
+                    }
                     node.geometry().check()?;
                     if params.nodes[..index]
                         .iter()
@@ -843,9 +849,9 @@ impl Runtime {
                     for node in &params.nodes {
                         let g = node;
                         let changed = tx.execute(
-                            "UPDATE canvas_node SET x = ?3, y = ?4, width = ?5, height = ?6
+                            "UPDATE canvas_node SET x = ?3, y = ?4, width = ?5, height = ?6, group_id = ?7
                              WHERE id = ?1 AND canvas_id = ?2",
-                            (&node.id, &params.canvas_id, g.x, g.y, g.width, g.height),
+                            (&node.id, &params.canvas_id, g.x, g.y, g.width, g.height, &node.group_id),
                         )?;
                         if changed == 0 {
                             return Err(not_found("Node on this canvas"));
@@ -1503,19 +1509,24 @@ fn canvas_state(tx: &Transaction, canvas_id: &str) -> Result<Value, RuntimeError
         .optional()?
         .ok_or_else(|| not_found("Canvas"))?;
     let mut statement = tx.prepare(
-        "SELECT id, artifact_id, x, y, width, height FROM canvas_node
+        "SELECT id, artifact_id, x, y, width, height, group_id FROM canvas_node
          WHERE canvas_id = ?1 ORDER BY rowid",
     )?;
     let nodes = statement
         .query_map([canvas_id], |row| {
-            Ok(json!({
+            let mut node = json!({
                 "id": row.get::<_, String>(0)?,
                 "artifactId": row.get::<_, String>(1)?,
                 "x": row.get::<_, f64>(2)?,
                 "y": row.get::<_, f64>(3)?,
                 "width": row.get::<_, f64>(4)?,
                 "height": row.get::<_, f64>(5)?,
-            }))
+            });
+            // Ungrouped nodes keep their earlier shape.
+            if let Some(group) = row.get::<_, Option<String>>(6)? {
+                node["groupId"] = json!(group);
+            }
+            Ok(node)
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut statement = tx.prepare(
