@@ -2987,3 +2987,87 @@ span.card-more {
   justify-content: flex-end;
   gap: 0.5rem;
 }
+
+/* Read-only source view: formatted, highlighted design HTML. */
+.reader__code {
+  max-height: min(65dvh, 40rem);
+  overflow: auto;
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.reader__code:focus {
+  outline: none;
+}
+
+:root {
+  --code-bg: #f6f8fa;
+  --code-ink: #24292f;
+  --code-punct: #6e7781;
+  --code-tag: #116329;
+  --code-attr: #953800;
+  --code-value: #0a3069;
+  --code-comment: #6e7781;
+  --code-doctype: #8250df;
+  --code-selector: #8250df;
+  --code-property: #0550ae;
+}
+
+:root[data-theme="dark"] {
+  --code-bg: #161618;
+  --code-ink: #d4d4d4;
+  --code-punct: #808080;
+  --code-tag: #569cd6;
+  --code-attr: #9cdcfe;
+  --code-value: #ce9178;
+  --code-comment: #6a9955;
+  --code-doctype: #c586c0;
+  --code-selector: #d7ba7d;
+  --code-property: #9cdcfe;
+}
+
+.code-view {
+  margin: 0;
+  padding: 0.85rem 1rem;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--code-ink);
+  tab-size: 2;
+}
+
+/* Wrapped long lines stay aligned with their indentation. */
+.code-view__line {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tok--punct {
+  color: var(--code-punct);
+}
+.tok--tag {
+  color: var(--code-tag);
+}
+.tok--attr {
+  color: var(--code-attr);
+}
+.tok--value,
+.tok--cssvalue {
+  color: var(--code-value);
+}
+.tok--comment {
+  color: var(--code-comment);
+  font-style: italic;
+}
+.tok--doctype,
+.tok--atrule {
+  color: var(--code-doctype);
+}
+.tok--selector {
+  color: var(--code-selector);
+}
+.tok--property {
+  color: var(--code-property);
+}

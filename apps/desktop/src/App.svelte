@@ -261,6 +261,7 @@
     artifactId?: string;
     text: string;
     markdown: boolean;
+    code?: "html";
     startEditing?: boolean;
   };
   let reader = $state.raw<ReaderState | null>(null);
@@ -934,6 +935,7 @@
         subtitle: "HTML/CSS · read-only",
         text: source.html,
         markdown: false,
+        code: "html",
       };
       return;
     }
@@ -3239,6 +3241,7 @@
       subtitle={reader.subtitle}
       text={readerText}
       markdown={reader.markdown}
+      code={reader.code}
       startEditing={reader.startEditing}
       editDisabled={editorState.busy}
       onEdit={reader.artifactId

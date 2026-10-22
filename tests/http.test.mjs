@@ -2188,6 +2188,51 @@ test("an applied HTML design renders in an inert frame on the canvas", async () 
       "owned",
       "design scripts never run",
     );
+    // The source reader shows formatted, highlighted HTML as text only. The
+    // header control can sit under the side panels at this viewport, so it is
+    // activated directly.
+    await evaluate(
+      browser,
+      `document.querySelector('[aria-label="Read the design\\'s HTML source"]').click()`,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('dialog[open] .code-view')`,
+      "the formatted source view",
+    );
+    const code = await evaluate(
+      browser,
+      `(() => {
+        const view = document.querySelector('dialog[open] .code-view');
+        const lines = [...view.querySelectorAll('.code-view__line')];
+        const tag = view.querySelector('.tok--tag');
+        return {
+          lines: lines.length,
+          h1: lines.find((line) => line.textContent.includes('<h1>'))?.style.paddingLeft,
+          tagColor: getComputedStyle(tag).color,
+          textColor: getComputedStyle(view).color,
+          elements: view.querySelectorAll('main, input, script').length,
+          property: view.querySelector('.tok--property')?.textContent,
+        };
+      })()`,
+    );
+    assert.ok(code.lines > 10, JSON.stringify(code));
+    assert.equal(code.h1, "2ch", "the heading is indented inside <main>");
+    assert.notEqual(code.tagColor, code.textColor, "tags are highlighted");
+    assert.equal(code.property, "background");
+    assert.equal(code.elements, 0, "the design's markup is never rendered");
+    for (const type of ["keyDown", "keyUp"])
+      await browser.send(
+        "Input.dispatchKeyEvent",
+        { type, key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 },
+        browser.sessionId,
+      );
+    await waitFor(
+      browser,
+      `!document.querySelector('dialog[open]')`,
+      "the closed source view",
+    );
+
     // The design survives a reopen and is not stored as prose.
     await clickAt(
       browser,
