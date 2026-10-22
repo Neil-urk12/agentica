@@ -33,6 +33,7 @@
     type RuntimeParams,
     type SessionStatus,
     type CanvasOperation,
+    type ConversationTurn,
   } from "@agentica/protocol";
   import { callRuntime, desktopMode, pingRuntime } from "./lib/runtime";
   import { Editor, type DrawingSegment } from "./lib/editor";
@@ -717,7 +718,15 @@
       "The reply could not be saved. Keep this canvas open and retry saving the response.";
   }
 
-  async function generateReply(prompt: string, contextNodeIds?: string[]) {
+  /**
+   * Run one canvas turn. `retry` restarts that failed turn in place, so its
+   * prompt card is reused instead of a new one being placed.
+   */
+  async function generateReply(
+    prompt: string,
+    contextNodeIds?: string[],
+    retry?: ConversationTurn,
+  ) {
     if (
       generating ||
       activeTurn ||
@@ -752,17 +761,21 @@
         ? "Canvas edits will appear as proposals for review."
         : "This model supports text replies only. Choose a tool-capable model in Settings to propose canvas edits.";
       controller.signal.throwIfAborted();
-      const area = usable();
-      const centre = area
-        ? areaCentre(viewport, area)
-        : {
-            x: (340 - viewport.x) / viewport.zoom,
-            y: (300 - viewport.y) / viewport.zoom,
-          };
-      const anchor = exchangePosition(editorState.document.nodes, nodeIds, {
-        x: centre.x - CARD.width / 2,
-        y: centre.y - EXCHANGE_RESERVE.height / 2,
-      });
+      // A retry keeps its prompt card, so it needs no new placement.
+      let anchor = retry?.anchor;
+      if (!anchor) {
+        const area = usable();
+        const centre = area
+          ? areaCentre(viewport, area)
+          : {
+              x: (340 - viewport.x) / viewport.zoom,
+              y: (300 - viewport.y) / viewport.zoom,
+            };
+        anchor = exchangePosition(editorState.document.nodes, nodeIds, {
+          x: centre.x - CARD.width / 2,
+          y: centre.y - EXCHANGE_RESERVE.height / 2,
+        });
+      }
       const requestedId = crypto.randomUUID();
       const start = await editor.startConversation({
         ...origin,
@@ -772,6 +785,7 @@
         nodeIds,
         contextMode,
         anchor,
+        ...(retry ? { retryTurnId: retry.id } : {}),
       });
       if (!start)
         throw new Error(
@@ -1288,6 +1302,7 @@
               generationTask = generateReply(
                 turn.prompt,
                 exists ? [design] : undefined,
+                turn,
               );
             },
             onRead: preview

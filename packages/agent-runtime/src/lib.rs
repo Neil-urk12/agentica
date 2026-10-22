@@ -323,4 +323,99 @@ mod tests {
             .iter()
             .all(|node| node.get("groupId").is_none()));
     }
+
+    #[test]
+    fn retrying_a_failed_turn_reuses_its_prompt_card() {
+        let data = tempfile::tempdir().unwrap();
+        let mut runtime = Runtime::new(Some(data.path().into()));
+        let mut call = |method: &str, params: Value| {
+            runtime.handle_request(
+                &serde_json::to_vec(
+                    &json!({"protocolVersion": 1, "id": "r", "method": method, "params": params}),
+                )
+                .unwrap(),
+            )
+        };
+        let workspace =
+            call("workspace.create", json!({"name": "Retry"}))["result"]["workspace"]["id"].clone();
+        let canvas = call(
+            "canvas.create",
+            json!({"workspaceId": workspace, "title": "Board"}),
+        )["result"]["canvas"]["id"]
+            .clone();
+        let reference = json!({"workspaceId": workspace, "canvasId": canvas});
+        let with = |extra: Value| {
+            let mut params = reference.clone();
+            params
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            params
+        };
+        let start = |turn: &str, retry: Option<&str>, prompt: &str| {
+            let mut params = with(json!({"turnId": turn, "prompt": prompt, "model": "m",
+                "nodeIds": [], "anchor": {"x": 0, "y": 0}}));
+            if let Some(retry) = retry {
+                params["retryTurnId"] = json!(retry);
+            }
+            params
+        };
+        let nodes = |opened: &Value| opened["result"]["nodes"].as_array().unwrap().len();
+        let first = "00000000-0000-4000-8000-0000000000a1";
+        let started = call("conversation.start", start(first, None, "Draw a plan"));
+        let card = started["result"]["turn"]["promptNodeId"].clone();
+        let finish = |turn: &str, status: &str| {
+            with(
+                json!({"turnId": turn, "reply": "", "operations": [], "status": status,
+                "error": if status == "failed" { "Provider timed out" } else { "" }}),
+            )
+        };
+        assert!(call("conversation.finish", finish(first, "failed"))["error"].is_null());
+        let opened = call("canvas.open", reference.clone());
+        assert_eq!(nodes(&opened), 1);
+
+        // Retry needs the saved prompt and a finished, unsuccessful turn.
+        let second = "00000000-0000-4000-8000-0000000000a2";
+        assert_eq!(
+            call("conversation.start", start(second, Some(first), "Changed"))["error"]["code"],
+            "INVALID_PARAMS"
+        );
+        let retried = call(
+            "conversation.start",
+            start(second, Some(first), "Draw a plan"),
+        );
+        let turn = &retried["result"]["turn"];
+        assert_eq!(turn["id"], first, "{retried}");
+        assert_eq!(turn["promptNodeId"], card);
+        assert_eq!(turn["status"], "generating");
+        assert_eq!(turn["error"], "");
+        assert!(
+            retried["result"]["history"].as_array().unwrap().is_empty(),
+            "the retried turn is not its own history"
+        );
+        let opened = call("canvas.open", reference.clone());
+        assert_eq!(nodes(&opened), 1, "no new prompt card");
+        let listed = call("conversation.list", with(json!({"before": 0})));
+        assert_eq!(listed["result"]["turns"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            call(
+                "conversation.start",
+                start(second, Some(first), "Draw a plan")
+            )["error"]["code"],
+            "CONFLICT",
+            "a generating turn cannot be retried again"
+        );
+        let mut done = finish(first, "complete");
+        done["reply"] = json!("Here is the plan.");
+        assert!(call("conversation.finish", done)["error"].is_null());
+        assert_eq!(nodes(&call("canvas.open", reference.clone())), 2);
+        assert_eq!(
+            call(
+                "conversation.start",
+                start(second, Some(first), "Draw a plan")
+            )["error"]["code"],
+            "CONFLICT",
+            "a completed turn is not retried"
+        );
+    }
 }
