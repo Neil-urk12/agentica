@@ -508,7 +508,7 @@
                 </p>
                 <label class="setting__checkbox"
                   ><input
-                    id="provider-tools"
+                    id="provider-tools-custom"
                     type="checkbox"
                     checked={custom.tools}
                     onchange={(event) => {
@@ -557,7 +557,7 @@
               {#if preset}
                 <label class="setting__checkbox"
                   ><input
-                    id="provider-tools"
+                    id="provider-tools-preset"
                     type="checkbox"
                     checked={custom.tools}
                     onchange={(event) => {
@@ -676,7 +676,7 @@
     justify-content: flex-end;
     min-height: 2rem;
     max-width: 44rem;
-    margin-bottom: 0.5rem;
+    margin: 0 auto 0.5rem;
   }
 
   .settings__to-list {
@@ -689,6 +689,7 @@
     flex-direction: column;
     gap: 0.9rem;
     max-width: 44rem;
+    margin-inline: auto;
   }
 
   .settings__section[hidden] {
