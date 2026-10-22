@@ -2921,3 +2921,69 @@ span.card-more {
   /* Keep canvas drag, resize, and selection working over the preview. */
   pointer-events: none;
 }
+
+/* A user group: an outline around its members, drawn behind the nodes. */
+.node-group {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: 14px;
+  pointer-events: none;
+}
+
+.node-group--selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.node-group__label {
+  position: absolute;
+  top: -1.4rem;
+  left: 0.25rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.node-group--selected .node-group__label {
+  color: var(--accent);
+}
+
+/* Box selection matches the app's accent. */
+.svelte-flow__selection,
+.svelte-flow__nodesselection-rect {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+}
+
+.selection-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 6px 8px;
+  font-size: var(--type-body);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow-sm);
+}
+
+.selection-bar__count {
+  margin-right: 0.35rem;
+  padding-left: 0.25rem;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}

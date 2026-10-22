@@ -38,6 +38,8 @@ integration tests check compatibility.
   project folders. Files (images, PDFs, Word documents, and text-like files)
   are copied into SQLite in ordered chunks, previewed from on-demand reads, and
   contribute only extracted text to canvas context.
+- Nodes may share a `group_id`; the runtime stores it with the placement and
+  never treats regrouping as a proposal conflict.
 - The local main window has runtime request capabilities plus a scoped
   `open_file` command that writes one copied file to a temp path for the system
   application; no folder, shell, network, or database plugin permissions are

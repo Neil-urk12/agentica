@@ -578,7 +578,13 @@ const ParamSchemas = {
       )
       .optional(),
     nodes: z
-      .array(z.strictObject({ id: IdSchema, ...Geometry }))
+      .array(
+        z.strictObject({
+          id: IdSchema,
+          ...Geometry,
+          groupId: IdSchema.optional(),
+        }),
+      )
       .refine(
         (nodes) => new Set(nodes.map((node) => node.id)).size === nodes.length,
         "Node IDs must be unique",
@@ -733,6 +739,8 @@ export const NodeSchema = z.strictObject({
   y: z.number(),
   width: z.number(),
   height: z.number(),
+  /** Nodes sharing this ID form one user group; absent means ungrouped. */
+  groupId: IdSchema.optional(),
 });
 export const EdgeSchema = z.strictObject({
   id: IdSchema,
