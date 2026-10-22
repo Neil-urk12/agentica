@@ -895,9 +895,17 @@ label {
   min-height: 3.5rem;
   padding: 0 1.1rem;
   font-size: 1.05rem;
-  border: 2px solid var(--ink);
+  border: none;
+  box-shadow: var(--shadow-sm);
   border-radius: var(--radius);
   background: var(--surface);
+}
+
+.home__form input:focus {
+  outline: none;
+  box-shadow:
+    var(--shadow-sm),
+    0 0 0 2px var(--accent);
 }
 
 .home__form .btn {
