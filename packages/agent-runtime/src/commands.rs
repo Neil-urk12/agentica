@@ -20,9 +20,14 @@ mod review;
 // Limits shared with packages/protocol/src/index.ts.
 const MAX_LABEL: usize = 120;
 const MAX_TEXT: usize = 10_000;
-/// A design travels in one proposal operation, so it must leave room for the
-/// reply inside a single request frame.
-const MAX_HTML: usize = 8_000;
+/// A design is streamed to the backend in ordered chunks (design.begin/chunk)
+/// and referenced by id in the proposal, so it is no longer bound by the 16 KiB
+/// frame. This is the overall assembled-design cap, enforced on assembly, and
+/// matches the canvas-context budget. Measured in UTF-16 code units like Zod.
+const MAX_HTML: usize = 128 * 1024;
+/// One design chunk must fit comfortably inside a single 16 KiB RPC frame
+/// alongside the envelope and ids; html is text, so chunks are raw strings.
+const MAX_HTML_CHUNK: usize = 12_000;
 const MAX_COORDINATE: f64 = 1_000_000.0;
 const MIN_SIZE: f64 = 40.0;
 const MAX_SIZE: f64 = 4_000.0;
@@ -87,6 +92,8 @@ pub(crate) const METHODS: &[&str] = &[
     "file.finish",
     "file.discard",
     "file.read",
+    "design.begin",
+    "design.chunk",
     "node.delete",
     "project.open",
     "project.delete",
@@ -524,6 +531,22 @@ struct FileRef {
 struct ReadFile {
     workspace_id: String,
     artifact_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DesignBegin {
+    workspace_id: String,
+    canvas_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DesignChunk {
+    workspace_id: String,
+    design_id: String,
+    offset: f64,
+    data: String,
 }
 
 #[derive(Deserialize)]
@@ -1120,6 +1143,65 @@ impl Runtime {
                     }))
                 })
             }
+            "design.begin" => {
+                let params: DesignBegin = parse(params)?;
+                id("canvasId", &params.canvas_id)?;
+                let design_id = new_id()?;
+                self.transact(&params.workspace_id, |tx| {
+                    canvas_revision(tx, &params.canvas_id)?;
+                    // Abandoned design blobs should not accumulate forever.
+                    tx.execute(
+                        "DELETE FROM design_blob WHERE created_at < strftime('%s', 'now') - 3600",
+                        [],
+                    )?;
+                    tx.execute(
+                        "INSERT INTO design_blob (id, canvas_id, created_at)
+                         VALUES (?1, ?2, strftime('%s', 'now'))",
+                        (&design_id, &params.canvas_id),
+                    )?;
+                    Ok(json!({ "designId": design_id }))
+                })
+            }
+            "design.chunk" => {
+                let params: DesignChunk = parse(params)?;
+                id("designId", &params.design_id)?;
+                if params.offset.fract() != 0.0 || params.offset < 0.0 {
+                    return Err(invalid("offset must be a non-negative integer."));
+                }
+                // Measured in UTF-16 code units, matching the assembled cap and
+                // the way the client slices its string; chunks never split a
+                // surrogate pair, so the reassembled text is exact.
+                let units = params.data.encode_utf16().count();
+                if units == 0 || units > MAX_HTML_CHUNK {
+                    return Err(invalid("A design chunk is too large or empty."));
+                }
+                self.transact(&params.workspace_id, |tx| {
+                    let exists: bool = tx.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM design_blob WHERE id = ?1)",
+                        [&params.design_id],
+                        |row| row.get(0),
+                    )?;
+                    if !exists {
+                        return Err(not_found("Design blob"));
+                    }
+                    let received = design_received(tx, &params.design_id)?;
+                    if params.offset as usize != received {
+                        return Err(invalid(
+                            "Chunks must arrive in order from the start of the design.",
+                        ));
+                    }
+                    if received + units > MAX_HTML {
+                        return Err(invalid(format!(
+                            "A design must not exceed {MAX_HTML} characters."
+                        )));
+                    }
+                    tx.execute(
+                        "INSERT INTO design_chunk (blob_id, offset, body) VALUES (?1, ?2, ?3)",
+                        (params.design_id.as_str(), received as i64, &params.data),
+                    )?;
+                    Ok(json!({ "received": (received + units) as i64 }))
+                })
+            }
             "node.delete" => {
                 let params: DeleteNode = parse(params)?;
                 id("canvasId", &params.canvas_id)?;
@@ -1283,6 +1365,55 @@ fn canvas_revision(tx: &Transaction, canvas_id: &str) -> Result<i64, RuntimeErro
     )
     .optional()?
     .ok_or_else(|| not_found("Canvas"))
+}
+
+/// UTF-16 code units streamed into a design blob so far, matching the
+/// assembled-design cap and the client's string slicing.
+fn design_received(tx: &Transaction, design_id: &str) -> Result<usize, RuntimeError> {
+    let mut statement =
+        tx.prepare("SELECT body FROM design_chunk WHERE blob_id = ?1 ORDER BY offset")?;
+    let total = statement
+        .query_map([design_id], |row| row.get::<_, String>(0))?
+        .try_fold(0usize, |sum, body| {
+            Ok::<_, rusqlite::Error>(sum + body?.encode_utf16().count())
+        })?;
+    Ok(total)
+}
+
+/// Assemble a streamed design's HTML for the given canvas, enforcing the 128 KiB
+/// cap, then delete the blob and its chunks. The caller has already begun a
+/// transaction, so a later failure rolls the deletion back with everything else.
+pub(crate) fn assemble_design(
+    tx: &Transaction,
+    canvas_id: &str,
+    design_id: &str,
+) -> Result<String, RuntimeError> {
+    id("designId", design_id)?;
+    let blob_canvas: Option<String> = tx
+        .query_row(
+            "SELECT canvas_id FROM design_blob WHERE id = ?1",
+            [design_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    match blob_canvas {
+        Some(ref owner) if owner == canvas_id => {}
+        _ => return Err(not_found("Design blob")),
+    }
+    let mut assembled = String::new();
+    {
+        let mut statement =
+            tx.prepare("SELECT body FROM design_chunk WHERE blob_id = ?1 ORDER BY offset")?;
+        let chunks = statement.query_map([design_id], |row| row.get::<_, String>(0))?;
+        for chunk in chunks {
+            assembled.push_str(&chunk?);
+        }
+    }
+    // Validate the complete design once assembled (empty or over the cap fails).
+    html(&assembled)?;
+    tx.execute("DELETE FROM design_chunk WHERE blob_id = ?1", [design_id])?;
+    tx.execute("DELETE FROM design_blob WHERE id = ?1", [design_id])?;
+    Ok(assembled)
 }
 
 fn check_canvas(tx: &Transaction, canvas_id: &str, expected: i64) -> Result<(), RuntimeError> {

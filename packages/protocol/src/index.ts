@@ -6,9 +6,14 @@ export const MAX_FRAME_BYTES = 16 * 1024;
 export const LIMITS = {
   label: 120,
   text: 10_000,
-  // A design is prompt data plus a proposal operation, so it must stay well
-  // inside one 16 KiB frame together with the turn's reply.
-  html: 8_000,
+  // A design is streamed to the backend in ordered chunks (design.begin/chunk/
+  // finish) and referenced by id in the proposal, so it is no longer bound by
+  // the 16 KiB frame. This is the overall assembled-design cap, enforced when
+  // the chunks are assembled, matching the 128 KiB canvas-context budget.
+  html: 128 * 1024,
+  // One design chunk must fit comfortably inside a single 16 KiB RPC frame
+  // alongside the envelope and ids; html is text, so chunks are raw strings.
+  htmlChunk: 12_000,
   coordinate: 1_000_000,
   minSize: 40,
   maxSize: 4_000,
@@ -289,6 +294,26 @@ export const CanvasOperationSchema = z.discriminatedUnion("op", [
 export type CanvasOperation = z.infer<typeof CanvasOperationSchema>;
 export const CanvasOperationJsonSchema = z.toJSONSchema(CanvasOperationSchema);
 const Operations = z.array(CanvasOperationSchema).max(32);
+// The wire form of a proposal sent through conversation.finish. A design can be
+// up to 128 KiB, far larger than one 16 KiB frame, so its HTML is streamed to
+// the backend first (design.begin/chunk) and this operation references the
+// assembled blob by id; the backend inlines the HTML into the stored turn, so
+// every other operation and the returned turn still carry inline html.
+const CreateHtmlById = z.strictObject({
+  op: z.literal("createHtml"),
+  nodeId: IdSchema,
+  artifactId: IdSchema,
+  ...Geometry,
+  designId: IdSchema,
+});
+export const FinishOperationSchema = z.discriminatedUnion("op", [
+  CreateHtmlById,
+  ...CanvasOperationSchema.options.filter(
+    (option) => option.shape.op.value !== "createHtml",
+  ),
+]);
+export type FinishOperation = z.infer<typeof FinishOperationSchema>;
+const FinishOperations = z.array(FinishOperationSchema).max(32);
 const Anchor = z.strictObject({ x: Coordinate, y: Coordinate });
 const TurnRef = { ...CanvasRef, turnId: IdSchema };
 // Per-turn agent read limits shared with packages/agent-runtime/src/conversation.rs;
@@ -476,7 +501,7 @@ const ParamSchemas = {
   "conversation.finish": z.strictObject({
     ...TurnRef,
     reply: Text,
-    operations: Operations,
+    operations: FinishOperations,
     status: z.enum(["complete", "failed", "cancelled", "interrupted"]),
     error: Text,
   }),
@@ -656,6 +681,18 @@ const ParamSchemas = {
   "file.read": z.strictObject({
     ...WorkspaceRef,
     artifactId: IdSchema,
+  }),
+  // A proposed design's HTML is streamed to the backend before the proposal is
+  // finished, so it is never bound by the 16 KiB frame. design.begin stages an
+  // empty blob tied to the canvas; design.chunk appends raw text in order. The
+  // conversation.finish createHtml operation then references the returned
+  // designId, and the backend assembles and inlines the HTML (<= 128 KiB).
+  "design.begin": z.strictObject({ ...CanvasRef }),
+  "design.chunk": z.strictObject({
+    ...WorkspaceRef,
+    designId: IdSchema,
+    offset: z.number().int().min(0).max(LIMITS.html),
+    data: z.string().min(1).max(LIMITS.htmlChunk),
   }),
   "node.delete": z.strictObject({
     ...CanvasRef,
@@ -904,6 +941,8 @@ export const ResultSchemas = {
     size: z.number().int().min(0),
     data: z.string(),
   }),
+  "design.begin": z.strictObject({ designId: IdSchema }),
+  "design.chunk": z.strictObject({ received: z.number().int().min(0) }),
   "node.delete": z.strictObject({ revision: Revision }),
 } as const satisfies Record<RuntimeMethod, z.ZodType>;
 

@@ -248,9 +248,12 @@ fn one_writer_per_workspace_across_launch_modes_and_aliases() {
 }
 
 /// A design is a sandboxed HTML page, not canvas shapes: proposals store it as
-/// its own artifact type and reject source that would crowd out the reply.
+/// its own artifact type. The HTML is streamed to the backend in ordered chunks
+/// (design.begin/chunk), referenced by id in the proposal, assembled and inlined
+/// on finish, and applied unchanged. Large designs that once exceeded the 16 KiB
+/// frame now succeed; only an assembled design over 128 KiB is rejected.
 #[test]
-fn html_design_proposals_apply_reopen_and_enforce_their_size_limit() {
+fn html_design_proposals_stream_apply_reopen_and_enforce_their_size_limit() {
     let temp = tempfile::tempdir().unwrap();
     let mut backend = desktop(temp.path());
     let workspace = call(
@@ -271,7 +274,37 @@ fn html_design_proposals_apply_reopen_and_enforce_their_size_limit() {
             "prompt": "Design a login page", "model": "test",
             "anchor": { "x": 0, "y": 0 }, "nodeIds": [] })
     };
-    let source = "<!doctype html><style>body{background:#101828;color:#fff}</style><main><h1>Sign in</h1><input><button>Continue</button></main>";
+    // Stream a design to a fresh blob in <= 12 000-unit chunks, as the client
+    // does, and return its assigned designId.
+    let stream = |backend: &mut DesktopBackend, html: &str| -> String {
+        let begun = call(backend, "design.begin", reference.clone());
+        assert_eq!(code(&begun), "ok", "{begun}");
+        let design_id = begun["result"]["designId"].as_str().unwrap().to_owned();
+        let units: Vec<u16> = html.encode_utf16().collect();
+        let mut offset = 0usize;
+        while offset < units.len() {
+            let end = (offset + 12_000).min(units.len());
+            let chunk = String::from_utf16(&units[offset..end]).unwrap();
+            let response = call(
+                backend,
+                "design.chunk",
+                json!({ "workspaceId": workspace, "designId": design_id,
+                    "offset": offset, "data": chunk }),
+            );
+            if code(&response) != "ok" {
+                return design_id; // surface the first failing chunk to the caller
+            }
+            offset = response["result"]["received"].as_u64().unwrap() as usize;
+        }
+        design_id
+    };
+
+    // A design well past the old 8 000-char frame limit streams and applies.
+    let source = format!(
+        "<!doctype html><style>body{{background:#101828;color:#fff}}</style><main><h1>Sign in</h1>{}<button>Continue</button></main>",
+        "<p>Welcome back to the workspace.</p>".repeat(1_000)
+    );
+    assert!(source.len() > 16 * 1024, "the design exceeds one frame");
     assert_eq!(
         code(&call(
             &mut backend,
@@ -280,10 +313,11 @@ fn html_design_proposals_apply_reopen_and_enforce_their_size_limit() {
         )),
         "ok"
     );
+    let design_id = stream(&mut backend, &source);
     let operation = json!({ "op": "createHtml",
         "nodeId": "00000000-0000-4000-8000-000000000021",
         "artifactId": "00000000-0000-4000-8000-000000000022",
-        "x": 400, "y": 0, "width": 960, "height": 640, "html": source });
+        "x": 400, "y": 0, "width": 960, "height": 640, "designId": design_id });
     let finished = call(
         &mut backend,
         "conversation.finish",
@@ -297,6 +331,14 @@ fn html_design_proposals_apply_reopen_and_enforce_their_size_limit() {
         finished["result"]["turn"]["status"], "pending",
         "a design is reviewable before it is applied"
     );
+    // The stored turn carries inline html, not a designId, so apply is unchanged.
+    assert_eq!(
+        finished["result"]["turn"]["operations"][0]["html"], source,
+        "the streamed design is inlined into the stored proposal"
+    );
+    assert!(finished["result"]["turn"]["operations"][0]
+        .get("designId")
+        .is_none());
     let applied = call(
         &mut backend,
         "conversation.resolve",
@@ -318,8 +360,8 @@ fn html_design_proposals_apply_reopen_and_enforce_their_size_limit() {
         .iter()
         .any(|node| node["id"] == "00000000-0000-4000-8000-000000000021"));
 
-    // Oversized source fails the finish instead of storing a partial design.
-    let oversized = "x".repeat(8_001);
+    // A design whose assembled size exceeds 128 KiB is rejected while streaming,
+    // before any proposal is finished.
     assert_eq!(
         code(&call(
             &mut backend,
@@ -328,23 +370,34 @@ fn html_design_proposals_apply_reopen_and_enforce_their_size_limit() {
         )),
         "ok"
     );
-    let rejected = call(
-        &mut backend,
-        "conversation.finish",
-        json!({ "workspaceId": workspace, "canvasId": canvas,
-            "turnId": "00000000-0000-4000-8000-000000000023",
-            "reply": "Design", "operations": [{ "op": "createHtml",
-                "nodeId": "00000000-0000-4000-8000-000000000024",
-                "artifactId": "00000000-0000-4000-8000-000000000025",
-                "x": 400, "y": 0, "width": 960, "height": 640,
-                "html": oversized }],
-            "status": "complete", "error": "" }),
-    );
+    let oversized = "x".repeat(128 * 1024 + 1);
+    let rejected = {
+        let begun = call(&mut backend, "design.begin", reference.clone());
+        let design_id = begun["result"]["designId"].as_str().unwrap().to_owned();
+        let units: Vec<u16> = oversized.encode_utf16().collect();
+        let mut offset = 0usize;
+        let mut last = json!({});
+        while offset < units.len() {
+            let end = (offset + 12_000).min(units.len());
+            let chunk = String::from_utf16(&units[offset..end]).unwrap();
+            last = call(
+                &mut backend,
+                "design.chunk",
+                json!({ "workspaceId": workspace, "designId": design_id,
+                    "offset": offset, "data": chunk }),
+            );
+            if code(&last) != "ok" {
+                break;
+            }
+            offset = last["result"]["received"].as_u64().unwrap() as usize;
+        }
+        last
+    };
     assert_eq!(code(&rejected), "INVALID_PARAMS", "{rejected}");
     assert!(rejected["error"]["message"]
         .as_str()
         .unwrap()
-        .contains("8000"));
+        .contains(&(128 * 1024).to_string()));
     let after = call(&mut backend, "canvas.open", reference);
     assert_eq!(
         after["result"]["artifacts"]
@@ -356,6 +409,68 @@ fn html_design_proposals_apply_reopen_and_enforce_their_size_limit() {
         1,
         "the rejected design was not stored"
     );
+}
+
+/// design.begin stages a blob; design.chunk appends raw text strictly in order,
+/// reporting the running UTF-16 count, and rejects an out-of-order offset, an
+/// unknown blob, and a chunk bigger than one frame allows.
+#[test]
+fn design_chunks_must_arrive_in_order_and_report_their_running_size() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut backend = desktop(temp.path());
+    let workspace = call(
+        &mut backend,
+        "workspace.create",
+        json!({ "name": "Streaming" }),
+    )["result"]["workspace"]["id"]
+        .clone();
+    let canvas = call(
+        &mut backend,
+        "canvas.create",
+        json!({ "workspaceId": workspace, "title": "Canvas" }),
+    )["result"]["canvas"]["id"]
+        .clone();
+    let reference = json!({ "workspaceId": workspace, "canvasId": canvas });
+    let design_id = call(&mut backend, "design.begin", reference.clone())["result"]["designId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let chunk = |offset: usize, data: &str| {
+        json!({ "workspaceId": workspace, "designId": design_id,
+            "offset": offset, "data": data })
+    };
+
+    // First chunk from the start is accepted and the running size is its length.
+    let first = call(&mut backend, "design.chunk", chunk(0, "hello"));
+    assert_eq!(code(&first), "ok", "{first}");
+    assert_eq!(first["result"]["received"], 5);
+
+    // An offset that is not exactly the running size is rejected in order.
+    let wrong = call(&mut backend, "design.chunk", chunk(4, "x"));
+    assert_eq!(code(&wrong), "INVALID_PARAMS", "{wrong}");
+    assert!(wrong["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("in order"));
+
+    // Continuing from the reported offset succeeds and accumulates.
+    let second = call(&mut backend, "design.chunk", chunk(5, " world"));
+    assert_eq!(code(&second), "ok", "{second}");
+    assert_eq!(second["result"]["received"], 11);
+
+    // A chunk larger than one frame's worth of text is rejected.
+    let huge = call(&mut backend, "design.chunk", chunk(11, &"a".repeat(12_001)));
+    assert_eq!(code(&huge), "INVALID_PARAMS", "{huge}");
+
+    // An unknown blob id is not found.
+    let missing = call(
+        &mut backend,
+        "design.chunk",
+        json!({ "workspaceId": workspace,
+            "designId": "00000000-0000-4000-8000-000000000099",
+            "offset": 0, "data": "x" }),
+    );
+    assert_eq!(code(&missing), "NOT_FOUND", "{missing}");
 }
 
 /// A canvas is prompt data, not one transport frame: ordinary canvases exceed

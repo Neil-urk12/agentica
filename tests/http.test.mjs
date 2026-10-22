@@ -1628,6 +1628,17 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
       "Human edit while generating",
     );
     await evaluate(browser, `window.__slow = false`);
+    // The node drawer starts closed by default; open it so the per-node delete
+    // buttons render before the deletion steps below use them.
+    await evaluate(
+      browser,
+      `if (!document.querySelector('.drawer__row')) document.querySelector('[aria-label="Toggle nodes"]')?.click()`,
+    );
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.drawer__row').length > 0`,
+      "the open node drawer",
+    );
     for (const action of ["Apply", "Discard"]) {
       await submit(
         `Draw an idea before deleting the reply and choosing ${action}`,
@@ -1792,7 +1803,7 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
       for (const [selector, value] of [['#provider-base-url', ${JSON.stringify(customBaseUrl)}], ['#openrouter-api-key', 'custom-test-only'], ['#openrouter-model', 'local-model']]) {
         const input = document.querySelector(selector); input.value = value; input.dispatchEvent(new Event('input', {bubbles:true}));
       }
-      document.querySelector('#provider-tools').click();
+      document.querySelector('#provider-tools-custom').click();
       document.querySelector('[aria-label="Back, close settings"]').click();
     })()`,
     );
@@ -2112,6 +2123,19 @@ test("an applied HTML design renders in an inert frame on the canvas", async () 
       nodeIds: [],
     });
     const source = `<!doctype html><style>body{background:#101828;color:#f8fafc;font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0}main{width:320px}input,button{width:100%;padding:10px;margin:6px 0}</style><main><h1>Sign in</h1><input type="email" placeholder="you@example.com"><input type="password" placeholder="Password"><button>Continue</button></main><script>parent.document.title='owned';document.title='owned'</script>`;
+    // A design is streamed to the backend in ordered chunks, then referenced by
+    // id in the proposal; the backend assembles and inlines the HTML on finish.
+    const { designId } = await rpc("design.begin", reference);
+    for (let offset = 0; offset < source.length;) {
+      const end = Math.min(offset + 12_000, source.length);
+      const { received } = await rpc("design.chunk", {
+        workspaceId,
+        designId,
+        offset,
+        data: source.slice(offset, end),
+      });
+      offset = received;
+    }
     const finished = await rpc("conversation.finish", {
       ...reference,
       turnId,
@@ -2125,7 +2149,7 @@ test("an applied HTML design renders in an inert frame on the canvas", async () 
           y: 0,
           width: 960,
           height: 640,
-          html: source,
+          designId,
         },
       ],
       status: "complete",
@@ -2590,6 +2614,18 @@ test("annotating a design proposes a revised copy beside the original", async ()
     });
     const original = `<!doctype html><style>body{margin:0;font-family:system-ui}header{height:200px;background:#1e3a8a;color:#fff;display:grid;place-items:center}h1{margin:0;font-size:48px}section{height:440px;background:#f1f5f9}</style><header><h1 class="hero">Launch faster</h1></header><section></section>`;
     const designId = crypto.randomUUID();
+    // Seed the original design through the streaming path, as the app does.
+    const blob = await rpc("design.begin", reference);
+    for (let offset = 0; offset < original.length;) {
+      const end = Math.min(offset + 12_000, original.length);
+      const { received } = await rpc("design.chunk", {
+        workspaceId: workspace.id,
+        designId: blob.designId,
+        offset,
+        data: original.slice(offset, end),
+      });
+      offset = received;
+    }
     await rpc("conversation.finish", {
       ...reference,
       turnId,
@@ -2603,7 +2639,7 @@ test("annotating a design proposes a revised copy beside the original", async ()
           y: 0,
           width: 960,
           height: 640,
-          html: original,
+          designId: blob.designId,
         },
       ],
       status: "complete",

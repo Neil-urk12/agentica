@@ -22,7 +22,10 @@ export const BUDGET = Object.freeze({
   /** Identical rejected calls tolerated before the turn stops. */
   repeatedRejections: 3,
   requestBytes: 128 * 1024,
-  toolArgBytes: 16 * 1024,
+  // A design can be up to 128 KiB; it is streamed to the backend in ordered
+  // chunks when the proposal is finished, so one canvas_edit tool argument must
+  // be allowed to carry a full design even though no single RPC frame does.
+  toolArgBytes: 128 * 1024,
   ms: 120_000,
 });
 /** Every limit is a number, so callers can supply their own values. */

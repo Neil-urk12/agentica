@@ -927,7 +927,7 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
             Ok(result)
         }
         "conversation.finish" => {
-            let p: Finish = parse(params)?;
+            let mut p: Finish = parse(params)?;
             id("workspaceId", &p.workspace_id)?;
             id("turnId", &p.turn_id)?;
             text(&p.reply)?;
@@ -966,6 +966,25 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
             }
             if p.status == "complete" && p.reply.trim().is_empty() {
                 return Err(invalid("The agent must provide a text reply."));
+            }
+            // A createHtml operation references its design by id; the HTML was
+            // streamed ahead of this call (design.begin/chunk) and is assembled
+            // and inlined here, so validation, storage, and later apply all see
+            // ordinary inline html. Assembly deletes the one-shot blob, so this
+            // runs only on the live finish, never the resend path above.
+            for operation in &mut p.operations {
+                let Some(object) = operation.as_object_mut() else {
+                    continue;
+                };
+                if object.get("op").and_then(Value::as_str) != Some("createHtml") {
+                    continue;
+                }
+                let design_id = object
+                    .remove("designId")
+                    .and_then(|value| value.as_str().map(str::to_owned))
+                    .ok_or_else(|| invalid("A design operation must reference a designId."))?;
+                let html = assemble_design(tx, &p.canvas_id, &design_id)?;
+                object.insert("html".to_owned(), json!(html));
             }
             if !p.operations.is_empty() {
                 let context: String = tx.query_row(

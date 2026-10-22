@@ -43,7 +43,11 @@
     type ConversationTurn,
   } from "@agentica/protocol";
   import { callRuntime, desktopMode, pingRuntime } from "./lib/runtime";
-  import { Editor, type DrawingSegment } from "./lib/editor";
+  import {
+    Editor,
+    type DrawingSegment,
+    type FinishProposal,
+  } from "./lib/editor";
   import { applyTheme, readTheme, type Theme } from "./lib/theme";
   import { readShowButtonText, saveShowButtonText } from "./lib/preferences";
   import Composer from "./lib/components/Composer.svelte";
@@ -266,9 +270,7 @@
   let toolsNotice = $state("");
   let conversationAbort: AbortController | undefined;
   let generationTask: Promise<boolean> | undefined;
-  let pendingReply = $state.raw<RuntimeParams<"conversation.finish"> | null>(
-    null,
-  );
+  let pendingReply = $state.raw<FinishProposal | null>(null);
   type ReaderState = {
     title: string;
     subtitle?: string;

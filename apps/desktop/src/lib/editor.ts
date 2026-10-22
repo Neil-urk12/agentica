@@ -1,6 +1,8 @@
 import {
   FILE_LIMITS,
+  LIMITS,
   MAX_FRAME_BYTES,
+  type CanvasOperation,
   type Drawing,
   type FileMime,
   type RuntimeResult,
@@ -18,6 +20,18 @@ export type CanvasDocument = RuntimeResult<"canvas.open">;
 type Placement = CanvasDocument["nodes"][number];
 type Viewport = CanvasDocument["canvas"]["viewport"];
 type Artifact = CanvasDocument["artifacts"][number];
+
+/**
+ * A proposal to finish, as produced by the agent: createHtml operations still
+ * carry inline `html`. finishConversation streams each design to the backend
+ * (design.begin/chunk) and rewrites its operation to reference the returned
+ * designId before sending conversation.finish, so a design is never bound by
+ * the 16 KiB frame.
+ */
+export type FinishProposal = Omit<
+  RuntimeParams<"conversation.finish">,
+  "operations"
+> & { operations: CanvasOperation[] };
 
 /** One drawing to persist: where its node sits and what it contains. */
 export interface DrawingSegment {
@@ -927,12 +941,58 @@ export class Editor {
     return result;
   }
 
-  async finishConversation(params: RuntimeParams<"conversation.finish">) {
+  /**
+   * Stream any createHtml design to the backend in ordered chunks, each small
+   * enough for one 16 KiB frame, and return the finish params with those
+   * operations rewritten to reference the assembled blob by id. Everything else
+   * is passed through unchanged.
+   */
+  private async stageDesigns(
+    proposal: FinishProposal,
+  ): Promise<RuntimeParams<"conversation.finish">> {
+    const { operations, ...rest } = proposal;
+    const staged = await Promise.all(
+      operations.map(async (operation) => {
+        if (operation.op !== "createHtml") return operation;
+        const { html, ...geometry } = operation;
+        const { designId } = await this.call(
+          this.key(),
+          false,
+          "design.begin",
+          { workspaceId: proposal.workspaceId, canvasId: proposal.canvasId },
+        );
+        // JavaScript strings are UTF-16, matching the backend's offset and cap;
+        // slicing at a code-unit boundary never splits a chunk mid-character
+        // because the backend sums the same units it receives.
+        let offset = 0;
+        while (offset < html.length) {
+          const end = Math.min(offset + LIMITS.htmlChunk, html.length);
+          const { received } = await this.call(
+            this.key(),
+            false,
+            "design.chunk",
+            {
+              workspaceId: proposal.workspaceId,
+              designId,
+              offset,
+              data: html.slice(offset, end),
+            },
+          );
+          offset = received;
+        }
+        return { ...geometry, designId };
+      }),
+    );
+    return { ...rest, operations: staged };
+  }
+
+  async finishConversation(proposal: FinishProposal) {
     let result: RuntimeResult<"conversation.finish"> | undefined;
     await this.enqueue(async () => {
       await this.settleSave();
       if (this.state.dirty || this.disposed) return;
       await this.mutation(async () => {
+        const params = await this.stageDesigns(proposal);
         result = await this.call(
           this.key(),
           false,
