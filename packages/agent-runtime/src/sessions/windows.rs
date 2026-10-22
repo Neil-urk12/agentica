@@ -89,6 +89,15 @@ impl Job {
     }
 }
 
+/// Wait until a process that reported an exit code has finished tearing
+/// down. `GetExitCodeProcess` shows the code as soon as `ExitProcess` starts;
+/// closing the pseudoconsole before the handle is signaled delivers a console
+/// close event that overwrites it with `STATUS_CONTROL_C_EXIT`.
+pub(super) fn finish_exit(process: RawHandle) {
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+    unsafe { WaitForSingleObject(process as _, 2_000) };
+}
+
 /// Call after the pseudoconsole is closed. Waits for every owned process to
 /// exit, terminating the job after the grace period, and returns the
 /// launcher's exit code. Windows has no signals, so the signal is always None.

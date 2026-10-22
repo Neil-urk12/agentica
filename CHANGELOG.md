@@ -12,6 +12,29 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-22
 
+#### Annotate a design and generate a revision
+
+- Add **Annotate design** to design nodes. The dialog renders the design at its
+  canvas size, scaled to fit; clicking it pins a numbered comment there, and
+  **General comment** adds an unpinned one (up to 12 comments of 400
+  characters). Each pin records its position and a bounded description of the
+  element under it, read from the inert same-origin frame without running the
+  design's markup.
+- **Generate revision** starts an ordinary canvas turn whose only context is the
+  reviewed design and whose prompt lists the comments and asks for one
+  `createHtml` operation at the proposal anchor with the original's size. The
+  result is a normal pending proposal, so Apply, Discard, conflicts, and the
+  harness limits are unchanged, and the original is never modified. No runtime
+  or protocol changes were needed.
+- Unsent comments are stored in browser storage per canvas and design, shown as
+  a count badge on the node, and cleared once the turn exists. Retry on a
+  revision prompt card resends the same design as context regardless of the
+  current selection.
+- Unit tests cover element descriptions, prompt composition and limits, the
+  Retry target, and draft storage; a rendered browser test pins a comment on a
+  headline, restores the draft, generates and applies the revision, and checks
+  that only the design was sent and the original is unchanged.
+
 #### Undo and redo for canvas edits
 
 - Add **Undo** and **Redo** to the canvas navigation bar, with Ctrl+Z and
@@ -58,6 +81,10 @@ released version and date. Keep validation evidence in the
 - Launch with the plain form of the canonical project path, since many programs
   mishandle `\\?\` working directories. Windows reports exit codes only; the
   exit signal is always empty.
+- Wait for an exited launcher's process handle to signal before closing the
+  pseudoconsole. Windows publishes the exit code when `ExitProcess` starts, and
+  closing the console during teardown overwrote it with `STATUS_CONTROL_C_EXIT`
+  (0xC000013A), so a natural exit sometimes reported the wrong code.
 - Automated tests on Windows 11 cover PowerShell input, resize, restart, job
   cleanup of a detached child, `cmd.exe` exit codes and final output, and failed
   launches. Interactive Codex use and the WebSocket integration suite remain

@@ -2493,6 +2493,264 @@ test("Ctrl+Z undoes an accidental drag in the rendered app and saves it", async 
   }
 });
 
+test("annotating a design proposes a revised copy beside the original", async () => {
+  const backend = await startBackend();
+  key = backend.connectionKey;
+  let browser;
+  const rpc = async (method, params) => {
+    const reply = await send(port, {
+      body: JSON.stringify({
+        protocolVersion: 1,
+        id: crypto.randomUUID(),
+        method,
+        params,
+      }),
+    });
+    assert.equal(reply.status, 200);
+    const response = RuntimeResponseSchema.parse(JSON.parse(reply.text));
+    assert.equal(response.error, undefined, JSON.stringify(response));
+    return ResultSchemas[method].parse(response.result);
+  };
+  try {
+    const { workspace } = await rpc("workspace.create", {
+      name: "Design review",
+    });
+    const { canvas } = await rpc("canvas.create", {
+      workspaceId: workspace.id,
+      title: "Landing review",
+    });
+    const reference = { workspaceId: workspace.id, canvasId: canvas.id };
+    const turnId = crypto.randomUUID();
+    await rpc("conversation.start", {
+      ...reference,
+      turnId,
+      prompt: "Design a landing page",
+      model: "test",
+      anchor: { x: 0, y: 0 },
+      nodeIds: [],
+    });
+    const original = `<!doctype html><style>body{margin:0;font-family:system-ui}header{height:200px;background:#1e3a8a;color:#fff;display:grid;place-items:center}h1{margin:0;font-size:48px}section{height:440px;background:#f1f5f9}</style><header><h1 class="hero">Launch faster</h1></header><section></section>`;
+    const designId = crypto.randomUUID();
+    await rpc("conversation.finish", {
+      ...reference,
+      turnId,
+      reply: "Here is a landing page.",
+      operations: [
+        {
+          op: "createHtml",
+          nodeId: designId,
+          artifactId: crypto.randomUUID(),
+          x: 400,
+          y: 0,
+          width: 960,
+          height: 640,
+          html: original,
+        },
+      ],
+      status: "complete",
+      error: "",
+    });
+    await rpc("conversation.resolve", {
+      ...reference,
+      turnId,
+      action: "apply",
+    });
+
+    browser = await launchBrowser();
+    await browser.send(
+      "Page.addScriptToEvaluateOnNewDocument",
+      {
+        source: `
+      localStorage.setItem('agentica.openrouterApiKey', 'test-only');
+      localStorage.setItem('agentica.openrouterModel', 'openrouter/free');
+      window.__providerRequests = [];
+      const realFetch = window.fetch.bind(window);
+      window.fetch = async (url, options) => {
+        if (!String(url).startsWith('https://openrouter.ai/')) return realFetch(url, options);
+        const body = JSON.parse(options.body);
+        window.__providerRequests.push(body);
+        if (body.messages.at(-1).role === 'user') {
+          const input = JSON.parse(body.messages.at(-1).content);
+          const operation = {op:'createHtml',...input.proposalAnchor,width:960,height:640,html:'<!doctype html><h1>Launch faster, today</h1>'};
+          return new Response(JSON.stringify({choices:[{message:{content:null,tool_calls:[{id:crypto.randomUUID(),type:'function',function:{name:'canvas_edit',arguments:JSON.stringify(operation)}}]}}]}), {headers:{'Content-Type':'application/json'}});
+        }
+        return new Response(JSON.stringify({choices:[{message:{content:'Made the headline bolder.'},finish_reason:'stop'}]}), {headers:{'Content-Type':'application/json'}});
+      };
+    `,
+      },
+      browser.sessionId,
+    );
+    await browser.send(
+      "Page.navigate",
+      { url: `http://127.0.0.1:${port}/` },
+      browser.sessionId,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('#connection-key')`,
+      "the connection form",
+    );
+    await evaluate(
+      browser,
+      `(() => { const input = document.querySelector('#connection-key'); input.value = ${JSON.stringify(key)}; input.dispatchEvent(new Event('input', { bubbles: true })); })()`,
+    );
+    await clickAt(
+      browser,
+      await boxOf(browser, ".connbar button[type='submit']"),
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('.connbar--ok')`,
+      "the connected status",
+    );
+    for (const label of ["Design review", "Landing review"]) {
+      const card = `[...document.querySelectorAll('.cards .card')].find((item) => item.textContent.includes(${JSON.stringify(label)}))`;
+      await waitFor(
+        browser,
+        `${card} && !(${card}).disabled`,
+        `the ${label} card`,
+      );
+      await evaluate(
+        browser,
+        `(${card}).focus(); (${card}).scrollIntoView({ block: 'center' })`,
+      );
+      await clickAt(browser, await boxByText(browser, ".cards .card", label));
+    }
+    const annotate = `[data-id="${designId}"] [aria-label^="Annotate design"]`;
+    await waitFor(
+      browser,
+      `!!document.querySelector(${JSON.stringify(annotate)}) && !document.querySelector(${JSON.stringify(annotate)}).disabled`,
+      "the annotate control",
+    );
+    await clickAt(browser, await boxOf(browser, annotate));
+    await waitFor(
+      browser,
+      `document.querySelector('.review__frame')?.contentDocument?.querySelector('h1')`,
+      "the design inside the annotation dialog",
+    );
+    // Pin a comment on the headline: 50% across, 15% down is inside it.
+    const stage = await boxOf(browser, ".review__overlay");
+    await clickAt(browser, {
+      x: stage.x,
+      y: stage.y - stage.height / 2 + stage.height * 0.15,
+    });
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.review__item').length === 1 && document.activeElement?.matches('.review__item textarea')`,
+      "a focused pinned comment",
+    );
+    assert.match(
+      await evaluate(
+        browser,
+        `document.querySelector('.review__field label').textContent`,
+      ),
+      /Pinned on .*h1\.hero "Launch faster"/,
+      "the pin names the element under it",
+    );
+    const type = (index, text) =>
+      evaluate(
+        browser,
+        `(() => { const field = document.querySelectorAll('.review__item textarea')[${index}]; field.value = ${JSON.stringify(text)}; field.dispatchEvent(new Event('input', { bubbles: true })); })()`,
+      );
+    await type(0, "Make the headline bolder");
+    // Drafts survive closing the dialog and show as a badge on the node.
+    await clickAt(
+      browser,
+      await boxByText(browser, ".review button", "Keep for later"),
+    );
+    await waitFor(
+      browser,
+      `document.querySelector('[data-id="${designId}"] .design__badge')?.textContent === '1'`,
+      "the unsent comment badge",
+    );
+    await clickAt(browser, await boxOf(browser, annotate));
+    await waitFor(
+      browser,
+      `document.querySelector('.review__item textarea')?.value === 'Make the headline bolder'`,
+      "the restored draft",
+    );
+    await clickAt(
+      browser,
+      await boxByText(browser, ".review button", "General comment"),
+    );
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.review__item').length === 2`,
+      "a general comment",
+    );
+    await type(1, "Use a warmer palette");
+    await clickAt(
+      browser,
+      await boxByText(browser, ".review button", "Generate revision"),
+    );
+    await waitFor(
+      browser,
+      `!document.querySelector('.review') && !!document.querySelector('.design.preview')`,
+      "the proposed revision",
+    );
+    const request = JSON.parse(
+      await evaluate(
+        browser,
+        `JSON.stringify(window.__providerRequests[0].messages.at(-1).content)`,
+      ),
+    );
+    const input = JSON.parse(request);
+    assert.match(input.prompt, new RegExp(`^Revise design ${designId} `));
+    assert.match(
+      input.prompt,
+      /1\. \[At 50% across, 1\d% down, on header > h1\.hero "Launch faster"\] Make the headline bolder/,
+    );
+    assert.match(input.prompt, /2\. \[Whole design\] Use a warmer palette/);
+    assert.deepEqual(
+      input.canvasContext.nodes.map((node) => node.id),
+      [designId],
+      "only the reviewed design is sent as context",
+    );
+    assert.equal(input.canvasContext.artifacts[0].html, original);
+
+    await clickAt(
+      browser,
+      await boxByText(browser, ".review-bar button", "Apply"),
+    );
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.design:not(.preview)').length === 2 && !document.querySelector('.design__badge')`,
+      "the applied revision and a cleared draft",
+    );
+    const stored = await rpc("canvas.open", reference);
+    const designs = stored.artifacts.filter(
+      (artifact) => artifact.type === "html",
+    );
+    assert.equal(designs.length, 2);
+    assert.ok(designs.some((artifact) => artifact.html === original));
+    const revised = stored.nodes.find(
+      (node) =>
+        node.id !== designId &&
+        designs.some(
+          (artifact) =>
+            artifact.id === node.artifactId && artifact.html !== original,
+        ),
+    );
+    const source = stored.nodes.find((node) => node.id === designId);
+    assert.deepEqual(
+      [source.x, source.y, source.width, source.height],
+      [400, 0, 960, 640],
+      "the original design is unchanged",
+    );
+    assert.ok(
+      revised.x >= source.x + source.width,
+      "the revision sits beside it",
+    );
+  } catch (error) {
+    if (browser)
+      error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({text:document.body.innerText.slice(-1500)})")}`;
+    throw error;
+  } finally {
+    await browser?.close();
+    await stopBackend(backend.child);
+  }
+});
+
 test("picked files are copied, previewed, and shared with the next prompt", async () => {
   const backend = await startBackend();
   key = backend.connectionKey;

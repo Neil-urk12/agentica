@@ -12,6 +12,15 @@
   import { feedbackMessage } from "./lib/changes";
   import Modal from "./lib/components/Modal.svelte";
   import ViewportSync from "./lib/components/ViewportSync.svelte";
+  import DesignReview from "./lib/components/DesignReview.svelte";
+  import {
+    loadDraft,
+    revisionPrompt,
+    revisionTarget,
+    saveDraft,
+    usableComments,
+    type DesignComment,
+  } from "./lib/design-review.ts";
   import "@xterm/xterm/css/xterm.css";
   import {
     FILE_LIMITS,
@@ -246,6 +255,11 @@
     startEditing?: boolean;
   };
   let reader = $state.raw<ReaderState | null>(null);
+  let review = $state.raw<{
+    nodeId: string;
+    comments: DesignComment[];
+  } | null>(null);
+  let reviewVersion = $state(0);
   let reviewError = $state("");
   let resolving = $state(false);
   let fitNotice = $state("");
@@ -652,6 +666,45 @@
     return generationTask;
   }
 
+  function openReview(nodeId: string) {
+    const document = editorState.document;
+    if (!document) return;
+    selectedId = nodeId;
+    review = { nodeId, comments: loadDraft(document.canvas.id, nodeId) };
+  }
+
+  function updateReview(comments: DesignComment[]) {
+    const document = editorState.document;
+    if (!review || !document) return;
+    review = { ...review, comments };
+    saveDraft(document.canvas.id, review.nodeId, comments);
+    reviewVersion += 1;
+  }
+
+  /** Send the comments as a turn whose only context is the reviewed design. */
+  async function generateRevision() {
+    const document = editorState.document;
+    const current = review;
+    const node = document?.nodes.find((item) => item.id === current?.nodeId);
+    if (!document || !current || !node) return;
+    let prompt: string;
+    try {
+      prompt = revisionPrompt(node, current.comments);
+    } catch (error) {
+      promptError = error instanceof Error ? error.message : String(error);
+      return;
+    }
+    review = null;
+    selectedId = node.id;
+    generationTask = generateReply(prompt, [node.id]);
+    // Once the turn exists its prompt card records the comments, and Retry
+    // reuses them; until then the draft is kept.
+    if (await generationTask) {
+      saveDraft(document.canvas.id, node.id, []);
+      reviewVersion += 1;
+    }
+  }
+
   /**
    * Drop the buffered reply once the runtime has finished its turn, such as
    * after a lost acknowledgement. Returns false while the turn still needs it.
@@ -697,7 +750,7 @@
       "The reply could not be saved. Keep this canvas open and retry saving the response.";
   }
 
-  async function generateReply(prompt: string) {
+  async function generateReply(prompt: string, contextNodeIds?: string[]) {
     if (
       generating ||
       activeTurn ||
@@ -710,10 +763,11 @@
       workspaceId: editorState.workspace.workspace.id,
       canvasId: editorState.document.canvas.id,
     };
-    const nodeIds = [...contextIds];
-    const contextMode = hasSelection
-      ? ("selection" as const)
-      : ("canvas" as const);
+    const nodeIds = contextNodeIds ? [...contextNodeIds] : [...contextIds];
+    const contextMode =
+      contextNodeIds || hasSelection
+        ? ("selection" as const)
+        : ("canvas" as const);
     let turnId: string | undefined;
     promptError = "";
     agentProgress = null;
@@ -1168,6 +1222,8 @@
     const pastingNow = pasting;
     // Tracked so collapsing or expanding a group rerenders these nodes.
     const groupView = expandedGroups;
+    // Tracked so unsent review comment counts stay current on design nodes.
+    void reviewVersion;
     untrack(() => {
       const asNode = (
         node: NonNullable<typeof document>["nodes"][number],
@@ -1206,7 +1262,17 @@
             ...(artifact.type === "drawing"
               ? { drawing: artifact.drawing }
               : artifact.type === "html"
-                ? { html: artifact.html }
+                ? {
+                    html: artifact.html,
+                    ...(preview || !document
+                      ? {}
+                      : {
+                          comments: usableComments(
+                            loadDraft(document.canvas.id, node.id),
+                          ).length,
+                          onAnnotate: () => openReview(node.id),
+                        }),
+                  }
                 : artifact.type === "file"
                   ? {
                       name: artifact.name,
@@ -1253,7 +1319,17 @@
             },
             onResize: (width: number, height: number) =>
               editor.placeNode(node.id, { width, height }),
-            onRetry: () => turn && void handlePromptSubmit(turn.prompt),
+            onRetry: () => {
+              if (!turn) return;
+              // A revision keeps its design as context, whatever is selected.
+              const design = revisionTarget(turn.prompt);
+              const exists =
+                design && document?.nodes.some((item) => item.id === design);
+              generationTask = generateReply(
+                turn.prompt,
+                exists ? [design] : undefined,
+              );
+            },
             onRead: preview
               ? undefined
               : artifact.type === "file"
@@ -2942,6 +3018,32 @@
           <Icon name="close" size={18} />Hide
         </button>
       </div>
+    {/if}
+  {/if}
+
+  {#if review && editorState.document}
+    {@const current = review}
+    {@const design = editorState.document.nodes.find(
+      (node) => node.id === current.nodeId,
+    )}
+    {@const artifact = editorState.document.artifacts.find(
+      (item) => item.id === design?.artifactId,
+    )}
+    {#if design && artifact?.type === "html"}
+      <DesignReview
+        html={artifact.html}
+        width={design.width}
+        height={design.height}
+        comments={current.comments}
+        blocked={!connected
+          ? "Connect to the backend to generate a revision."
+          : generating || activeTurn || pendingReply
+            ? "Resolve the current proposal or reply before generating a revision."
+            : ""}
+        onChange={updateReview}
+        onGenerate={() => void generateRevision()}
+        onClose={() => (review = null)}
+      />
     {/if}
   {/if}
 

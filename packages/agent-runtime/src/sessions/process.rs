@@ -223,12 +223,18 @@ fn spawn(
         let _ = pid;
         let mut console_closed = false;
         loop {
-            match child.try_wait() {
+            let exited = match child.try_wait() {
                 Ok(None) if !stop.load(Ordering::SeqCst) => {
                     thread::sleep(Duration::from_millis(20));
                     continue;
                 }
-                _ => {}
+                Ok(Some(_)) => true,
+                _ => false,
+            };
+            if exited && !console_closed {
+                if let Some(handle) = child.as_raw_handle() {
+                    windows::finish_exit(handle);
+                }
             }
             let _ = supervisor.with_session(&spec.owner, session_id, |session| {
                 session.status.state = ProcessState::Stopping;

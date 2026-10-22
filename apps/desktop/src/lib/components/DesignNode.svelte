@@ -10,8 +10,11 @@
       preview?: boolean;
       connectable?: boolean;
       editable?: boolean;
+      /** Unsent review comments on this design. */
+      comments?: number;
       onResize?: (width: number, height: number) => void;
       onRead?: () => void;
+      onAnnotate?: () => void;
     };
   }
   let { data, selected = false }: Props = $props();
@@ -34,6 +37,26 @@
   <div class="card-head design__head">
     {#if data.preview}<span class="chip chip--proposal">Proposed</span>{/if}
     <span class="card-role"><Icon name="web" size={14} /> Design</span>
+    {#if data.onAnnotate && !data.preview}
+      {#if data.comments}<span
+          class="design__badge"
+          title={`${data.comments} unsent ${data.comments === 1 ? "comment" : "comments"}`}
+          >{data.comments}</span
+        >{/if}
+      <button
+        class="card-action nodrag"
+        type="button"
+        title="Annotate and request a revision"
+        aria-label={data.comments
+          ? `Annotate design (${data.comments} unsent ${data.comments === 1 ? "comment" : "comments"})`
+          : "Annotate design"}
+        disabled={!data.editable}
+        onkeydown={(event) => event.stopPropagation()}
+        onclick={data.onAnnotate}
+      >
+        <Icon name="rate_review" size={16} />
+      </button>
+    {/if}
     {#if data.onRead && !data.preview}
       <button
         class="card-action nodrag"

@@ -69,6 +69,17 @@ model request budget instead of the 16 KiB runtime RPC frame limit; oversized
 requests fail visibly without truncation and report the measured size. If saving a generated response fails, keep the canvas open to retry
 or copy the response for recovery. Basic manual editing needs no AI account.
 
+To revise a design, choose **Annotate design** in its header. Click the design
+to pin a numbered comment to that spot, or add a general comment, then choose
+**Generate revision**. The agent receives only that design's source plus your
+comments (each pin names the element under it, such as `header > h1 "Launch
+faster"`) and proposes one new design beside the original, which stays
+unchanged; Apply or Discard it like any proposal. Unsent comments are kept in
+this browser per design, shown as a count on the node, and cleared once the
+revision turn starts; the prompt card then records them, and Retry resends the
+same design. Pins need a pointer; keyboard users can add general comments.
+Revisions require a tool-capable model.
+
 While a turn runs, the composer reports the current request (for example,
 "Request 2 of 8"), how many edits are staged, and any rejected calls. Besides
 its request, tool-call, size, and time limits, the harness accepts at most 16
