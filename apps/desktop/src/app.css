@@ -430,6 +430,25 @@ label {
   overflow: hidden;
 }
 
+/* Settings (the only full-screen modal) matches the canvas header's compact
+   height: 0.6rem vertical padding and a 2.25rem icon, like the top bar. */
+.modal--full .modal__head {
+  padding: 0.6rem 1.75rem;
+}
+
+.modal--full .modal__icon {
+  width: 2.25rem;
+  height: 2.25rem;
+}
+
+.modal--full .modal__titles h1 {
+  font-size: 1.05rem;
+}
+
+.modal--full .modal__titles p {
+  margin-top: 0.1rem;
+}
+
 .modal__head {
   display: flex;
   align-items: center;
