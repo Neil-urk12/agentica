@@ -50,12 +50,12 @@ async fn runtime_request(
     connect: bool,
     state: tauri::State<'_, BackendState>,
 ) -> Result<serde_json::Value, String> {
-    // Read-only Git runs outside the runtime lock and metadata gate.
-    if request["method"]
-        .as_str()
-        .is_some_and(|method| method.starts_with("changes."))
-    {
-        let bytes = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
+    // Read-only Git runs outside the runtime lock and metadata gate. Match the
+    // exact `changes.status`/`changes.diff` methods, not every `changes.*`
+    // method: review persistence (`changes.review.*`) uses the normal runtime
+    // writer lock and is not served by the Git handler.
+    let bytes = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
+    if changes::is_changes_request(&bytes) {
         if bytes.len() > MAX_FRAME_BYTES {
             return Err("Requests must fit in 16 KiB.".into());
         }
