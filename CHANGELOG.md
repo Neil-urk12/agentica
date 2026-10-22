@@ -12,6 +12,11 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-22
 
+- Keyboard zoom shortcuts (Ctrl/Cmd `=`, `-`, `0`) no longer fire while the
+  editor is busy, matching the disabled zoom buttons, or while focus is in a
+  text field, matching the queue shortcut. Ctrl+scroll and pinch zoom while busy
+  predate this and are left as is.
+
 - Recorded the accepted decisions for local launch modes, the shared Rust runtime,
   workspace storage, and M1 execution contracts in architecture ADRs, with an
   application-flow diagram.

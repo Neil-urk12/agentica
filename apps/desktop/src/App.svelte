@@ -2038,7 +2038,12 @@
       if (stage === "canvas") void backToWorkspaces();
       return;
     }
-    if (stage === "editor" && editorState.document) {
+    if (
+      stage === "editor" &&
+      editorState.document &&
+      !editorState.busy &&
+      !isTyping(event.target)
+    ) {
       const zoomFactor = getZoomShortcutFactor(event);
       if (zoomFactor !== null) {
         event.preventDefault();
