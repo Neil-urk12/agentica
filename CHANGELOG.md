@@ -12,6 +12,10 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-22
 
+- Recorded the accepted decisions for local launch modes, the shared Rust runtime,
+  workspace storage, and M1 execution contracts in architecture ADRs, with an
+  application-flow diagram.
+
 - Fixed closing a dialog leaving focus on the page body instead of the control
   that opened it. The outro restored focus and then re-showed the `<dialog>` as
   an inert overlay; `show()` runs the dialog focusing steps, which took focus

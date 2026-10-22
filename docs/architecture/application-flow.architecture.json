@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Agentica · Current application flow",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [1340, 610]
+  },
+  "components": [
+    {
+      "id": "canvas-ui",
+      "type": "frontend",
+      "label": "Shared canvas UI",
+      "sublabel": "Svelte 5 · isTauri() detects mode",
+      "tag": "Vite frontend · port 1420",
+      "pos": [40, 255],
+      "size": [235, 94]
+    },
+    {
+      "id": "desktop-host",
+      "type": "backend",
+      "label": "Tauri / Rust host",
+      "sublabel": "runtime_request · scoped IPC",
+      "tag": "Desktop · pnpm dev",
+      "pos": [505, 65],
+      "size": [235, 94]
+    },
+    {
+      "id": "desktop-runtime",
+      "type": "backend",
+      "label": "Desktop runtime",
+      "sublabel": "Rust · inside the Tauri process",
+      "tag": "Shared runtime crate",
+      "pos": [1010, 65],
+      "size": [255, 94]
+    },
+    {
+      "id": "http-gate",
+      "type": "security",
+      "label": "Axum HTTP gate",
+      "sublabel": "POST /rpc · 127.0.0.1:1421",
+      "tag": "Bearer key + origin + host",
+      "pos": [505, 445],
+      "size": [235, 94]
+    },
+    {
+      "id": "detached-runtime",
+      "type": "backend",
+      "label": "Detached runtime",
+      "sublabel": "Rust · independent executable",
+      "tag": "pnpm dev:backend",
+      "pos": [1010, 445],
+      "size": [255, 94]
+    },
+    {
+      "id": "health-handler",
+      "type": "backend",
+      "label": "Shared health logic",
+      "sublabel": "handle_request · runtime.ping",
+      "tag": "Same code in both processes",
+      "pos": [1010, 255],
+      "size": [255, 94]
+    },
+    {
+      "id": "response-checks",
+      "type": "frontend",
+      "label": "UI response checks",
+      "sublabel": "Schema + matching request ID",
+      "tag": "Connected or visible failure",
+      "pos": [505, 255],
+      "size": [235, 94]
+    }
+  ],
+  "connections": [
+    {
+      "id": "desktop-ipc",
+      "from": "canvas-ui",
+      "to": "desktop-host",
+      "label": "Tauri IPC",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "left"
+    },
+    {
+      "id": "desktop-rust-call",
+      "from": "desktop-host",
+      "to": "desktop-runtime",
+      "label": "Direct Rust call",
+      "variant": "emphasis"
+    },
+    {
+      "id": "desktop-dispatch",
+      "from": "desktop-runtime",
+      "to": "health-handler",
+      "label": "handle_request",
+      "labelDy": 24
+    },
+    {
+      "id": "browser-http",
+      "from": "canvas-ui",
+      "to": "http-gate",
+      "label": "HTTP + connection key",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "left"
+    },
+    {
+      "id": "browser-dispatch",
+      "from": "http-gate",
+      "to": "detached-runtime",
+      "label": "Validated transport",
+      "variant": "security"
+    },
+    {
+      "id": "detached-dispatch",
+      "from": "detached-runtime",
+      "to": "health-handler",
+      "label": "handle_request"
+    },
+    {
+      "id": "validated-reply",
+      "from": "health-handler",
+      "to": "response-checks",
+      "label": "Reply via the same transport",
+      "variant": "emphasis"
+    },
+    {
+      "id": "connection-status",
+      "from": "response-checks",
+      "to": "canvas-ui",
+      "label": "Show connection state",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Desktop owns its backend",
+      "items": [
+        "pnpm dev opens Tauri with the Rust runtime linked in.",
+        "Closing the desktop app ends its backend process.",
+        "Reconnect checks the existing in-process runtime."
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Browser connects to a separate backend",
+      "items": [
+        "Run pnpm dev:backend and pnpm dev:web separately.",
+        "Open http://127.0.0.1:1420 and enter the terminal key.",
+        "Closing the tab leaves the backend running; restart rotates its key."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Current behavior: health checks",
+      "items": [
+        "Only runtime.ping: protocol v1, request ID, status: ok.",
+        "16 KiB request limit · 3-second browser deadline · 5-second heartbeat.",
+        "Failures wait for manual reconnect. Persistence and agents are pending."
+      ]
+    }
+  ]
+}
