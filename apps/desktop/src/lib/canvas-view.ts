@@ -184,6 +184,9 @@ export function fitViewport(
   return { x: x - target.x * zoom, y: y - target.y * zoom, zoom };
 }
 
+export const ZOOM_IN_FACTOR = 1.25;
+export const ZOOM_OUT_FACTOR = 0.8;
+
 /** Zoom by a factor about the centre of the usable area. */
 export function zoomAbout(view: Viewport, area: Box, factor: number): Viewport {
   const zoom = clampZoom(view.zoom * factor);
@@ -192,6 +195,50 @@ export function zoomAbout(view: Viewport, area: Box, factor: number): Viewport {
   const worldX = (cx - view.x) / view.zoom;
   const worldY = (cy - view.y) / view.zoom;
   return { x: cx - worldX * zoom, y: cy - worldY * zoom, zoom };
+}
+
+/** Check if a keyboard event is a zoom shortcut and return the zoom factor. */
+export function getZoomShortcutFactor(event: {
+  key?: string;
+  code?: string;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  altKey?: boolean;
+}): number | null {
+  const hasModifier = (event.ctrlKey || event.metaKey) && !event.altKey;
+  if (!hasModifier) return null;
+  if (
+    event.key === "+" ||
+    event.key === "=" ||
+    event.code === "NumpadAdd" ||
+    event.code === "Equal"
+  ) {
+    return ZOOM_IN_FACTOR;
+  }
+  if (
+    event.key === "-" ||
+    event.key === "_" ||
+    event.code === "NumpadSubtract" ||
+    event.code === "Minus"
+  ) {
+    return ZOOM_OUT_FACTOR;
+  }
+  return null;
+}
+
+/** Check if a keyboard event is a reset zoom shortcut (Ctrl+0 / Cmd+0). */
+export function isZoomResetShortcut(event: {
+  key?: string;
+  code?: string;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  altKey?: boolean;
+}): boolean {
+  const hasModifier = (event.ctrlKey || event.metaKey) && !event.altKey;
+  if (!hasModifier) return false;
+  return (
+    event.key === "0" || event.code === "Digit0" || event.code === "Numpad0"
+  );
 }
 
 /** Canvas-space point at the centre of the usable area. */

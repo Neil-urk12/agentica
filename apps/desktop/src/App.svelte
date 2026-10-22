@@ -41,6 +41,8 @@
     unionBox,
     usableArea,
     zoomAbout,
+    getZoomShortcutFactor,
+    isZoomResetShortcut,
     type Box,
     type ProposedContent,
     type Viewport,
@@ -1762,6 +1764,19 @@
       if (stage === "canvas") void backToWorkspaces();
       return;
     }
+    if (stage === "editor" && editorState.document) {
+      const zoomFactor = getZoomShortcutFactor(event);
+      if (zoomFactor !== null) {
+        event.preventDefault();
+        zoomBy(zoomFactor);
+        return;
+      }
+      if (isZoomResetShortcut(event)) {
+        event.preventDefault();
+        zoomBy(1 / viewport.zoom);
+        return;
+      }
+    }
     if (stage !== "editor" || event.metaKey || event.ctrlKey || event.altKey)
       return;
     if (isTyping(event.target)) return;
@@ -2225,7 +2240,9 @@
             elementsSelectable={tool === "select" || tool === "eraser"}
             nodesDraggable={canEdit && tool === "select"}
             panOnDrag={!isDrawingTool && !editorState.busy}
-            zoomOnScroll={!editorState.busy}
+            panOnScroll={!isDrawingTool && !editorState.busy}
+            zoomOnScroll={false}
+            zoomActivationKey={["Control", "Meta"]}
             connectionLineStyle="stroke: var(--accent); stroke-width: 2"
             onnodeclick={({ node }) => {
               if (node.id.startsWith("preview-")) return;

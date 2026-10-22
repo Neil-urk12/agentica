@@ -14,6 +14,10 @@ import {
   unionBox,
   usableArea,
   zoomAbout,
+  getZoomShortcutFactor,
+  isZoomResetShortcut,
+  ZOOM_IN_FACTOR,
+  ZOOM_OUT_FACTOR,
 } from "../apps/desktop/src/lib/canvas-view.ts";
 import { exchangePosition } from "../apps/desktop/src/lib/canvas-agent.ts";
 import {
@@ -258,4 +262,65 @@ test("proposed content lists text and labels for read-only review", () => {
       { title: "Change 3: rectangle label", text: "Start" },
     ],
   );
+});
+
+test("zoom keyboard shortcuts identify zoom in, zoom out, and reset factors", () => {
+  // Zoom in via Ctrl/Cmd + '+' or '='
+  assert.equal(
+    getZoomShortcutFactor({ ctrlKey: true, key: "+" }),
+    ZOOM_IN_FACTOR,
+  );
+  assert.equal(
+    getZoomShortcutFactor({ ctrlKey: true, key: "=" }),
+    ZOOM_IN_FACTOR,
+  );
+  assert.equal(
+    getZoomShortcutFactor({ ctrlKey: true, code: "Equal" }),
+    ZOOM_IN_FACTOR,
+  );
+  assert.equal(
+    getZoomShortcutFactor({ ctrlKey: true, code: "NumpadAdd" }),
+    ZOOM_IN_FACTOR,
+  );
+  assert.equal(
+    getZoomShortcutFactor({ metaKey: true, key: "+" }),
+    ZOOM_IN_FACTOR,
+  );
+
+  // Zoom out via Ctrl/Cmd + '-' or '_'
+  assert.equal(
+    getZoomShortcutFactor({ ctrlKey: true, key: "-" }),
+    ZOOM_OUT_FACTOR,
+  );
+  assert.equal(
+    getZoomShortcutFactor({ ctrlKey: true, key: "_" }),
+    ZOOM_OUT_FACTOR,
+  );
+  assert.equal(
+    getZoomShortcutFactor({ ctrlKey: true, code: "Minus" }),
+    ZOOM_OUT_FACTOR,
+  );
+  assert.equal(
+    getZoomShortcutFactor({ ctrlKey: true, code: "NumpadSubtract" }),
+    ZOOM_OUT_FACTOR,
+  );
+  assert.equal(
+    getZoomShortcutFactor({ metaKey: true, key: "-" }),
+    ZOOM_OUT_FACTOR,
+  );
+
+  // Modifiers ignored or non-zoom keys
+  assert.equal(getZoomShortcutFactor({ ctrlKey: false, key: "+" }), null);
+  assert.equal(
+    getZoomShortcutFactor({ ctrlKey: true, altKey: true, key: "+" }),
+    null,
+  );
+  assert.equal(getZoomShortcutFactor({ ctrlKey: true, key: "a" }), null);
+
+  // Reset zoom via Ctrl/Cmd + '0'
+  assert.equal(isZoomResetShortcut({ ctrlKey: true, key: "0" }), true);
+  assert.equal(isZoomResetShortcut({ metaKey: true, code: "Digit0" }), true);
+  assert.equal(isZoomResetShortcut({ ctrlKey: true, code: "Numpad0" }), true);
+  assert.equal(isZoomResetShortcut({ ctrlKey: true, key: "1" }), false);
+  assert.equal(isZoomResetShortcut({ ctrlKey: false, key: "0" }), false);
 });
