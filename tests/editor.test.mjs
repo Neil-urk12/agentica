@@ -172,15 +172,17 @@ async function setup(t, intercept = async () => {}) {
     }
     throw new Error(`Unexpected method ${method}`);
   };
+  const clock = { now: 0 };
   const editor = new Editor(
     call,
     () => "",
     () => {},
+    () => clock.now,
   );
   t.after(() => editor.dispose());
   await editor.openWorkspace(workspaceId);
   await editor.openCanvas(canvasId);
-  return { editor, calls, disk, call };
+  return { editor, calls, disk, call, clock };
 }
 
 async function taskSendSetup(t) {
@@ -916,6 +918,109 @@ test("text, placement, dimensions and view save and reopen without AI", async (t
   await editor.openWorkspace(workspaceId);
   await editor.openCanvas(canvasId);
   assert.deepEqual(editor.state.document, expected);
+});
+
+test("undo restores a whole drag, saves it, and redo reapplies it", async (t) => {
+  const { editor, disk, clock } = await setup(t);
+  assert.equal(editor.state.canUndo, false);
+  editor.checkpoint();
+  // A drag reports many positions in quick succession: one undo step.
+  for (const [x, y] of [
+    [30, 40],
+    [80, 90],
+    [400, 300],
+  ]) {
+    clock.now += 16;
+    editor.placeNode(nodeId, { x, y });
+  }
+  assert.equal(editor.state.canUndo, true);
+  assert.equal(editor.state.canRedo, false);
+  editor.undo();
+  const restored = editor.state.document.nodes[0];
+  assert.deepEqual(
+    [restored.x, restored.y, restored.width, restored.height],
+    [10, 20, 240, 160],
+  );
+  assert.equal(editor.state.canUndo, false);
+  assert.equal(editor.state.canRedo, true);
+  // The undone position goes through the normal autosave path.
+  await editor.save();
+  assert.deepEqual([disk.nodes[0].x, disk.nodes[0].y], [10, 20]);
+  editor.redo();
+  assert.deepEqual(
+    [editor.state.document.nodes[0].x, editor.state.document.nodes[0].y],
+    [400, 300],
+  );
+  await editor.save();
+  assert.deepEqual([disk.nodes[0].x, disk.nodes[0].y], [400, 300]);
+  assert.equal(editor.state.canRedo, false);
+});
+
+test("separate gestures undo one at a time and a new edit clears redo", async (t) => {
+  const { editor, clock } = await setup(t);
+  editor.placeNode(nodeId, { x: 100 });
+  // A pause ends the gesture, so the next move is its own step.
+  clock.now += 1000;
+  editor.placeNode(nodeId, { width: 320, height: 200 });
+  // A drag start ends the gesture even without a pause.
+  editor.checkpoint();
+  clock.now += 10;
+  editor.placeNode(nodeId, { y: 500 });
+  const position = () => {
+    const { x, y, width, height } = editor.state.document.nodes[0];
+    return [x, y, width, height];
+  };
+  editor.undo();
+  assert.deepEqual(position(), [100, 20, 320, 200]);
+  editor.undo();
+  assert.deepEqual(position(), [100, 20, 240, 160]);
+  editor.redo();
+  assert.deepEqual(position(), [100, 20, 320, 200]);
+  clock.now += 1000;
+  editor.placeNode(nodeId, { x: 0 });
+  assert.equal(editor.state.canRedo, false, "a new edit discards redo");
+  editor.undo();
+  editor.undo();
+  editor.undo();
+  assert.deepEqual(position(), [10, 20, 240, 160]);
+  assert.equal(editor.state.canUndo, false);
+  editor.undo();
+  assert.deepEqual(position(), [10, 20, 240, 160], "extra undo is a no-op");
+});
+
+test("undo covers text edits, skips deleted objects, and resets per canvas", async (t) => {
+  const { editor, disk, clock } = await setup(t);
+  editor.editText(artifactId, "Orig");
+  clock.now += 100;
+  editor.editText(artifactId, "Original plus typing");
+  editor.undo();
+  assert.equal(editor.state.document.artifacts[0].text, "Original");
+  await editor.save();
+  assert.equal(disk.artifacts[0].text, "Original");
+  editor.redo();
+  assert.equal(editor.state.document.artifacts[0].text, "Original plus typing");
+
+  // A move of an object that is later deleted cannot be undone; the earlier
+  // step for an object that still exists is reached instead.
+  clock.now += 1000;
+  const created = await editor.addText({ x: 0, y: 0 }, "Temporary");
+  clock.now += 1000;
+  editor.placeNode(created.node.id, { x: 900 });
+  await editor.deleteNode(created.node.id);
+  editor.undo();
+  assert.equal(editor.state.document.artifacts[0].text, "Original");
+  assert.equal(editor.state.document.nodes.length, 1);
+
+  // History belongs to one canvas.
+  editor.placeNode(nodeId, { x: 77 });
+  await editor.save();
+  assert.equal(editor.state.canUndo, true);
+  await editor.closeCanvas();
+  assert.equal(editor.state.canUndo, false);
+  await editor.openCanvas(canvasId);
+  assert.equal(editor.state.canUndo, false);
+  editor.undo();
+  assert.equal(editor.state.document.nodes[0].x, 77);
 });
 
 test("newer text and layout edits survive in-flight saves, including a reverted draft", async (t) => {
