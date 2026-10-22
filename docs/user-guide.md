@@ -34,14 +34,23 @@ it; a step for an object deleted since is skipped.
 
 ### Choose a provider
 
-Open **Settings** and pick OpenRouter or a custom OpenAI-compatible provider.
+Open **Settings** and pick OpenRouter, a named hosted provider, or a custom
+OpenAI-compatible provider.
 
 - **OpenRouter** checks its model catalog automatically.
+- **Named providers** (NVIDIA NIM, Groq, Together AI, Mistral AI, or DeepSeek,
+  under **Advanced > Where the AI runs**) fill in their endpoint and keep a
+  separate API key, model, and tools flag, so switching providers never sends
+  one provider's key to another.
 - **Custom provider**: enter a base URL (for example `https://api.example.com/v1`
   or `http://localhost:1234/v1`), an API key, and a model ID. Leave the key blank
   for endpoints without authentication. URLs must be HTTPS, or HTTP on
   `localhost`/`127.0.0.1`. Agentica appends `/chat/completions`; pasting the full
   URL also works.
+
+**Check** sends one small message and reports a bad key, an unreachable server,
+the provider's own error (for example a retired model, with any key redacted),
+or no answer within 30 seconds.
 
 Each provider keeps its own settings and key on this machine. The desktop app
 sends requests through its native HTTP client, so providers need no CORS

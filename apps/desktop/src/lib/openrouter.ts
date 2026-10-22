@@ -120,6 +120,34 @@ export type ProviderCheck =
   | { result: "ok" | "key" | "unreachable" }
   | { result: "other"; detail: string };
 
+const CHECK_TIMEOUT_MS = 30_000;
+
+/** The message in an error body, if the provider sent one. */
+function errorDetail(body: string): string {
+  let text = body;
+  try {
+    const data = JSON.parse(body) as {
+      detail?: unknown;
+      message?: unknown;
+      error?: { message?: unknown } | string;
+    };
+    const message =
+      typeof data.error === "string"
+        ? data.error
+        : (data.error?.message ?? data.detail ?? data.message);
+    text = typeof message === "string" ? message : "";
+  } catch {
+    // Plain-text bodies are shown as received; HTML pages are not.
+    if (/^\s*</.test(body)) text = "";
+  }
+  return text.replace(/\s+/g, " ").trim().slice(0, 200);
+}
+
+/** Never echo the key back, even if a provider includes it in an error. */
+function redact(text: string, key: string): string {
+  return key.length >= 8 ? text.replaceAll(key, "[redacted]") : text;
+}
+
 /** Sends one tiny request with the given settings, the same way canvas calls do. */
 export async function checkProvider(
   config: ProviderConfig,
@@ -139,31 +167,50 @@ export async function checkProvider(
     messages: [{ role: "user", content: "Reply with OK." }],
     max_tokens: 16,
   });
+  // A check that never answers should report, not wait for the turn limit.
+  const timer = new AbortController();
+  const stop = () => timer.abort(signal.reason);
+  signal.addEventListener("abort", stop, { once: true });
+  const timeout = setTimeout(() => timer.abort(), CHECK_TIMEOUT_MS);
   let response: Response;
   try {
-    response = await postChat(provider, provider.apiKey, body, signal);
+    response = await postChat(provider, provider.apiKey, body, timer.signal);
   } catch (error) {
     if (signal.aborted) throw error;
+    if (timer.signal.aborted)
+      return {
+        result: "other",
+        detail: `No answer within ${CHECK_TIMEOUT_MS / 1000} seconds. The service may be slow or unreachable; check the server address and model.`,
+      };
     return { result: "unreachable" };
+  } finally {
+    clearTimeout(timeout);
+    signal.removeEventListener("abort", stop);
   }
   if (response.status === 401 || response.status === 403)
     return { result: "key" };
-  if (!response.ok)
+  if (!response.ok) {
+    // The provider's own message names retired or unknown models.
+    const reason = redact(
+      errorDetail(await response.text().catch(() => "")),
+      provider.apiKey,
+    );
     return {
       result: "other",
-      detail: `The AI service returned error ${response.status}. Check the model in Advanced.`,
+      detail: `The AI service returned error ${response.status}${reason ? `: ${reason}` : ""}. Check the model in Advanced.`,
     };
+  }
   try {
     const data = (await response.json()) as OpenRouterChatResponse | null;
     signal.throwIfAborted();
     const choice = Array.isArray(data?.choices) ? data.choices[0] : undefined;
     const content = choice?.message?.content;
-    if (
-      !data?.error &&
-      choice?.finish_reason !== "length" &&
-      typeof content === "string" &&
-      content.trim()
-    )
+    if (!data?.error && typeof content === "string" && content.trim())
+      return { result: "ok" };
+    // Reasoning models can spend the probe's tiny token budget before writing
+    // an answer. A truncated completion still proves the endpoint, key, and
+    // model work, so the check should not call a working provider broken.
+    if (!data?.error && choice?.message && choice.finish_reason === "length")
       return { result: "ok" };
   } catch (error) {
     if (signal.aborted) throw error;

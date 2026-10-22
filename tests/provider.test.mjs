@@ -3,6 +3,11 @@ import { test } from "node:test";
 import {
   getProviderConfig,
   getCustomProvider,
+  PROVIDER_PRESETS,
+  getActivePreset,
+  getProviderProfile,
+  savePresetSetting,
+  saveProviderProfile,
   saveProviderSetting,
   validateProvider,
 } from "../apps/desktop/src/lib/provider.ts";
@@ -418,7 +423,6 @@ test("settings check rejects unsuccessful completion bodies even with HTTP succe
     { choices: [{ message: { content: 42 } }] },
     { choices: [{ message: { content: "" } }] },
     { choices: [{ message: { content: "  \n" } }] },
-    { choices: [{ message: { content: "OK" }, finish_reason: "length" }] },
   ];
   let body;
   t.mock.method(globalThis, "fetch", async () => new Response(body));
@@ -449,4 +453,138 @@ test("settings check preserves cancellation while reading the response body", as
     },
   }));
   await assert.rejects(checkProvider(custom(), controller.signal), error);
+});
+
+test("named provider presets keep separate endpoints, keys, and models", (t) => {
+  assert.deepEqual(
+    PROVIDER_PRESETS.map((preset) => preset.id),
+    ["nvidia", "groq", "together", "mistral", "deepseek"],
+  );
+  const storage = new Map();
+  const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key) => storage.get(key) ?? null,
+      setItem: (key, value) => storage.set(key, value),
+    },
+  });
+  t.after(() => {
+    if (original) Object.defineProperty(globalThis, "localStorage", original);
+    else delete globalThis.localStorage;
+  });
+  // Settings saved before presets existed keep working as the custom server.
+  saveProviderSetting("customBaseUrl", "https://legacy.example.com/v1");
+  saveProviderSetting("customModel", "legacy-model");
+  assert.equal(getProviderProfile(), "openrouter");
+  saveProviderProfile("nvidia");
+  assert.equal(getProviderProfile(), "nvidia");
+  assert.equal(getActivePreset().name, "NVIDIA API (NIM)");
+  let config = getProviderConfig();
+  assert.equal(config.kind, "custom");
+  assert.equal(config.baseUrl, "https://integrate.api.nvidia.com/v1");
+  assert.equal(config.apiKey, "");
+  assert.equal(config.model, "");
+  savePresetSetting("apiKey", " nv-key ");
+  savePresetSetting("model", "meta/llama-3.3-70b-instruct");
+  savePresetSetting("tools", "false");
+  config = getProviderConfig();
+  assert.equal(config.apiKey, "nv-key");
+  assert.equal(config.model, "meta/llama-3.3-70b-instruct");
+  assert.equal(config.tools, false);
+
+  saveProviderProfile("groq");
+  assert.equal(getProviderConfig().apiKey, "", "keys never cross providers");
+  assert.equal(getProviderConfig().baseUrl, "https://api.groq.com/openai/v1");
+  savePresetSetting("apiKey", "groq-key");
+  saveProviderProfile("nvidia");
+  assert.equal(getProviderConfig().apiKey, "nv-key");
+  assert.equal(getProviderConfig().tools, false);
+
+  saveProviderProfile("custom");
+  assert.equal(getActivePreset(), null);
+  assert.equal(getProviderConfig().baseUrl, "https://legacy.example.com/v1");
+  assert.equal(getProviderConfig().model, "legacy-model");
+  savePresetSetting("baseUrl", "http://localhost:11434/v1");
+  assert.equal(getProviderConfig().baseUrl, "http://localhost:11434/v1");
+
+  saveProviderProfile("openrouter");
+  assert.equal(getProviderConfig().kind, "openrouter");
+});
+
+test("settings check accepts a reply cut off by the probe's token budget", async (t) => {
+  let body = {
+    choices: [
+      {
+        message: { content: null, reasoning_content: "Thinking" },
+        finish_reason: "length",
+      },
+    ],
+  };
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async () => new Response(JSON.stringify(body)),
+  );
+  assert.deepEqual(
+    await checkProvider(custom(), new AbortController().signal),
+    {
+      result: "ok",
+    },
+  );
+  body = {
+    choices: [{ message: { content: "OK" }, finish_reason: "length" }],
+  };
+  assert.deepEqual(
+    await checkProvider(custom(), new AbortController().signal),
+    {
+      result: "ok",
+    },
+  );
+});
+
+test("settings check names the provider's error, redacts the key, and times out", async (t) => {
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async () =>
+      new Response(
+        JSON.stringify({
+          detail: "The model has been retired; key custom-key was rejected.",
+        }),
+        { status: 410 },
+      ),
+  );
+  const retired = await checkProvider(custom(), new AbortController().signal);
+  assert.equal(retired.result, "other");
+  assert.match(retired.detail, /error 410: The model has been retired/);
+  assert.match(retired.detail, /\[redacted\]/);
+  assert.ok(!retired.detail.includes("custom-key"));
+  t.mock.restoreAll();
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async () => new Response("<html>Bad gateway</html>", { status: 502 }),
+  );
+  const gateway = await checkProvider(custom(), new AbortController().signal);
+  assert.equal(
+    gateway.detail,
+    "The AI service returned error 502. Check the model in Advanced.",
+  );
+  t.mock.restoreAll();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  t.mock.method(
+    globalThis,
+    "fetch",
+    (_url, { signal }) =>
+      new Promise((_, reject) =>
+        signal.addEventListener("abort", () => reject(signal.reason)),
+      ),
+  );
+  const pending = checkProvider(custom(), new AbortController().signal);
+  await new Promise((resolve) => setImmediate(resolve));
+  t.mock.timers.tick(30_000);
+  const slow = await pending;
+  assert.equal(slow.result, "other");
+  assert.match(slow.detail, /No answer within 30 seconds/);
 });

@@ -202,6 +202,19 @@ First tagged pre-release. Everything below was developed before versioning began
   history; a rendered browser test drags a note, presses Ctrl+Z, checks the
   saved position, and redoes with the button.
 
+- Add OpenAI-compatible presets for NVIDIA NIM, Groq, Together AI, Mistral AI,
+  and DeepSeek to **Settings > Advanced > Where the AI runs**. Each keeps its
+  own API key, model, and tools flag (`agentica.preset.<id>.*`), so switching
+  never sends one provider's key to another. The existing custom server keeps
+  working, including settings saved before presets existed.
+- **Check** now reports the provider's own error message for a failed request
+  (for example a retired model returning HTTP 410), with the API key redacted,
+  and gives up after 30 seconds instead of waiting indefinitely. A reply cut off
+  by the check's 16-token probe, common with reasoning models, counts as a
+  working connection instead of an invalid answer.
+- Tests cover preset isolation, legacy custom settings, error details,
+  redaction, and the check timeout.
+
 - Keyboard zoom shortcuts (Ctrl/Cmd `=`, `-`, `0`) no longer fire while the
   editor is busy, matching the disabled zoom buttons, or while focus is in a
   text field, matching the queue shortcut. Ctrl+scroll and pinch zoom while busy
