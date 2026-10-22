@@ -108,10 +108,22 @@ pub(crate) fn workspaces_dir(data_root: Option<&Path>) -> Result<PathBuf, Runtim
     Ok(dir.canonicalize()?)
 }
 
+/// A held workspace writer lock, released on drop.
+#[derive(Debug)]
+pub(crate) struct WorkspaceLock(File);
+
+impl Drop for WorkspaceLock {
+    fn drop(&mut self) {
+        // The lock belongs to the open file, which a process spawned by any
+        // thread shares until it execs; closing alone would keep it held.
+        let _ = self.0.unlock();
+    }
+}
+
 /// Take the workspace's exclusive writer lock without blocking. The OS lock is
 /// tied to the file, so path aliases contend; it is released when the returned
 /// handle is dropped or the process ends.
-pub(crate) fn lock_workspace(dir: &Path, id: &str) -> Result<File, RuntimeError> {
+pub(crate) fn lock_workspace(dir: &Path, id: &str) -> Result<WorkspaceLock, RuntimeError> {
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -119,7 +131,7 @@ pub(crate) fn lock_workspace(dir: &Path, id: &str) -> Result<File, RuntimeError>
         .truncate(false)
         .open(dir.join(LOCK_FILE))?;
     match file.try_lock() {
-        Ok(()) => Ok(file),
+        Ok(()) => Ok(WorkspaceLock(file)),
         Err(TryLockError::WouldBlock) => Err(RuntimeError::new(
             "WORKSPACE_LOCKED",
             format!("Workspace {id} is already open in another Agentica window or backend. Close it there, then retry."),
@@ -184,7 +196,7 @@ fn header(conn: &Connection) -> rusqlite::Result<(i64, i64)> {
 pub(crate) struct Workspace {
     pub id: String,
     pub conn: Connection,
-    _lock: File,
+    _lock: WorkspaceLock,
 }
 
 impl Workspace {
@@ -378,15 +390,6 @@ mod tests {
 
     const HOLDER_ENV: &str = "AGENTICA_TEST_LOCK_HOLDER";
 
-    /// Forked children hold inherited descriptors until `exec`, which can
-    /// briefly delay a release in a parallel test. Serialize these tests.
-    fn serial() -> std::sync::MutexGuard<'static, ()> {
-        static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        SERIAL
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
     fn workspace(root: &Path) -> (PathBuf, String) {
         let id = new_id().unwrap();
         let dir = workspaces_dir(Some(root)).unwrap().join(&id);
@@ -451,7 +454,6 @@ mod tests {
 
     #[test]
     fn a_second_writer_and_path_aliases_are_rejected_until_release() {
-        let _serial = serial();
         let temp = tempfile::tempdir().unwrap();
         let (dir, id) = workspace(temp.path());
         let held = lock_workspace(&dir, &id).unwrap();
@@ -473,8 +475,20 @@ mod tests {
     }
 
     #[test]
+    fn a_release_is_immediate_while_a_spawning_child_shares_the_lock() {
+        let temp = tempfile::tempdir().unwrap();
+        let (dir, id) = workspace(temp.path());
+        let held = lock_workspace(&dir, &id).unwrap();
+        // A process spawned by another thread holds a duplicate of the lock
+        // file until it execs; a duplicate in this process stands in for it.
+        let child_copy = held.0.try_clone().unwrap();
+        drop(held);
+        drop(lock_workspace(&dir, &id).unwrap());
+        drop(child_copy);
+    }
+
+    #[test]
     fn locks_contend_across_processes_and_release_on_exit_or_termination() {
-        let _serial = serial();
         let temp = tempfile::tempdir().unwrap();
         let (dir, id) = workspace(temp.path());
 
@@ -517,7 +531,6 @@ mod tests {
 
     #[test]
     fn workspaces_are_created_versioned_and_reopened_without_changes() {
-        let _serial = serial();
         let temp = tempfile::tempdir().unwrap();
         let id = created(temp.path(), "Research");
         let path = database(temp.path(), &id);
@@ -551,7 +564,6 @@ mod tests {
 
     #[test]
     fn newer_or_foreign_storage_is_rejected_without_modification() {
-        let _serial = serial();
         let temp = tempfile::tempdir().unwrap();
         for (pragma, value) in [("user_version", STORAGE_VERSION + 1), ("application_id", 7)] {
             let id = created(temp.path(), "Later");
@@ -585,7 +597,6 @@ mod tests {
 
     #[test]
     fn failed_migrations_roll_back_completely() {
-        let _serial = serial();
         let temp = tempfile::tempdir().unwrap();
         let mut conn = connect(&temp.path().join("db"), true).unwrap();
         let tx = conn
@@ -664,7 +675,6 @@ mod tests {
 
     #[test]
     fn legacy_workspaces_upgrade_without_data_loss() {
-        let _serial = serial();
         for old_version in [1, 2] {
             let temp = tempfile::tempdir().unwrap();
             let id = new_id().unwrap();
@@ -977,7 +987,6 @@ mod tests {
 
     #[test]
     fn incomplete_creations_are_skipped_and_never_deleted() {
-        let _serial = serial();
         let temp = tempfile::tempdir().unwrap();
         let id = new_id().unwrap();
         let path = database(temp.path(), &id);
@@ -1009,7 +1018,6 @@ mod tests {
 
     #[test]
     fn deleted_workspaces_are_gone_from_storage_and_the_listing() {
-        let _serial = serial();
         let temp = tempfile::tempdir().unwrap();
         let id = created(temp.path(), "Temporary");
         let dir = temp.path().join("workspaces").join(&id);
@@ -1033,7 +1041,6 @@ mod tests {
 
     #[test]
     fn deletion_preserves_foreign_or_uncommitted_workspace_records() {
-        let _serial = serial();
         let temp = tempfile::tempdir().unwrap();
         for sql in [
             "PRAGMA application_id = 7",
@@ -1056,7 +1063,6 @@ mod tests {
 
     #[test]
     fn a_locked_or_incomplete_workspace_is_never_deleted() {
-        let _serial = serial();
         let temp = tempfile::tempdir().unwrap();
         let id = created(temp.path(), "Busy");
         let dir = temp.path().join("workspaces").join(&id);
@@ -1123,7 +1129,6 @@ mod tests {
 
     #[test]
     fn a_crashed_write_is_rolled_back_before_listing_or_deletion() {
-        let _serial = serial();
         let temp = tempfile::tempdir().unwrap();
         let id = created(temp.path(), "Before");
         let path = database(temp.path(), &id);
@@ -1147,7 +1152,6 @@ mod tests {
 
     #[test]
     fn a_writer_killed_mid_transaction_leaves_the_last_committed_state() {
-        let _serial = serial();
         let temp = tempfile::tempdir().unwrap();
         let id = created(temp.path(), "Before");
         let path = database(temp.path(), &id);

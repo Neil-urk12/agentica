@@ -97,6 +97,11 @@ released version and date. Keep validation evidence in the
   accumulated batch for each change. A project change that cannot fit in one
   frame on its own now reports a clear error before sending, instead of an
   oversized request rejected by the runtime.
+- Release a workspace writer lock immediately. The lock follows the open lock
+  file, which a terminal or Git process spawned at that moment shares until it
+  execs, so closing the file alone could briefly keep the workspace locked and
+  a reopen or delete reported it as open in another window. Dropping the lock
+  now unlocks explicitly, and the lock tests no longer need to run serially.
 
 ### 2026-10-21
 
