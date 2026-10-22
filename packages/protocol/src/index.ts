@@ -290,7 +290,10 @@ const ConversationStatus = z.enum([
   "failed",
   "cancelled",
   "interrupted",
+  "reverted",
 ]);
+export const AgentModeSchema = z.enum(["create", "ask", "yolo"]);
+export type AgentMode = z.infer<typeof AgentModeSchema>;
 export const ConversationTurnSchema = z.strictObject({
   id: IdSchema,
   sequence: z.number().int().positive(),
@@ -303,6 +306,8 @@ export const ConversationTurnSchema = z.strictObject({
   status: ConversationStatus,
   operations: Operations,
   error: Text,
+  mode: AgentModeSchema,
+  revertible: z.boolean(),
 });
 export type ConversationTurn = z.infer<typeof ConversationTurnSchema>;
 export const ChangeSectionSchema = z.enum(["staged", "unstaged", "untracked"]);
@@ -424,6 +429,7 @@ const ParamSchemas = {
     model: Label,
     nodeIds: UniqueIds,
     contextMode: z.enum(["canvas", "selection"]).optional(),
+    mode: AgentModeSchema.optional(),
     anchor: Anchor,
   }),
   "conversation.finish": z.strictObject({
@@ -432,10 +438,11 @@ const ParamSchemas = {
     operations: Operations,
     status: z.enum(["complete", "failed", "cancelled", "interrupted"]),
     error: Text,
+    partial: z.boolean().optional(),
   }),
   "conversation.resolve": z.strictObject({
     ...TurnRef,
-    action: z.enum(["apply", "discard"]),
+    action: z.enum(["apply", "discard", "revert"]),
   }),
   "conversation.read": z.strictObject({
     ...TurnRef,

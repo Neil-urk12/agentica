@@ -12,6 +12,28 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-22
 
+- Added canvas agent modes and revert. The composer offers Create only (the
+  default), Ask first, and YOLO (auto-accept). The runtime, not the webview,
+  builds each turn's write scope from the mode it records on the turn, so with
+  nothing selected Create only exposes no existing object and `conversation.start`
+  without a mode no longer grants whole-canvas writes. YOLO applies a complete
+  proposal inside `conversation.finish`, so it never sits pending without a
+  reviewer; budget-limited proposals still wait for review. The mode is never
+  persisted and resets to Create only whenever a canvas opens. After an
+  auto-apply, an applied bar takes the review slot with Show and Revert, so
+  undo sits where Discard would have been; manual applies get none.
+  - Prompt and reply cards are never writable by the agent, even when selected
+    or in whole-canvas modes; apply rejects card targets, including proposals
+    captured before the rule. Selected cards stay readable in the outline.
+  - Applying a proposal stores what it touched in `conversation_apply` (schema
+    v9), and `conversation.resolve` gains `revert`. Revert compares content and
+    geometry rather than revisions, so proposals can be undone newest first, and
+    refuses with nothing changed when an affected object, or a link to a created
+    one, changed since the apply. Links reused from manual work are kept.
+  - `reverted` is derived from the snapshot row instead of stored, which avoids
+    rebuilding `conversation_turn` for its status `CHECK`. Later turns tell the
+    model that reverted changes are not on the canvas.
+
 - Reap orphaned Linux session jobs when the backend runs as PID 1. A single
   PID-1 reaper collects jobs and escaped processes that reparented to the
   backend, without touching live launchers whose exit status cleanup still

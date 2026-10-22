@@ -1160,7 +1160,10 @@ export class Editor {
     return finished;
   }
 
-  async resolveConversation(turnId: string, action: "apply" | "discard") {
+  async resolveConversation(
+    turnId: string,
+    action: RuntimeParams<"conversation.resolve">["action"],
+  ) {
     await this.enqueue(async () => {
       await this.settleSave();
       if (this.state.dirty || this.disposed) return;

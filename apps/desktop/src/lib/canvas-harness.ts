@@ -129,7 +129,7 @@ export async function runCanvasTurn(
     if (previous.reply)
       messages.push({
         role: "assistant",
-        content: `${previous.reply}\n[Previous turn status: ${previous.status}. Only applied proposals changed canvas objects.]`,
+        content: `${previous.reply}\n[Previous turn status: ${previous.status}. ${previous.status === "reverted" ? "The user reverted this proposal; its changes are not on the canvas." : "Only applied proposals changed canvas objects."}]`,
       });
   }
   messages.push({

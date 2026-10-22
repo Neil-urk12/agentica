@@ -159,6 +159,7 @@ test("status labels come from persisted turn state", () => {
   assert.equal(turnStatus("pending", "Agent").label, "Changes pending review");
   assert.equal(turnStatus("applied", "Agent").label, "Changes applied");
   assert.equal(turnStatus("discarded", "Agent").label, "Changes discarded");
+  assert.equal(turnStatus("reverted", "Agent").label, "Changes reverted");
   assert.equal(turnStatus("complete", "Agent").label, "Complete");
   assert.equal(turnStatus("generating", "You").label, "Waiting for reply");
   assert.equal(turnStatus("applied", "You").label, "Sent");

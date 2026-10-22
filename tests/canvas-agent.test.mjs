@@ -689,3 +689,37 @@ test("provider failures keep the canvas untouched", async (t) => {
   t.mock.method(globalThis, "fetch", async () => ({ ok: false, status: 503 }));
   await assert.rejects(runCanvasAgent(start(), options()), /503/);
 });
+
+test("reverted turns tell the agent their changes are not on the canvas", async (t) => {
+  t.mock.method(globalThis, "fetch", async (_url, request) => {
+    const messages = JSON.parse(request.body).messages;
+    assert.match(messages[2].content, /Previous turn status: reverted\./);
+    assert.match(messages[2].content, /changes are not on the canvas/);
+    return result("Noted.");
+  });
+  const input = start();
+  input.history[0].status = "reverted";
+  assert.equal((await runCanvasAgent(input, options())).reply, "Noted.");
+});
+
+test("Create Only scope reaches the model only as non-writable outline items", async (t) => {
+  t.mock.method(globalThis, "fetch", async (_url, request) => {
+    const user = JSON.parse(request.body).messages.at(-1).content;
+    const data = JSON.parse(
+      user.slice(
+        user.indexOf("<canvas-data>\n") + 14,
+        -"\n</canvas-data>".length,
+      ),
+    );
+    assert.deepEqual(data.writeScope, { nodes: [], edges: [], artifacts: [] });
+    assert.ok(data.outline.items.every((item) => item.writable === false));
+    return result("Only new objects.");
+  });
+  const input = start();
+  input.context = { nodes: [], edges: [], artifacts: [] };
+  for (const item of input.outline.items) item.writable = false;
+  assert.equal(
+    (await runCanvasAgent(input, options())).reply,
+    "Only new objects.",
+  );
+});

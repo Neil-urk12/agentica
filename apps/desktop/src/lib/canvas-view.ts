@@ -83,6 +83,8 @@ export function turnStatus(
       return { label: "Changes applied", tone: "ok" };
     case "discarded":
       return { label: "Changes discarded", tone: "neutral" };
+    case "reverted":
+      return { label: "Changes reverted", tone: "neutral" };
     case "complete":
       return { label: "Complete", tone: "neutral" };
     case "generating":

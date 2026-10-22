@@ -13,7 +13,29 @@ struct Start {
     node_ids: Vec<String>,
     #[serde(default)]
     context_mode: Option<ContextMode>,
+    #[serde(default)]
+    mode: Mode,
     anchor: Anchor,
+}
+
+/// Write scope with nothing selected: none (`create`) or the whole canvas (`ask`, `yolo`).
+#[derive(Deserialize, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum Mode {
+    #[default]
+    Create,
+    Ask,
+    Yolo,
+}
+
+impl Mode {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Mode::Create => "create",
+            Mode::Ask => "ask",
+            Mode::Yolo => "yolo",
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -40,6 +62,9 @@ struct Finish {
     operations: Vec<Value>,
     status: String,
     error: String,
+    /// The agent stopped at a budget; such proposals always wait for review.
+    #[serde(default)]
+    partial: bool,
 }
 
 #[derive(Deserialize)]
@@ -112,15 +137,8 @@ fn outline_entry(artifact: &Value) -> (&'static str, String) {
     }
 }
 
-/// Canvas map for the model: write scope first, then nearest the stored anchor.
-/// Conversation cards are left out unless writable; the model gets them as history.
-fn outline(
-    tx: &Transaction,
-    canvas_id: &str,
-    context: &Value,
-    anchor: (f64, f64),
-) -> Result<Value, RuntimeError> {
-    let state = canvas_state(tx, canvas_id)?;
+/// Prompt and reply cards: the user's conversation record, never writable by the agent.
+fn conversation_cards(tx: &Transaction, canvas_id: &str) -> Result<HashSet<String>, RuntimeError> {
     let mut stmt = tx.prepare(
         "SELECT prompt_node_id FROM conversation_turn WHERE canvas_id = ?1
          UNION SELECT reply_node_id FROM conversation_turn WHERE canvas_id = ?1 AND reply_node_id IS NOT NULL",
@@ -128,6 +146,20 @@ fn outline(
     let cards = stmt
         .query_map([canvas_id], |r| r.get::<_, String>(0))?
         .collect::<Result<HashSet<_>, _>>()?;
+    Ok(cards)
+}
+
+/// Canvas map for the model: write scope first, then nearest the stored anchor.
+/// Conversation cards are left out unless selected; the model gets them as history.
+fn outline(
+    tx: &Transaction,
+    canvas_id: &str,
+    context: &Value,
+    selected: &[String],
+    anchor: (f64, f64),
+) -> Result<Value, RuntimeError> {
+    let state = canvas_state(tx, canvas_id)?;
+    let cards = conversation_cards(tx, canvas_id)?;
     let writable = |id: &str| {
         context["nodes"]
             .as_array()
@@ -144,7 +176,7 @@ fn outline(
         .iter()
         .filter(|n| {
             let id = n["id"].as_str().unwrap();
-            writable(id) || !cards.contains(id)
+            !cards.contains(id) || selected.iter().any(|s| s == id)
         })
         .collect();
     nodes.sort_by(|a, b| {
@@ -238,16 +270,21 @@ fn json(raw: &str) -> Result<Value, RuntimeError> {
         .map_err(|_| RuntimeError::new("STORAGE_ERROR", "Unreadable conversation record."))
 }
 
+// A reverted turn stays `applied` in storage; its snapshot row carries the revert.
 fn turn(tx: &Transaction, canvas_id: &str, turn_id: &str) -> Result<Value, RuntimeError> {
     tx.query_row(
-        "SELECT id, sequence, model, prompt, reply, prompt_node_id, reply_node_id, anchor, status, operations, error
-         FROM conversation_turn WHERE canvas_id = ?1 AND id = ?2",
+        "SELECT t.id, t.sequence, t.model, t.prompt, t.reply, t.prompt_node_id, t.reply_node_id, t.anchor,
+                CASE WHEN a.reverted_at IS NOT NULL THEN 'reverted' ELSE t.status END,
+                t.operations, t.error, t.mode, a.turn_id IS NOT NULL AND a.reverted_at IS NULL
+         FROM conversation_turn t LEFT JOIN conversation_apply a ON a.turn_id = t.id
+         WHERE t.canvas_id = ?1 AND t.id = ?2",
         (canvas_id, turn_id), |r| Ok(json!({
             "id": r.get::<_, String>(0)?, "sequence": r.get::<_, i64>(1)?,
             "model": r.get::<_, String>(2)?, "prompt": r.get::<_, String>(3)?,
             "reply": r.get::<_, String>(4)?, "promptNodeId": r.get::<_, String>(5)?,
             "replyNodeId": r.get::<_, Option<String>>(6)?, "anchor": r.get::<_, String>(7)?,
-            "status": r.get::<_, String>(8)?, "operations": r.get::<_, String>(9)?, "error": r.get::<_, String>(10)?
+            "status": r.get::<_, String>(8)?, "operations": r.get::<_, String>(9)?, "error": r.get::<_, String>(10)?,
+            "mode": r.get::<_, String>(11)?, "revertible": r.get::<_, bool>(12)?
         })))
         .optional()?.ok_or_else(|| not_found("Conversation turn"))
         .and_then(|mut t| {
@@ -375,6 +412,13 @@ fn scoped_node(
         .optional()?
         .ok_or_else(|| not_found("Proposal target"))?;
     if !created.contains(node_id) && !checked.contains(node_id) {
+        // Also guards proposals whose captured context predates card protection.
+        if conversation_cards(tx, canvas_id)?.contains(node_id) {
+            return Err(RuntimeError::new(
+                "SCOPE_DENIED",
+                "Conversation cards are never editable by the agent.",
+            ));
+        }
         let original = context["nodes"]
             .as_array()
             .unwrap()
@@ -424,17 +468,209 @@ fn scoped_node(
     Ok(node)
 }
 
+/// What an apply touched, so it can be reverted.
+#[derive(Default)]
+struct Applied {
+    /// Existing nodes the proposal edited, as they were before it.
+    before: serde_json::Map<String, Value>,
+    created: Vec<(String, String)>,
+    /// Only links the proposal inserted; links reused from manual work are left out.
+    edges: Vec<String>,
+}
+
+/// Geometry and raw content of a placement, compared exactly when reverting.
+fn node_state(
+    tx: &Transaction,
+    canvas_id: &str,
+    node_id: &str,
+) -> Result<Option<Value>, RuntimeError> {
+    Ok(tx
+        .query_row(
+            "SELECT n.x, n.y, n.width, n.height, n.artifact_id, a.type, coalesce(t.body, d.body)
+             FROM canvas_node n JOIN artifact a ON a.id = n.artifact_id
+             LEFT JOIN text_content t ON a.type = 'text' AND t.id = a.content_id
+             LEFT JOIN drawing_content d ON a.type = 'drawing' AND d.id = a.content_id
+             WHERE n.canvas_id = ?1 AND n.id = ?2",
+            (canvas_id, node_id),
+            |r| {
+                Ok(json!({
+                    "x": r.get::<_, f64>(0)?, "y": r.get::<_, f64>(1)?,
+                    "width": r.get::<_, f64>(2)?, "height": r.get::<_, f64>(3)?,
+                    "artifactId": r.get::<_, String>(4)?, "type": r.get::<_, String>(5)?,
+                    "body": r.get::<_, String>(6)?,
+                }))
+            },
+        )
+        .optional()?)
+}
+
+fn record_apply(
+    tx: &Transaction,
+    canvas_id: &str,
+    turn_id: &str,
+    applied: &Applied,
+) -> Result<(), RuntimeError> {
+    let mut after = serde_json::Map::new();
+    for node_id in applied
+        .before
+        .keys()
+        .chain(applied.created.iter().map(|(n, _)| n))
+    {
+        if let Some(state) = node_state(tx, canvas_id, node_id)? {
+            after.insert(node_id.clone(), state);
+        }
+    }
+    let created: Vec<_> = applied
+        .created
+        .iter()
+        .map(|(n, a)| json!({"nodeId": n, "artifactId": a}))
+        .collect();
+    tx.execute(
+        "INSERT INTO conversation_apply(turn_id, before, after, created, edges) VALUES (?1, ?2, ?3, ?4, ?5)",
+        (
+            turn_id,
+            Value::Object(applied.before.clone()).to_string(),
+            Value::Object(after).to_string(),
+            json!(created).to_string(),
+            json!(applied.edges).to_string(),
+        ),
+    )?;
+    Ok(())
+}
+
+/// Undo one applied proposal, refusing instead of overwriting anything changed since.
+fn revert(tx: &Transaction, canvas_id: &str, turn_id: &str) -> Result<(), RuntimeError> {
+    let changed = || {
+        RuntimeError::new(
+            "CONFLICT",
+            "Objects this proposal changed were edited since it was applied. Nothing was reverted.",
+        )
+    };
+    let row: Option<(String, String, String, String)> = tx
+        .query_row(
+            "SELECT before, after, created, edges FROM conversation_apply WHERE turn_id = ?1",
+            [turn_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()?;
+    let Some((before, after, created, edges)) = row else {
+        return Err(RuntimeError::new(
+            "CONFLICT",
+            "This proposal was applied before revert was available and cannot be reverted.",
+        ));
+    };
+    let (before, after, created, edges) = (
+        json(&before)?,
+        json(&after)?,
+        json(&created)?,
+        json(&edges)?,
+    );
+    let edges: Vec<&str> = edges
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    let created: Vec<(&str, &str)> = created
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["nodeId"].as_str().unwrap(),
+                c["artifactId"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    for (node_id, expected) in after.as_object().unwrap() {
+        let current = node_state(tx, canvas_id, node_id)?;
+        let deleted_creation = current.is_none() && created.iter().any(|(n, _)| n == node_id);
+        if !deleted_creation && current.as_ref() != Some(expected) {
+            return Err(changed());
+        }
+    }
+    // A link drawn by hand to a created object is newer work that revert would remove.
+    for (node_id, _) in &created {
+        let mut stmt = tx.prepare(
+            "SELECT id FROM canvas_edge WHERE canvas_id = ?1 AND (source_node_id = ?2 OR target_node_id = ?2)",
+        )?;
+        let attached = stmt
+            .query_map((canvas_id, node_id), |r| r.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        if attached.iter().any(|id| !edges.contains(&id.as_str())) {
+            return Err(changed());
+        }
+    }
+    for edge_id in &edges {
+        tx.execute(
+            "DELETE FROM canvas_edge WHERE canvas_id = ?1 AND id = ?2",
+            (canvas_id, edge_id),
+        )?;
+    }
+    for (node_id, artifact_id) in &created {
+        tx.execute(
+            "DELETE FROM canvas_node WHERE canvas_id = ?1 AND id = ?2",
+            (canvas_id, node_id),
+        )?;
+        delete_artifact_content(tx, artifact_id)?;
+    }
+    for (node_id, old) in before.as_object().unwrap() {
+        tx.execute(
+            "UPDATE canvas_node SET x = ?3, y = ?4, width = ?5, height = ?6 WHERE canvas_id = ?1 AND id = ?2",
+            (canvas_id, node_id, old["x"].as_f64(), old["y"].as_f64(), old["width"].as_f64(), old["height"].as_f64()),
+        )?;
+        // Rewrite content only when it differs, so a move-only revert keeps the artifact revision.
+        let table = if old["type"] == "text" {
+            "text_content"
+        } else {
+            "drawing_content"
+        };
+        let rewritten = tx.execute(
+            &format!("UPDATE {table} SET body = ?2 WHERE id = (SELECT content_id FROM artifact WHERE id = ?1) AND body IS NOT ?2"),
+            (old["artifactId"].as_str(), old["body"].as_str()),
+        )?;
+        if rewritten > 0 {
+            tx.execute(
+                "UPDATE artifact SET revision = revision + 1 WHERE id = ?1",
+                [old["artifactId"].as_str()],
+            )?;
+        }
+    }
+    tx.execute(
+        "UPDATE conversation_apply SET reverted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE turn_id = ?1",
+        [turn_id],
+    )?;
+    Ok(())
+}
+
+/// Record an existing node's state the first time the proposal edits it.
+fn snapshot(
+    tx: &Transaction,
+    canvas_id: &str,
+    created: &HashSet<String>,
+    applied: &mut Applied,
+    node_id: &str,
+) -> Result<(), RuntimeError> {
+    if !created.contains(node_id) && !applied.before.contains_key(node_id) {
+        if let Some(state) = node_state(tx, canvas_id, node_id)? {
+            applied.before.insert(node_id.to_owned(), state);
+        }
+    }
+    Ok(())
+}
+
 fn apply_operations(
     tx: &Transaction,
     canvas_id: &str,
     context: &Value,
     operations: &[Value],
-) -> Result<(), RuntimeError> {
+) -> Result<Applied, RuntimeError> {
     if operations.len() > 32 {
         return Err(invalid("A proposal supports at most 32 operations."));
     }
     let mut created = HashSet::new();
     let mut checked = HashSet::new();
+    let mut applied = Applied::default();
     for value in operations {
         let operation: Operation = parse(value.clone())?;
         match operation {
@@ -461,6 +697,7 @@ fn apply_operations(
                     &text,
                     false,
                 )?;
+                applied.created.push((node_id.clone(), artifact_id));
                 created.insert(node_id);
             }
             Operation::CreateShape {
@@ -482,6 +719,7 @@ fn apply_operations(
                 };
                 let body = shape_body(&kind, &color, &label, &g)?;
                 insert_node(tx, canvas_id, &node_id, &artifact_id, &g, &body, true)?;
+                applied.created.push((node_id.clone(), artifact_id));
                 created.insert(node_id);
             }
             Operation::Connect {
@@ -512,7 +750,9 @@ fn apply_operations(
                 // A link already drawn by hand is the outcome the proposal
                 // wants. Target the link constraint so a reused edge id still
                 // fails the proposal instead of silently creating no link.
-                tx.execute("INSERT INTO canvas_edge(id, canvas_id, kind, source_node_id, target_node_id) VALUES (?1, ?2, 'relationship', ?3, ?4) ON CONFLICT(canvas_id, source_node_id, target_node_id) DO NOTHING", (&edge_id, canvas_id, &source_node_id, &target_node_id))?;
+                if tx.execute("INSERT INTO canvas_edge(id, canvas_id, kind, source_node_id, target_node_id) VALUES (?1, ?2, 'relationship', ?3, ?4) ON CONFLICT(canvas_id, source_node_id, target_node_id) DO NOTHING", (&edge_id, canvas_id, &source_node_id, &target_node_id))? > 0 {
+                    applied.edges.push(edge_id);
+                }
             }
             Operation::UpdateText {
                 node_id,
@@ -520,6 +760,7 @@ fn apply_operations(
             } => {
                 let node = scoped_node(tx, canvas_id, &node_id, context, &created, &mut checked)?;
                 text(&body)?;
+                snapshot(tx, canvas_id, &created, &mut applied, &node_id)?;
                 let a = artifact(tx, node["artifactId"].as_str().unwrap())?;
                 save_text(
                     tx,
@@ -553,6 +794,7 @@ fn apply_operations(
                     height: node["height"].as_f64().unwrap(),
                 };
                 let body = shape_body(&kind, &color, &label, &g)?;
+                snapshot(tx, canvas_id, &created, &mut applied, &node_id)?;
                 tx.execute("UPDATE drawing_content SET body = ?2 WHERE id = (SELECT content_id FROM artifact WHERE id = ?1)", (a["id"].as_str().unwrap(), &body))?;
                 tx.execute(
                     "UPDATE artifact SET revision = revision + 1 WHERE id = ?1",
@@ -590,11 +832,12 @@ fn apply_operations(
                     height,
                 }
                 .check()?;
+                snapshot(tx, canvas_id, &created, &mut applied, &node_id)?;
                 tx.execute("UPDATE canvas_node SET x = ?2, y = ?3, width = ?4, height = ?5 WHERE id = ?1 AND canvas_id = ?6", (&node_id, x,y,width,height,canvas_id))?;
             }
         }
     }
-    Ok(())
+    Ok(applied)
 }
 
 pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Value, RuntimeError> {
@@ -644,6 +887,7 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                 .iter()
                 .filter(|n| {
                     (p.node_ids.is_empty()
+                        && p.mode != Mode::Create
                         && !matches!(p.context_mode, Some(ContextMode::Selection)))
                         || p.node_ids.iter().any(|id| n["id"] == *id)
                 })
@@ -652,6 +896,11 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
             if !p.node_ids.is_empty() && nodes.len() != p.node_ids.len() {
                 return Err(not_found("Selected object"));
             }
+            let cards = conversation_cards(tx, &p.canvas_id)?;
+            let nodes: Vec<_> = nodes
+                .into_iter()
+                .filter(|n| !cards.contains(n["id"].as_str().unwrap()))
+                .collect();
             let artifacts: Vec<_> = state["artifacts"]
                 .as_array()
                 .unwrap()
@@ -693,9 +942,9 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                 },
             )?;
             insert_node(tx, &p.canvas_id, &node_id, &new_id()?, &g, &p.prompt, false)?;
-            tx.execute("INSERT INTO conversation_turn(id,canvas_id,model,prompt,prompt_node_id,anchor,context,status) VALUES (?1,?2,?3,?4,?5,?6,?7,'generating')", (&p.turn_id,&p.canvas_id,&p.model,&p.prompt,&node_id,json!({"x":g.x,"y":g.y}).to_string(),context.to_string()))?;
+            tx.execute("INSERT INTO conversation_turn(id,canvas_id,model,prompt,prompt_node_id,anchor,context,status,mode) VALUES (?1,?2,?3,?4,?5,?6,?7,'generating',?8)", (&p.turn_id,&p.canvas_id,&p.model,&p.prompt,&node_id,json!({"x":g.x,"y":g.y}).to_string(),context.to_string(),p.mode.as_str()))?;
             bump(tx, &p.canvas_id, canvas_revision(tx, &p.canvas_id)?)?;
-            let outline = outline(tx, &p.canvas_id, &context, (g.x, g.y))?;
+            let outline = outline(tx, &p.canvas_id, &context, &p.node_ids, (g.x, g.y))?;
             Ok(
                 json!({"turn":turn(tx,&p.canvas_id,&p.turn_id)?, "context":context, "outline":outline, "history":prior}),
             )
@@ -810,7 +1059,10 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                 };
                 if (t["status"] == expected_status
                     || (p.status == "complete"
-                        && matches!(t["status"].as_str(), Some("applied" | "discarded"))))
+                        && matches!(
+                            t["status"].as_str(),
+                            Some("applied" | "discarded" | "reverted")
+                        )))
                     && t["reply"] == p.reply
                     && t["operations"] == json!(p.operations)
                     && t["error"] == p.error
@@ -825,16 +1077,34 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
             if p.status == "complete" && p.reply.trim().is_empty() {
                 return Err(invalid("The agent must provide a text reply."));
             }
+            // YOLO applies in this transaction, so the turn is never left pending unreviewed.
+            let auto_apply = p.status == "complete"
+                && !p.operations.is_empty()
+                && !p.partial
+                && t["mode"] == "yolo";
+            let mut applied = None;
             if !p.operations.is_empty() {
                 let context: String = tx.query_row(
                     "SELECT context FROM conversation_turn WHERE id = ?1",
                     [&p.turn_id],
                     |r| r.get(0),
                 )?;
-                tx.execute_batch("SAVEPOINT proposal_validation")?;
-                let validated = apply_operations(tx, &p.canvas_id, &json(&context)?, &p.operations);
-                tx.execute_batch("ROLLBACK TO proposal_validation; RELEASE proposal_validation")?;
-                validated?;
+                if auto_apply {
+                    applied = Some(apply_operations(
+                        tx,
+                        &p.canvas_id,
+                        &json(&context)?,
+                        &p.operations,
+                    )?);
+                } else {
+                    tx.execute_batch("SAVEPOINT proposal_validation")?;
+                    let validated =
+                        apply_operations(tx, &p.canvas_id, &json(&context)?, &p.operations);
+                    tx.execute_batch(
+                        "ROLLBACK TO proposal_validation; RELEASE proposal_validation",
+                    )?;
+                    validated?;
+                }
             }
             let reply_node_id = if p.status == "complete" {
                 let node_id = new_id()?;
@@ -866,22 +1136,42 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
             } else {
                 None
             };
-            let status = if p.status == "complete" && !p.operations.is_empty() {
+            let status = if applied.is_some() {
+                "applied"
+            } else if p.status == "complete" && !p.operations.is_empty() {
                 "pending"
             } else {
                 &p.status
             };
             tx.execute("UPDATE conversation_turn SET reply = ?2, reply_node_id = ?3, operations = ?4, status = ?5, error = ?6 WHERE id = ?1", (&p.turn_id,&p.reply,&reply_node_id,json!(p.operations).to_string(),status,&p.error))?;
+            if let Some(applied) = &applied {
+                record_apply(tx, &p.canvas_id, &p.turn_id, applied)?;
+            }
             Ok(json!({"turn":turn(tx,&p.canvas_id,&p.turn_id)?}))
         }
         "conversation.resolve" => {
             let p: Resolve = parse(params)?;
             id("workspaceId", &p.workspace_id)?;
             id("turnId", &p.turn_id)?;
-            if !matches!(p.action.as_str(), "apply" | "discard") {
-                return Err(invalid("Choose apply or discard."));
+            if !matches!(p.action.as_str(), "apply" | "discard" | "revert") {
+                return Err(invalid("Choose apply, discard, or revert."));
             }
             let t = turn(tx, &p.canvas_id, &p.turn_id)?;
+            if p.action == "revert" {
+                if t["status"] != "applied" {
+                    return Err(RuntimeError::new(
+                        "CONFLICT",
+                        "Only an applied proposal can be reverted.",
+                    ));
+                }
+                let active: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_turn WHERE canvas_id = ?1 AND status IN ('generating','pending'))", [&p.canvas_id], |r| r.get(0))?;
+                if active {
+                    return Err(RuntimeError::new("CONFLICT", "Resolve the current proposal or interrupt the active turn before reverting."));
+                }
+                revert(tx, &p.canvas_id, &p.turn_id)?;
+                bump(tx, &p.canvas_id, canvas_revision(tx, &p.canvas_id)?)?;
+                return Ok(json!({"turn":turn(tx,&p.canvas_id,&p.turn_id)?}));
+            }
             let status = if p.action == "apply" {
                 "applied"
             } else {
@@ -902,12 +1192,13 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                     [&p.turn_id],
                     |r| r.get(0),
                 )?;
-                apply_operations(
+                let applied = apply_operations(
                     tx,
                     &p.canvas_id,
                     &json(&context)?,
                     t["operations"].as_array().unwrap(),
                 )?;
+                record_apply(tx, &p.canvas_id, &p.turn_id, &applied)?;
                 bump(tx, &p.canvas_id, canvas_revision(tx, &p.canvas_id)?)?;
             }
             tx.execute(

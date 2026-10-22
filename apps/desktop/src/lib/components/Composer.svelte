@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { LIMITS } from "@agentica/protocol";
+  import { LIMITS, type AgentMode } from "@agentica/protocol";
   import Icon from "./Icon.svelte";
 
   interface Props {
@@ -17,6 +17,11 @@
     details?: string[];
     notice?: string;
     onCancel?: () => void;
+    mode?: AgentMode;
+    modeDisabled?: boolean;
+    onModeChange?: (mode: AgentMode) => void;
+    /** Shown while the chosen mode puts existing work at risk. */
+    warning?: string;
   }
 
   let {
@@ -31,6 +36,10 @@
     details = [],
     notice = "",
     onCancel,
+    mode = "create",
+    modeDisabled = false,
+    onModeChange,
+    warning = "",
   }: Props = $props();
 
   let promptText = $state("");
@@ -58,6 +67,20 @@
     <span class="composer__scope" aria-live="polite">
       <span class="sr-only">Context:</span>{scope}
     </span>
+    <label class="sr-only" for="agent-mode">Agent mode</label>
+    <select
+      id="agent-mode"
+      class="composer__mode"
+      title="What the agent may change"
+      value={mode}
+      disabled={modeDisabled}
+      onchange={(event) =>
+        onModeChange?.(event.currentTarget.value as AgentMode)}
+    >
+      <option value="create">Create only</option>
+      <option value="ask">Ask first</option>
+      <option value="yolo">YOLO (auto-accept)</option>
+    </select>
     <button
       class="composer__disclose"
       type="button"
@@ -69,6 +92,11 @@
       Context details
     </button>
   </div>
+  {#if warning}
+    <p class="composer__warning" role="status">
+      <Icon name="warning" size={16} />{warning}
+    </p>
+  {/if}
   {#if detailsOpen}
     <div id="composer-details" class="composer__details">
       <p>

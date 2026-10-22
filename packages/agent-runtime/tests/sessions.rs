@@ -498,8 +498,18 @@ async fn conversations_exclude_project_metadata_and_empty_native_selection_never
         .await
         .get("error")
         .is_none());
+    // Conversation cards are never in scope, so whole-canvas context needs a note.
+    let open = host.rpc("canvas.open", reference.clone()).await;
+    let mut note = reference.clone();
+    note.as_object_mut().unwrap().extend(json!({"expectedRevision":open["result"]["canvas"]["revision"],"x":0,"y":0,"width":200,"height":100,"text":"Note"}).as_object().unwrap().clone());
+    assert!(host
+        .rpc("node.createText", note)
+        .await
+        .get("error")
+        .is_none());
     start["turnId"] = json!("00000000-0000-4000-8000-000000000011");
     start["contextMode"] = json!("canvas");
+    start["mode"] = json!("ask");
     let canvas = host.rpc("conversation.start", start).await;
     assert!(canvas.get("error").is_none(), "{canvas}");
     let context = &canvas["result"]["context"];

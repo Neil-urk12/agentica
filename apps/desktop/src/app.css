@@ -2459,6 +2459,36 @@ span.card-more {
   border-color: var(--line-strong);
 }
 
+.composer__mode {
+  flex: none;
+  width: auto;
+  padding: 0.15rem 0.3rem;
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+}
+
+.composer__warning {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0.35rem 0.6rem;
+  font-size: var(--type-meta);
+  line-height: 1.4;
+  color: var(--ink);
+  background: var(--warn-soft);
+  border: 1px solid var(--warn-line);
+  border-radius: 6px;
+}
+
+/* Light --warn on --warn-soft is below 4.5:1 for small text; only the icon carries it. */
+.composer__warning .material-icons {
+  color: var(--warn);
+}
+
 .composer__details {
   max-height: 10rem;
   overflow-y: auto;

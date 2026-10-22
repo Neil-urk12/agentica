@@ -1291,7 +1291,7 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
           const content = body.messages.at(-1).content;
           const input = JSON.parse(content.slice(content.indexOf('<canvas-data>') + 14, content.lastIndexOf('</canvas-data>')));
           const operation = content.slice(0, content.indexOf('<canvas-data>')).includes('Change')
-            ? {op:'updateText',nodeId:input.writeScope.nodes[0].id,text:'Proposed replacement'}
+            ? {op:'updateText',nodeId:input.writeScope.nodes[0]?.id ?? input.outline.items.find((i) => i.conversation).nodeId,text:'Proposed replacement'}
             : {op:'createShape',kind:'rectangle',color:'#123456',label:'Idea',...input.proposalAnchor,width:200,height:100};
           return new Response(JSON.stringify({choices:[{message:{content:null,tool_calls:[{id:crypto.randomUUID(),type:'function',function:{name:'canvas_edit',arguments:JSON.stringify(operation)}}]}}]}), {headers:{'Content-Type':'application/json'}});
         }
@@ -1518,23 +1518,18 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
       `document.querySelector('.composer__scope').textContent.includes('1 selected object')`,
       "selected-object context",
     );
+    // A selected conversation card is readable but never writable: the edit is
+    // rejected back to the model and the turn ends without a proposal.
     await submit("Change this text");
     await waitFor(
       browser,
-      `document.querySelectorAll('.canvas-text.preview').length === 1 && !!document.querySelector('.review-bar')`,
-      "a targeted text preview",
+      `window.__providerRequests.some(r => r.messages.at(-1).role === 'tool' && r.messages.at(-1).content.includes('outside this turn'))`,
+      "the rejected conversation card edit",
     );
-    assert.equal(
-      (await rpc("canvas.open", ref)).artifacts.find(
-        (a) => a.id === replyNode.artifactId,
-      ).text,
-      "Human revision",
-    );
-    await review("Discard");
     await waitFor(
       browser,
-      `document.querySelectorAll('.preview').length === 0 && !document.querySelector('#canvas-prompt').disabled`,
-      "discarded proposal",
+      `document.querySelectorAll('.preview').length === 0 && !document.querySelector('.review-bar') && !document.querySelector('#canvas-prompt').disabled`,
+      "a completed turn without a proposal",
     );
     const discarded = await rpc("canvas.open", ref);
     assert.equal(
@@ -1582,7 +1577,8 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
     );
     const turns = await rpc("conversation.list", { ...ref, before: 0 });
     assert.equal(turns.turns[0].status, "cancelled");
-    assert.equal(turns.turns[1].status, "discarded");
+    // The rejected card edit left nothing to review.
+    assert.equal(turns.turns[1].status, "complete");
     assert.equal(turns.turns[2].status, "applied");
     assert.equal(
       (await rpc("canvas.open", ref)).artifacts.find(

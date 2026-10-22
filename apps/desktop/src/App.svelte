@@ -16,6 +16,8 @@
     LIMITS,
     PROJECT_HEADER,
     PROJECT_PADDING,
+    type AgentMode,
+    type ConversationTurn,
     type RuntimeParams,
     type SessionStatus,
     type CanvasOperation,
@@ -207,6 +209,8 @@
   let generating = $state(false);
   let promptError = $state("");
   let toolsNotice = $state("");
+  let agentMode = $state<AgentMode>("create");
+  let revertError = $state("");
   let conversationAbort: AbortController | undefined;
   let generationTask: Promise<boolean> | undefined;
   let pendingReply = $state.raw<RuntimeParams<"conversation.finish"> | null>(
@@ -253,6 +257,18 @@
   const pendingContent = $derived(
     pendingTurn ? proposedContent(pendingTurn.operations) : [],
   );
+  let dismissedApplied = $state("");
+  // Only while the canvas's latest turn is an unreviewed YOLO apply; the next prompt ends it.
+  const appliedTurn = $derived.by(() => {
+    const latest = editorState.turns.reduce<
+      (typeof editorState.turns)[number] | undefined
+    >((a, t) => (!a || t.sequence > a.sequence ? t : a), undefined);
+    return latest?.mode === "yolo" &&
+      latest.revertible &&
+      latest.id !== dismissedApplied
+      ? latest
+      : undefined;
+  });
   const readerText = $derived.by(() => {
     if (!reader) return "";
     const source = reader.artifactId
@@ -297,6 +313,11 @@
   $effect(() => {
     void queueCanvas;
     queueOpen = false;
+  });
+  // Never persisted: every canvas opens in Create Only, so YOLO cannot outlive its session.
+  $effect(() => {
+    void queueCanvas;
+    agentMode = "create";
   });
   const dark = $derived(theme === "dark");
   const connected = $derived(status === "connected");
@@ -669,6 +690,7 @@
     const contextMode = hasSelection
       ? ("selection" as const)
       : ("canvas" as const);
+    const mode = agentMode;
     let turnId: string | undefined;
     promptError = "";
     generating = true;
@@ -681,9 +703,11 @@
         provider.kind === "custom"
           ? provider.tools
           : await canvasToolSupport(model, controller.signal);
-      toolsNotice = tools
-        ? "Canvas edits will appear as proposals for review."
-        : "This model supports text replies only. Choose a tool-capable model in Settings to propose canvas edits.";
+      toolsNotice = !tools
+        ? "This model supports text replies only. Choose a tool-capable model in Settings to propose canvas edits."
+        : mode === "yolo"
+          ? "Canvas edits are applied without review. Select the reply card to revert them."
+          : "Canvas edits will appear as proposals for review.";
       controller.signal.throwIfAborted();
       const area = usable();
       const centre = area
@@ -704,6 +728,7 @@
         model,
         nodeIds,
         contextMode,
+        mode,
         anchor,
       });
       if (!start)
@@ -713,7 +738,7 @@
         );
       turnId = start.turn.id;
       controller.signal.throwIfAborted();
-      const { reply, operations } = await runCanvasAgent(start, {
+      const { reply, operations, partial } = await runCanvasAgent(start, {
         signal: controller.signal,
         tools,
         provider,
@@ -732,6 +757,8 @@
         operations,
         status: "complete",
         error: "",
+        // Budget-limited proposals always wait for review, even in YOLO.
+        ...(partial ? { partial: true } : {}),
       };
       await saveReply();
       return true;
@@ -908,11 +935,13 @@
     );
   }
 
-  function showChanges() {
+  function showChanges(ids?: Set<string>) {
     const area = usable();
     const target = unionBox(
       nodes
-        .filter((node) => node.id.startsWith("preview-"))
+        .filter((node) =>
+          ids ? ids.has(node.id) : node.id.startsWith("preview-"),
+        )
         .map((node) => ({
           x: node.position.x,
           y: node.position.y,
@@ -949,6 +978,33 @@
       reviewError =
         editorState.error ||
         `The proposal could not be ${action === "apply" ? "applied" : "discarded"}.`;
+  }
+
+  function showApplied(operations: CanvasOperation[]) {
+    showChanges(
+      new Set(
+        operations.flatMap((op) =>
+          op.op === "connect"
+            ? [op.sourceNodeId, op.targetNodeId]
+            : [op.nodeId],
+        ),
+      ),
+    );
+  }
+
+  async function revertTurn(turn: ConversationTurn | undefined) {
+    if (!turn?.revertible || resolving) return;
+    resolving = true;
+    revertError = "";
+    try {
+      await editor.resolveConversation(turn.id, "revert");
+    } finally {
+      resolving = false;
+    }
+    // The runtime refuses, changing nothing, when affected objects were edited since.
+    if (editorState.turns.some((t) => t.id === turn.id && t.revertible))
+      revertError =
+        editorState.error || "The applied changes could not be reverted.";
   }
 
   function compactSelected() {
@@ -1407,6 +1463,7 @@
   $effect(() => {
     void selectedId;
     fitNotice = "";
+    revertError = "";
   });
 
   $effect(() => {
@@ -2424,6 +2481,20 @@
               onDiscard={() => void resolvePending("discard")}
               onRead={readProposed}
             />
+          {:else if editorState.document && appliedTurn}
+            {@const turn = appliedTurn}
+            <ReviewBar
+              applied
+              count={turn.operations.length}
+              content={[]}
+              disabled={!canEdit}
+              {resolving}
+              error={revertError}
+              onShow={() => showApplied(turn.operations)}
+              onRevert={() => void revertTurn(turn)}
+              onDismiss={() => (dismissedApplied = turn.id)}
+              onRead={readProposed}
+            />
           {/if}
           <Composer
             {toolbarOpen}
@@ -2449,6 +2520,14 @@
               "Select objects before sending to limit what is shared.",
             ]}
             notice={toolsNotice}
+            mode={agentMode}
+            modeDisabled={generating || !!activeTurn || !!pendingReply}
+            onModeChange={(next) => (agentMode = next)}
+            warning={agentMode === "yolo"
+              ? "YOLO: proposals are applied without review."
+              : agentMode === "ask" && !hasSelection
+                ? "Ask first: the agent may propose changes to existing work anywhere on this canvas."
+                : ""}
             onCancel={() => conversationAbort?.abort()}
             onToggleToolbar={() => (toolbarOpen = !toolbarOpen)}
             onSubmit={handlePromptSubmit}
@@ -2545,6 +2624,16 @@
                     >
                       <Icon name="compress" size={16} />Compact conversation
                     </button>
+                    {#if selectedTurn.revertible}
+                      <button
+                        class="btn btn--soft"
+                        type="button"
+                        disabled={!canEdit || resolving || !!activeTurn}
+                        onclick={() => void revertTurn(selectedTurn)}
+                      >
+                        <Icon name="undo" size={16} />Revert applied changes
+                      </button>
+                    {/if}
                   {/if}
                   {#if canFit}
                     <button
@@ -2559,6 +2648,9 @@
                 </div>
                 {#if fitNotice}<p class="muted" role="status">
                     {fitNotice}
+                  </p>{/if}
+                {#if revertError}<p class="alert" role="alert">
+                    {revertError}
                   </p>{/if}
               </div>
             {/if}

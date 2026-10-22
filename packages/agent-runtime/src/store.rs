@@ -23,6 +23,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("schema_v6.sql"),
     include_str!("schema_v7.sql"),
     include_str!("schema_v8.sql"),
+    include_str!("schema_v9.sql"),
 ];
 pub const STORAGE_VERSION: i64 = MIGRATIONS.len() as i64;
 
@@ -674,6 +675,44 @@ mod tests {
     }
 
     #[test]
+    fn agent_mode_migration_keeps_earlier_turns_as_ask() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut conn = connect(&temp.path().join("db"), true).unwrap();
+        let tx = conn.transaction().unwrap();
+        migrate(&tx, 0, &MIGRATIONS[..4]).unwrap();
+        tx.execute_batch(
+            "INSERT INTO workspace(id, name) VALUES ('w', 'Existing');
+            INSERT INTO canvas VALUES ('c', 'Canvas', 3, 14, -20, 0.75);",
+        )
+        .unwrap();
+        migrate(&tx, 4, &MIGRATIONS[..8]).unwrap();
+        tx.execute_batch(
+            "INSERT INTO conversation_turn(id, canvas_id, model, prompt, prompt_node_id, anchor, context, status)
+            VALUES ('t', 'c', 'm', 'p', 'n', '{}', '{}', 'applied');",
+        )
+        .unwrap();
+        migrate(&tx, 8, MIGRATIONS).unwrap();
+        let mode: String = tx
+            .query_row("SELECT mode FROM conversation_turn", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode, "ask");
+        assert!(tx
+            .execute("UPDATE conversation_turn SET mode = 'auto'", [])
+            .is_err());
+        tx.execute(
+            "INSERT INTO conversation_apply(turn_id, before, after, created, edges) VALUES ('t', '{}', '{}', '{}', '[]')",
+            [],
+        )
+        .unwrap();
+        assert!(tx
+            .execute(
+                "INSERT INTO conversation_apply(turn_id, before, after, created, edges) VALUES ('t', 'x', '{}', '{}', '[]')",
+                [],
+            )
+            .is_err());
+    }
+
+    #[test]
     fn legacy_workspaces_upgrade_without_data_loss() {
         for old_version in [1, 2] {
             let temp = tempfile::tempdir().unwrap();
@@ -821,7 +860,9 @@ mod tests {
                 VALUES ('turn', 'c', 'saved-model', 'Prompt', 'Reply', 'n', 'nd', '{"x":1,"y":2}', '{"nodes":[]}', 'complete');
         "##).unwrap();
         tx.commit().unwrap();
-        let before = snapshot(&conn);
+        let mut before = snapshot(&conn);
+        // v9 adds the turn's agent mode; earlier turns had whole-canvas scope.
+        before[7][0].push(rusqlite::types::Value::Text("ask".into()));
         drop(conn);
         let upgraded = Workspace::open(Some(temp.path()), &id).unwrap();
         assert_eq!(snapshot(&upgraded.conn), before);

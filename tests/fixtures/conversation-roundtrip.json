@@ -74,7 +74,8 @@
       "expect": {
         "turn": {
           "id": "10000000-0000-4000-8000-000000000001",
-          "status": "generating"
+          "status": "generating",
+          "mode": "create"
         },
         "context": {
           "nodes": [
@@ -938,7 +939,8 @@
       },
       "expect": {
         "turn": {
-          "status": "applied"
+          "status": "applied",
+          "revertible": true
         }
       }
     },
@@ -1054,6 +1056,33 @@
         "turns": [],
         "nextBefore": 0
       }
+    },
+    {
+      "method": "conversation.resolve",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000014",
+        "action": "revert"
+      },
+      "expect": {
+        "turn": {
+          "status": "reverted",
+          "revertible": false,
+          "mode": "create"
+        }
+      }
+    },
+    {
+      "method": "conversation.resolve",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "turnId": "10000000-0000-4000-8000-000000000014",
+        "action": "revert"
+      },
+      "expect": null,
+      "error": "CONFLICT"
     }
   ]
 }
