@@ -241,17 +241,6 @@ async fn dispatch_local(state: Arc<HttpState>, request: Request) -> Response {
 }
 
 /// Serve authenticated loopback RPC and optional embedded UI with HTTP deadlines.
-pub async fn serve(
-    listener: TcpListener,
-    connection_key: &str,
-    runtime: Runtime,
-) -> io::Result<()> {
-    let sessions = Arc::new(SessionService::new(
-        runtime.data_root().map(std::path::Path::to_owned),
-    ));
-    serve_with_sessions(listener, connection_key, runtime, sessions).await
-}
-
 pub async fn serve_with_sessions(
     listener: TcpListener,
     connection_key: &str,

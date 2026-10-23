@@ -16,6 +16,11 @@ released version and date. Keep validation evidence in the
   reloading the canvas and turn status. A failed reload can then be retried
   without stale undo edits making the canvas dirty and blocking recovery.
 
+- Remove the unused HTTP `serve` convenience wrapper and obsolete PTY spike
+  example. Backend and tests supply their session service directly, and native
+  PTY handling lives in `sessions/`, avoiding duplicate maintenance and an extra
+  example target in all-target checks.
+
 - Fix undo history after server reloads: applying an agent proposal,
   reloading the conversation, and project mutations (open, create tile with
   auto-grow, close) now clear undo and redo, so Ctrl+Z can no longer write
