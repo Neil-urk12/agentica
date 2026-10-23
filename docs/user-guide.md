@@ -106,6 +106,27 @@ reply and changes nothing.
 
 Built-in tools cannot generate images or run code.
 
+### Dictate a prompt
+
+Status: implemented; not yet validated on any platform.
+
+The microphone button in the composer records speech and types the transcript
+into the prompt for you to edit and send. Click it to start, and click again to
+stop. The button shows when the microphone is starting, recording, and
+transcribing; hover over it to see which input device is in use. It is hidden
+while a prompt is generating.
+
+Speech is transcribed on this machine by a local Whisper model
+(`Xenova/whisper-small.en`, English only). Audio is never sent to a provider or
+any other server, and dictation needs no API key. The first use downloads about
+130 MB of model files from Hugging Face, and the ONNX runtime from
+`cdn.jsdelivr.net`, then keeps them in the app's browser cache. Whether
+dictation then works fully offline has not been tested.
+
+The app asks for microphone permission the first time you point at, focus, or
+click the button. It keeps the microphone open for 30 seconds after a recording
+so the next one starts at once, then releases it.
+
 ## Tools from MCP servers
 
 **Settings › Tools** lists the built-in canvas tools and lets you add local

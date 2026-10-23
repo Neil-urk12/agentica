@@ -22,6 +22,7 @@ provider.
 | [Session attention](docs/user-guide.md#session-attention): bell, OSC 9, and exit signals with a waiting queue                                                         | Validated on Linux                               |
 | [Changes review](docs/user-guide.md#changes-review): Git diffs with feedback pasted into an agent                                                                     | Validated in browser mode on Linux               |
 | [Canvas tasks](docs/user-guide.md#canvas-tasks) assigned and sent to agent tiles                                                                                      | Implemented                                      |
+| [Voice input](docs/user-guide.md#dictate-a-prompt): dictate prompts, transcribed on this machine by a local Whisper model                                             | Implemented; not yet validated                   |
 | [Coding agents](docs/user-guide.md#coding-agents) beyond Codex (Claude Code, OpenCode, Crush, pi, and more) found on `PATH`, plus custom agents                       | Implemented; not yet validated                   |
 | [Installers](docs/running.md#installers) for Linux (AppImage, deb, rpm) and Windows, published as GitLab Releases                                                     | Implemented; not yet validated                   |
 | Remote MCP servers, tools that change data, macOS                                                                                                                     | Planned                                          |
