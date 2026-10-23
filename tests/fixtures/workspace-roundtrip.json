@@ -1,0 +1,875 @@
+{
+  "description": "Workspace, canvas, text-artifact, link, and view-state round trip shared by the desktop (Rust) and detached HTTP (Node) contract tests. \"$name\" strings are values saved by earlier steps; \"request\" supplies an envelope or a raw JSON string; \"restart\" closes the runtime and starts a new one on the same data directory. Expected objects match a subset of keys; arrays match exactly.",
+  "steps": [
+    {
+      "method": "canvas.save",
+      "request": "{\"protocolVersion\":1,\"id\":\"raw-revision\",\"method\":\"canvas.save\",\"params\":{\"workspaceId\":\"00000000-0000-4000-8000-000000000000\",\"canvasId\":\"00000000-0000-4000-8000-000000000001\",\"expectedRevision\":1.0,\"viewport\":{\"x\":0,\"y\":0,\"zoom\":1},\"nodes\":[]}}",
+      "error": "WORKSPACE_NOT_OPEN"
+    },
+    {
+      "method": "canvas.save",
+      "request": "{\"protocolVersion\":1,\"id\":\"raw-revision\",\"method\":\"canvas.save\",\"params\":{\"workspaceId\":\"00000000-0000-4000-8000-000000000000\",\"canvasId\":\"00000000-0000-4000-8000-000000000001\",\"expectedRevision\":1e0,\"viewport\":{\"x\":0,\"y\":0,\"zoom\":1},\"nodes\":[]}}",
+      "error": "WORKSPACE_NOT_OPEN"
+    },
+    {
+      "method": "node.createText",
+      "request": "{\"protocolVersion\":1,\"id\":\"raw-revision\",\"method\":\"node.createText\",\"params\":{\"workspaceId\":\"00000000-0000-4000-8000-000000000000\",\"canvasId\":\"00000000-0000-4000-8000-000000000001\",\"expectedRevision\":1.0,\"x\":0,\"y\":0,\"width\":100,\"height\":100,\"text\":\"\"}}",
+      "error": "WORKSPACE_NOT_OPEN"
+    },
+    {
+      "method": "node.createText",
+      "request": "{\"protocolVersion\":1,\"id\":\"raw-revision\",\"method\":\"node.createText\",\"params\":{\"workspaceId\":\"00000000-0000-4000-8000-000000000000\",\"canvasId\":\"00000000-0000-4000-8000-000000000001\",\"expectedRevision\":1e0,\"x\":0,\"y\":0,\"width\":100,\"height\":100,\"text\":\"\"}}",
+      "error": "WORKSPACE_NOT_OPEN"
+    },
+    {
+      "method": "edge.create",
+      "request": "{\"protocolVersion\":1,\"id\":\"raw-revision\",\"method\":\"edge.create\",\"params\":{\"workspaceId\":\"00000000-0000-4000-8000-000000000000\",\"canvasId\":\"00000000-0000-4000-8000-000000000001\",\"expectedRevision\":1.0,\"kind\":\"relationship\",\"sourceNodeId\":\"00000000-0000-4000-8000-000000000000\",\"targetNodeId\":\"00000000-0000-4000-8000-000000000001\"}}",
+      "error": "WORKSPACE_NOT_OPEN"
+    },
+    {
+      "method": "edge.create",
+      "request": "{\"protocolVersion\":1,\"id\":\"raw-revision\",\"method\":\"edge.create\",\"params\":{\"workspaceId\":\"00000000-0000-4000-8000-000000000000\",\"canvasId\":\"00000000-0000-4000-8000-000000000001\",\"expectedRevision\":1e0,\"kind\":\"relationship\",\"sourceNodeId\":\"00000000-0000-4000-8000-000000000000\",\"targetNodeId\":\"00000000-0000-4000-8000-000000000001\"}}",
+      "error": "WORKSPACE_NOT_OPEN"
+    },
+    {
+      "method": "artifact.saveText",
+      "request": "{\"protocolVersion\":1,\"id\":\"raw-revision\",\"method\":\"artifact.saveText\",\"params\":{\"workspaceId\":\"00000000-0000-4000-8000-000000000000\",\"artifactId\":\"00000000-0000-4000-8000-000000000001\",\"expectedRevision\":1.0,\"text\":\"\"}}",
+      "error": "WORKSPACE_NOT_OPEN"
+    },
+    {
+      "method": "artifact.saveText",
+      "request": "{\"protocolVersion\":1,\"id\":\"raw-revision\",\"method\":\"artifact.saveText\",\"params\":{\"workspaceId\":\"00000000-0000-4000-8000-000000000000\",\"artifactId\":\"00000000-0000-4000-8000-000000000001\",\"expectedRevision\":1e0,\"text\":\"\"}}",
+      "error": "WORKSPACE_NOT_OPEN"
+    },
+    {
+      "method": "canvas.save",
+      "request": "{\"protocolVersion\":1,\"id\":\"raw-revision\",\"method\":\"canvas.save\",\"params\":{\"workspaceId\":\"00000000-0000-4000-8000-000000000000\",\"canvasId\":\"00000000-0000-4000-8000-000000000001\",\"expectedRevision\":9007199254740991.0,\"viewport\":{\"x\":0,\"y\":0,\"zoom\":1},\"nodes\":[]}}",
+      "error": "WORKSPACE_NOT_OPEN"
+    },
+    {
+      "method": "canvas.save",
+      "request": "{\"protocolVersion\":1,\"id\":\"raw-revision\",\"method\":\"canvas.save\",\"params\":{\"workspaceId\":\"00000000-0000-4000-8000-000000000000\",\"canvasId\":\"00000000-0000-4000-8000-000000000001\",\"expectedRevision\":0.0,\"viewport\":{\"x\":0,\"y\":0,\"zoom\":1},\"nodes\":[]}}",
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "canvas.save",
+      "request": "{\"protocolVersion\":1,\"id\":\"raw-revision\",\"method\":\"canvas.save\",\"params\":{\"workspaceId\":\"00000000-0000-4000-8000-000000000000\",\"canvasId\":\"00000000-0000-4000-8000-000000000001\",\"expectedRevision\":-1.0,\"viewport\":{\"x\":0,\"y\":0,\"zoom\":1},\"nodes\":[]}}",
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "canvas.save",
+      "request": "{\"protocolVersion\":1,\"id\":\"raw-revision\",\"method\":\"canvas.save\",\"params\":{\"workspaceId\":\"00000000-0000-4000-8000-000000000000\",\"canvasId\":\"00000000-0000-4000-8000-000000000001\",\"expectedRevision\":1.5,\"viewport\":{\"x\":0,\"y\":0,\"zoom\":1},\"nodes\":[]}}",
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "canvas.save",
+      "request": "{\"protocolVersion\":1,\"id\":\"raw-revision\",\"method\":\"canvas.save\",\"params\":{\"workspaceId\":\"00000000-0000-4000-8000-000000000000\",\"canvasId\":\"00000000-0000-4000-8000-000000000001\",\"expectedRevision\":9007199254740992.0,\"viewport\":{\"x\":0,\"y\":0,\"zoom\":1},\"nodes\":[]}}",
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "canvas.save",
+      "request": "{\"protocolVersion\":1,\"id\":\"raw-revision\",\"method\":\"canvas.save\",\"params\":{\"workspaceId\":\"00000000-0000-4000-8000-000000000000\",\"canvasId\":\"00000000-0000-4000-8000-000000000001\",\"expectedRevision\":\"1\",\"viewport\":{\"x\":0,\"y\":0,\"zoom\":1},\"nodes\":[]}}",
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "canvas.save",
+      "request": "{\"protocolVersion\":1,\"id\":\"raw-revision\",\"method\":\"canvas.save\",\"params\":{\"workspaceId\":\"00000000-0000-4000-8000-000000000000\",\"canvasId\":\"00000000-0000-4000-8000-000000000001\",\"expectedRevision\":null,\"viewport\":{\"x\":0,\"y\":0,\"zoom\":1},\"nodes\":[]}}",
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "canvas.save",
+      "request": "{\"protocolVersion\":1,\"id\":\"raw-revision\",\"method\":\"canvas.save\",\"params\":{\"workspaceId\":\"00000000-0000-4000-8000-000000000000\",\"canvasId\":\"00000000-0000-4000-8000-000000000001\",\"expectedRevision\":true,\"viewport\":{\"x\":0,\"y\":0,\"zoom\":1},\"nodes\":[]}}",
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "workspace.create",
+      "params": ["Created from an array"],
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "workspace.list",
+      "params": [],
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "runtime.ping",
+      "request": [1, "array-ping", "runtime.ping", null],
+      "error": "INVALID_REQUEST"
+    },
+    {
+      "method": "workspace.create",
+      "request": [
+        1,
+        "array-create",
+        "workspace.create",
+        { "name": "Created from an array envelope" }
+      ],
+      "error": "INVALID_REQUEST"
+    },
+    {
+      "method": "workspace.list",
+      "params": {},
+      "expect": { "workspaces": [] }
+    },
+    {
+      "method": "workspace.create",
+      "params": { "name": "\ufeff" },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "workspace.create",
+      "params": { "name": "Fixture workspace" },
+      "save": { "workspaceId": "/workspace/id" },
+      "expect": { "workspace": { "name": "Fixture workspace" }, "canvases": [] }
+    },
+    {
+      "method": "canvas.create",
+      "params": { "workspaceId": "$workspaceId", "title": "\ufeff" },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "canvas.create",
+      "params": { "workspaceId": "$workspaceId", "title": "Plan" },
+      "save": { "canvasId": "/canvas/id" },
+      "expect": { "canvas": { "title": "Plan" } }
+    },
+    {
+      "method": "canvas.open",
+      "params": { "workspaceId": "$workspaceId", "canvasId": "$canvasId" },
+      "expect": {
+        "canvas": {
+          "id": "$canvasId",
+          "revision": 1,
+          "viewport": { "x": 0, "y": 0, "zoom": 1 }
+        },
+        "nodes": [],
+        "edges": [],
+        "artifacts": []
+      }
+    },
+    {
+      "method": "node.createText",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 1.0,
+        "x": 100,
+        "y": 80,
+        "width": 240,
+        "height": 160,
+        "text": "First note"
+      },
+      "save": { "firstNode": "/node/id", "firstArtifact": "/artifact/id" },
+      "expect": {
+        "revision": 2,
+        "node": { "x": 100, "y": 80, "width": 240, "height": 160 },
+        "artifact": {
+          "type": "text",
+          "schemaVersion": 1,
+          "revision": 1,
+          "text": "First note"
+        }
+      }
+    },
+    {
+      "method": "node.createText",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 2,
+        "x": -50.5,
+        "y": 400,
+        "width": 200,
+        "height": 120,
+        "text": ""
+      },
+      "save": { "secondNode": "/node/id", "secondArtifact": "/artifact/id" },
+      "expect": { "revision": 3, "node": { "artifactId": "$secondArtifact" } }
+    },
+    {
+      "method": "edge.create",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 3.0,
+        "kind": "relationship",
+        "sourceNodeId": "$firstNode",
+        "targetNodeId": "$secondNode"
+      },
+      "save": { "edgeId": "/edge/id" },
+      "expect": { "revision": 4, "edge": { "kind": "relationship" } }
+    },
+    {
+      "method": "artifact.saveText",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "artifactId": "$firstArtifact",
+        "expectedRevision": 1.0,
+        "text": "Edited note ✓\nSecond line"
+      },
+      "expect": { "artifact": { "id": "$firstArtifact", "revision": 2 } }
+    },
+    {
+      "method": "canvas.save",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 4.0,
+        "viewport": { "x": -120.5, "y": 42, "zoom": 1.25 },
+        "nodes": [
+          {
+            "id": "$firstNode",
+            "x": 320,
+            "y": -40,
+            "width": 300,
+            "height": 200
+          }
+        ]
+      },
+      "expect": { "revision": 5 }
+    },
+    {
+      "method": "canvas.save",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 5,
+        "viewport": [0, 0, 1],
+        "nodes": []
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "canvas.save",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 5,
+        "viewport": { "x": 0, "y": 0, "zoom": 1 },
+        "nodes": [["$firstNode", 0, 0, 300, 200]]
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "artifact.saveText",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "artifactId": "$firstArtifact",
+        "expectedRevision": 1,
+        "text": "Stale edit"
+      },
+      "error": "CONFLICT"
+    },
+    {
+      "method": "canvas.save",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 4,
+        "viewport": { "x": 0, "y": 0, "zoom": 1 },
+        "nodes": []
+      },
+      "error": "CONFLICT"
+    },
+    {
+      "method": "canvas.save",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 5,
+        "viewport": { "x": 0, "y": 0, "zoom": 1 },
+        "nodes": [
+          { "id": "$firstNode", "x": 0, "y": 0, "width": 300, "height": 200 },
+          {
+            "id": "00000000-0000-4000-8000-000000000000",
+            "x": 0,
+            "y": 0,
+            "width": 100,
+            "height": 100
+          }
+        ]
+      },
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "canvas.save",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 5,
+        "viewport": { "x": 0, "y": 0, "zoom": 1 },
+        "nodes": [
+          { "id": "$firstNode", "x": 0, "y": 0, "width": 300, "height": 200 },
+          { "id": "$firstNode", "x": 9, "y": 9, "width": 300, "height": 200 }
+        ]
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "edge.create",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 5,
+        "kind": "relationship",
+        "sourceNodeId": "$firstNode",
+        "targetNodeId": "$firstNode"
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "edge.create",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 5,
+        "kind": "relationship",
+        "sourceNodeId": "$firstNode",
+        "targetNodeId": "$secondNode"
+      },
+      "error": "CONFLICT"
+    },
+    {
+      "method": "edge.create",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 5,
+        "kind": "execution",
+        "sourceNodeId": "$secondNode",
+        "targetNodeId": "$firstNode"
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "edge.create",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 5,
+        "kind": "relationship",
+        "sourceNodeId": "$secondNode",
+        "targetNodeId": "00000000-0000-4000-8000-000000000000"
+      },
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "node.createText",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 5,
+        "x": 0,
+        "y": 0,
+        "width": 10,
+        "height": 160,
+        "text": "Too narrow"
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "canvas.save",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 5,
+        "viewport": { "x": 0, "y": 0, "zoom": 0 },
+        "nodes": []
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "node.createText",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "00000000-0000-4000-8000-000000000000",
+        "expectedRevision": 1,
+        "x": 0,
+        "y": 0,
+        "width": 100,
+        "height": 100,
+        "text": "Missing canvas"
+      },
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "canvas.open",
+      "params": { "workspaceId": "$workspaceId", "canvasId": "NOT-A-UUID" },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "artifact.saveText",
+      "params": {
+        "workspaceId": "00000000-0000-4000-8000-000000000000",
+        "artifactId": "$firstArtifact",
+        "expectedRevision": 2,
+        "text": "Wrong workspace"
+      },
+      "error": "WORKSPACE_NOT_OPEN"
+    },
+    {
+      "method": "node.createDrawing",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 5,
+        "x": 100,
+        "y": 200,
+        "width": 120,
+        "height": 80,
+        "drawing": {
+          "shapes": [
+            {
+              "kind": "path",
+              "points": [
+                [0, 0],
+                [60, 40]
+              ],
+              "color": "#7b7bf0",
+              "width": 3
+            }
+          ]
+        }
+      },
+      "save": { "drawingNode": "/node/id", "drawingArtifact": "/artifact/id" },
+      "expect": {
+        "revision": 6,
+        "node": { "x": 100, "y": 200, "width": 120, "height": 80 },
+        "artifact": {
+          "type": "drawing",
+          "schemaVersion": 1,
+          "revision": 1,
+          "drawing": {
+            "shapes": [{ "kind": "path", "color": "#7b7bf0", "width": 3 }]
+          }
+        }
+      }
+    },
+    {
+      "method": "node.createDrawing",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 6,
+        "x": -20,
+        "y": 500,
+        "width": 80,
+        "height": 60,
+        "drawing": {
+          "shapes": [
+            {
+              "kind": "rectangle",
+              "x": 0,
+              "y": 0,
+              "width": 40,
+              "height": 30,
+              "color": "#7b7bf0"
+            }
+          ]
+        }
+      },
+      "save": { "secondDrawingNode": "/node/id" },
+      "expect": { "revision": 7 }
+    },
+    {
+      "method": "node.createDrawing",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 7,
+        "x": 0,
+        "y": 0,
+        "width": 80,
+        "height": 60,
+        "drawing": {
+          "shapes": [{ "kind": "squiggle", "color": "#7b7bf0" }]
+        }
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "node.createDrawing",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 7,
+        "x": 0,
+        "y": 0,
+        "width": 10,
+        "height": 60,
+        "drawing": {
+          "shapes": [
+            {
+              "kind": "path",
+              "points": [[0, 0]],
+              "color": "#7b7bf0",
+              "width": 3
+            }
+          ]
+        }
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "node.delete",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 7,
+        "nodeId": "$secondDrawingNode"
+      },
+      "expect": { "revision": 8 }
+    },
+    {
+      "method": "node.delete",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 8,
+        "nodeId": "$secondDrawingNode"
+      },
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "node.delete",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "expectedRevision": 8,
+        "nodeId": "NOT-A-UUID"
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "task.set",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "nodeId": "$firstNode",
+        "enabled": true
+      },
+      "expect": {
+        "task": {
+          "done": false,
+          "assignedTileId": null,
+          "sentAt": null,
+          "sentRevision": null,
+          "revision": 1
+        }
+      }
+    },
+    {
+      "method": "task.set",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "nodeId": "$drawingNode",
+        "enabled": true
+      },
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "task.update",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "nodeId": "$firstNode",
+        "expectedRevision": 1
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "task.update",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "nodeId": "$firstNode",
+        "expectedRevision": 1,
+        "assignedTileId": "00000000-0000-4000-8000-0000000000ff"
+      },
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "task.update",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "nodeId": "$firstNode",
+        "expectedRevision": 1,
+        "done": true
+      },
+      "expect": { "task": { "done": true, "revision": 2 } }
+    },
+    {
+      "method": "task.update",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "nodeId": "$firstNode",
+        "expectedRevision": 1,
+        "done": false
+      },
+      "error": "CONFLICT"
+    },
+    {
+      "method": "task.recordSent",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "nodeId": "$firstNode",
+        "expectedRevision": 2,
+        "tileId": "00000000-0000-4000-8000-0000000000ff",
+        "textRevision": 2
+      },
+      "error": "CONFLICT"
+    },
+    {
+      "method": "workspace.create",
+      "params": { "name": "\u0085" },
+      "save": { "otherWorkspace": "/workspace/id" },
+      "expect": { "workspace": { "name": "\u0085" }, "canvases": [] }
+    },
+    {
+      "method": "canvas.create",
+      "params": { "workspaceId": "$otherWorkspace", "title": "\u0085" },
+      "save": { "otherCanvas": "/canvas/id" },
+      "expect": { "canvas": { "title": "\u0085" } }
+    },
+    {
+      "method": "canvas.open",
+      "params": { "workspaceId": "$otherWorkspace", "canvasId": "$canvasId" },
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "artifact.saveText",
+      "params": {
+        "workspaceId": "$otherWorkspace",
+        "artifactId": "$firstArtifact",
+        "expectedRevision": 2,
+        "text": "Cross-workspace edit"
+      },
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "canvas.open",
+      "params": { "workspaceId": "$workspaceId", "canvasId": "$canvasId" },
+      "expect": { "canvas": { "id": "$canvasId" } }
+    },
+    {
+      "method": "workspace.close",
+      "params": { "workspaceId": "$otherWorkspace" },
+      "expect": {}
+    },
+    { "restart": true },
+    {
+      "method": "workspace.open",
+      "params": { "workspaceId": "$workspaceId" },
+      "expect": {
+        "workspace": { "id": "$workspaceId", "name": "Fixture workspace" },
+        "canvases": [{ "id": "$canvasId", "title": "Plan" }]
+      }
+    },
+    {
+      "method": "canvas.open",
+      "params": { "workspaceId": "$workspaceId", "canvasId": "$canvasId" },
+      "expect": {
+        "canvas": {
+          "id": "$canvasId",
+          "title": "Plan",
+          "revision": 8,
+          "viewport": { "x": -120.5, "y": 42, "zoom": 1.25 }
+        },
+        "nodes": [
+          {
+            "id": "$firstNode",
+            "artifactId": "$firstArtifact",
+            "x": 320,
+            "y": -40,
+            "width": 300,
+            "height": 200,
+            "task": {
+              "done": true,
+              "assignedTileId": null,
+              "sentAt": null,
+              "sentRevision": null,
+              "revision": 2
+            }
+          },
+          {
+            "id": "$secondNode",
+            "artifactId": "$secondArtifact",
+            "x": -50.5,
+            "y": 400,
+            "width": 200,
+            "height": 120,
+            "task": null
+          },
+          {
+            "id": "$drawingNode",
+            "artifactId": "$drawingArtifact",
+            "x": 100,
+            "y": 200,
+            "width": 120,
+            "height": 80,
+            "task": null
+          }
+        ],
+        "edges": [
+          {
+            "id": "$edgeId",
+            "kind": "relationship",
+            "sourceNodeId": "$firstNode",
+            "targetNodeId": "$secondNode"
+          }
+        ],
+        "artifacts": [
+          {
+            "id": "$firstArtifact",
+            "type": "text",
+            "schemaVersion": 1,
+            "revision": 2,
+            "text": "Edited note ✓\nSecond line"
+          },
+          {
+            "id": "$secondArtifact",
+            "type": "text",
+            "schemaVersion": 1,
+            "revision": 1,
+            "text": ""
+          },
+          {
+            "id": "$drawingArtifact",
+            "type": "drawing",
+            "schemaVersion": 1,
+            "revision": 1,
+            "drawing": {
+              "shapes": [
+                {
+                  "kind": "path",
+                  "points": [
+                    [0, 0],
+                    [60, 40]
+                  ],
+                  "color": "#7b7bf0",
+                  "width": 3
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "method": "workspace.close",
+      "params": { "workspaceId": "$workspaceId" },
+      "expect": {}
+    },
+    {
+      "method": "workspace.open",
+      "params": { "workspaceId": "$otherWorkspace" },
+      "expect": {
+        "workspace": { "id": "$otherWorkspace", "name": "\u0085" },
+        "canvases": [{ "id": "$otherCanvas", "title": "\u0085" }]
+      }
+    },
+    {
+      "method": "workspace.close",
+      "params": { "workspaceId": "$otherWorkspace" },
+      "expect": {}
+    },
+    {
+      "method": "canvas.delete",
+      "params": { "workspaceId": "$workspaceId", "canvasId": "$canvasId" },
+      "error": "WORKSPACE_NOT_OPEN"
+    },
+    {
+      "method": "workspace.open",
+      "params": { "workspaceId": "$workspaceId" },
+      "expect": {
+        "workspace": { "id": "$workspaceId", "name": "Fixture workspace" },
+        "canvases": [{ "id": "$canvasId", "title": "Plan" }]
+      }
+    },
+    {
+      "method": "canvas.create",
+      "params": { "workspaceId": "$workspaceId", "title": "Scratch" },
+      "save": { "scratchCanvas": "/canvas/id" },
+      "expect": { "canvas": { "id": "$scratchCanvas", "title": "Scratch" } }
+    },
+    {
+      "method": "canvas.delete",
+      "params": { "workspaceId": "$workspaceId", "canvasId": "$scratchCanvas" },
+      "expect": { "canvases": [{ "id": "$canvasId", "title": "Plan" }] }
+    },
+    {
+      "method": "canvas.open",
+      "params": { "workspaceId": "$workspaceId", "canvasId": "$scratchCanvas" },
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "canvas.delete",
+      "params": { "workspaceId": "$workspaceId", "canvasId": "NOT-A-UUID" },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "canvas.delete",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "00000000-0000-4000-8000-0000000000ff"
+      },
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "workspace.delete",
+      "params": { "workspaceId": "NOT-A-UUID" },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "workspace.delete",
+      "params": { "workspaceId": "00000000-0000-4000-8000-0000000000ff" },
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "workspace.delete",
+      "params": { "workspaceId": "$otherWorkspace" },
+      "expect": {
+        "workspaces": [{ "id": "$workspaceId", "name": "Fixture workspace" }]
+      }
+    },
+    { "restart": true },
+    {
+      "method": "workspace.list",
+      "params": {},
+      "expect": {
+        "workspaces": [{ "id": "$workspaceId", "name": "Fixture workspace" }]
+      }
+    },
+    {
+      "method": "workspace.open",
+      "params": { "workspaceId": "$otherWorkspace" },
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "workspace.open",
+      "params": { "workspaceId": "$workspaceId" },
+      "expect": {
+        "workspace": { "id": "$workspaceId", "name": "Fixture workspace" }
+      }
+    },
+    {
+      "method": "workspace.delete",
+      "params": { "workspaceId": "$workspaceId" },
+      "expect": { "workspaces": [] }
+    },
+    {
+      "method": "workspace.close",
+      "params": { "workspaceId": "$workspaceId" },
+      "error": "WORKSPACE_NOT_OPEN"
+    },
+    {
+      "method": "canvas.open",
+      "params": { "workspaceId": "$workspaceId", "canvasId": "$canvasId" },
+      "error": "WORKSPACE_NOT_OPEN"
+    }
+  ]
+}

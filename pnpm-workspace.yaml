@@ -1,6 +1,10 @@
 packages:
   - apps/*
   - packages/*
+allowBuilds:
+  onnxruntime-node: false
+  protobufjs: false
+  sharp: false
 minimumReleaseAgeExclude:
   - "@tauri-apps/cli-darwin-arm64@2.12.2"
   - "@tauri-apps/cli-darwin-x64@2.12.2"
@@ -15,4 +19,6 @@ minimumReleaseAgeExclude:
   - "@tauri-apps/cli-win32-x64-msvc@2.12.2"
   - "@tauri-apps/cli@2.12.2"
   - "@types/node@24.19.2"
-  - prettier@3.9.10
+  - oxfmt@0.72.0
+  - oxlint@1.87.0
+  - "@tauri-apps/api@2.12.3"

@@ -1,7 +1,25 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "Canvas shell; no privileged desktop operations are exposed yet.",
+  "description": "The local main window may exchange validated runtime and native session requests, choose a project folder, send provider Chat Completions requests over HTTPS or localhost HTTP, and protect unsaved edits when closing.",
   "windows": ["main"],
-  "permissions": []
+  "permissions": [
+    "allow-runtime-request",
+    "allow-session-request",
+    "allow-session-subscribe",
+    "allow-session-shutdown",
+    "allow-open-file",
+    "dialog:allow-open",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://*:*/*chat/completions" },
+        { "url": "http://localhost:*/*chat/completions" },
+        { "url": "http://127.0.0.1:*/*chat/completions" }
+      ]
+    },
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-destroy"
+  ]
 }
