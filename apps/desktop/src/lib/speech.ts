@@ -7,6 +7,8 @@
  * which the worker caches in the browser's Cache Storage.
  */
 
+import { downmixToMono } from "./voice-input";
+
 const WHISPER_SAMPLE_RATE = 16_000;
 
 export interface SpeechProgress {
@@ -210,18 +212,11 @@ async function decodeToMono16k(audio: Blob): Promise<Float32Array> {
   }
   await decodeCtx.close();
 
-  // Average channels to mono.
-  const channels = decoded.numberOfChannels;
   const length = decoded.length;
   const channelData: Float32Array[] = [];
-  for (let c = 0; c < channels; c++)
+  for (let c = 0; c < decoded.numberOfChannels; c++)
     channelData.push(decoded.getChannelData(c));
-  const mono = new Float32Array(length);
-  for (let i = 0; i < length; i++) {
-    let sum = 0;
-    for (let c = 0; c < channels; c++) sum += channelData[c]?.[i] ?? 0;
-    mono[i] = sum / channels;
-  }
+  const mono = downmixToMono(channelData, length);
 
   if (decoded.sampleRate === WHISPER_SAMPLE_RATE) return mono;
 
