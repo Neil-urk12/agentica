@@ -12,6 +12,26 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Dictate prompts with on-device speech-to-text (2026-10-23)
+
+- Add a microphone button to the composer. It records with `MediaRecorder` and
+  transcribes in a Web Worker with a local Whisper model
+  (`Xenova/whisper-small.en`) through Transformers.js, preferring WebGPU and
+  falling back to WebAssembly. Audio never leaves the machine and no API key is
+  needed. The Web Speech API was dropped because the WebView2 runtime reports it
+  as supported and then fails with `network` or `language-not-supported`
+  ([ADR 0005](docs/architecture/0005-local-speech-to-text.md)).
+- The first use downloads about 130 MB of model files from Hugging Face and the
+  ONNX runtime from jsdelivr. The CSP adds `'wasm-unsafe-eval'` to `script-src`
+  and `blob:` to `worker-src` so the runtime can compile WebAssembly and start
+  its worker. `@huggingface/transformers` is pre-bundled in Vite's
+  `optimizeDeps` because discovering it on first use reloaded the dev page.
+  pnpm declines the Node-only `onnxruntime-node`, `protobufjs`, and `sharp`
+  build scripts, which the browser bundle doesn't use.
+- Recorder type choice, microphone label cleanup, and the stereo-to-mono
+  downmix live in `lib/voice-input.ts` with unit tests. Recording and
+  transcription have not been validated in the desktop WebView yet.
+
 ### CI cost and speed
 
 - Cut CI time and GitLab compute minutes. GitHub Actions now runs on pull
