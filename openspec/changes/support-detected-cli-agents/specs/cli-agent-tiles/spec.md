@@ -103,7 +103,7 @@ Agent tiles SHALL display authoritative supervisor process state independently o
 #### Scenario: Agent sends a turn-complete notification
 
 - **WHEN** a Codex tile receives an OSC 9 notification after a turn finishes
-- **THEN** the tile raises attention showing the received text as its headline with the caption `Notification from Codex`
+- **THEN** the tile raises attention labeled with the received text
 - **AND** its process state remains running and no task-completion state is recorded
 
 ### Requirement: Documented opt-in agent notification setup

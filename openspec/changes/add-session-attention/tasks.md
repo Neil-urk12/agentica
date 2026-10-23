@@ -43,14 +43,15 @@
 
 ## 6. Attention presentation redesign
 
-- [ ] 6.1 Centralize attention entries per `sessionRevision` in `App.svelte`, keyed by tile ID, and pass them to the top bar, `NodeDrawer`, project nodes, and session tiles
-- [ ] 6.2 Replace `attentionLabel` with plain-language headline/detail/caption output (`Rang the bell` / `Codex rang the bell` with explanation, verbatim notification headline + `Notification from <source>`, `Exited with code n` / `Exited by signal s`, `Couldn't start` + error), and update the label tests
-- [ ] 6.3 Remove the `●N` button from `CanvasNavigation`, and add a top-bar attention pill (bell icon, count, `--warn` styling) rendered only when count > 0, with the dropdown list (source, project, label, Go) and polite live region
-- [ ] 6.4 Restyle the session tile: a `--warn` 2px outline and a fixed-height full-width `--warn-soft` header strip with bell, label, relative time, repeat count (>1), and Dismiss, outside `.terminal-body` so no terminal re-fit or PTY resize occurs
-- [ ] 6.5 Add Nodes panel markers: tinted affected tile rows with a bell and the label subtitle plus a row Go button; a bell on the parent project row; a header count. Keep row click as select-only
-- [ ] 6.6 Add the arrival pulse: a 600 ms opacity/transform-only animation on the tile outline overlay and the pill, triggered on sequence increase, throttled per tile to 5 s, and disabled under `prefers-reduced-motion`
-- [ ] 6.7 Prefix `document.title` with `(N)` while attention is raised and restore it at zero, updating only when N changes
-- [ ] 6.8 Desktop: add `core:window:allow-request-user-attention` to `capabilities/main.json` (updating its description), request informational attention once on sequence increase while unfocused, and cancel on window focus
-- [ ] 6.9 Add tests: the pill and markers are absent at zero, the pulse throttle and sequence-only trigger, the title count, label wording, and Nodes panel Go not clearing attention
-- [ ] 6.10 Verify contrast (text 4.5:1, graphics 3:1) for strip, pill, and markers in both themes and at 680×800; check pan/zoom responsiveness with a bell flood across several tiles
-- [ ] 6.11 Update the README attention section and the CHANGELOG for the new surfaces, wording, motion, and window-level cues
+Shipped in c76e94f as a top-bar waiting queue instead of the pill design first planned here; the `session-attention` spec delta was updated to describe what shipped.
+
+- [x] 6.1 Derive attention entries once in `App.svelte` and pass them to the top bar, project groups, and session tiles
+- [x] 6.2 Plain-language labels: `Waiting for you`, the notification text or `Sent a notification`, `Stopped (exit code n)` / `Stopped (signal s)`, and `Failed: <error>` / `Failed to start`
+- [x] 6.3 Replace the `●N` button in `CanvasNavigation` with a top-bar `N waiting` queue: Ctrl+J/⌘J, oldest first, waited time, **Jump to**, **Mark seen**, and a polite live region
+- [x] 6.4 Tile ring (red for a failed launch) and a reason strip with waited time and **Mark seen**, outside `.terminal-body`
+- [x] 6.5 A single arrival pulse on the tile ring, off under `prefers-reduced-motion`
+- [x] 6.6 Project groups show separate status items, including `N waiting for you`, from structured counts
+- [x] 6.7 Tests for queue order, the shortcut, waited time, and project status items (`tests/canvas-view.test.mjs`)
+- [x] 6.8 README and CHANGELOG updated for the queue
+
+Not built, and removed from this change's spec delta (candidates for a later change): Nodes panel markers, the `(N)` document title prefix, and desktop window-level attention requests.

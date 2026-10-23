@@ -7,18 +7,19 @@ Reference for working on Agentica's code. To run the app, see
 
 ## Checks
 
-| Command              | What it checks                                                                                                                           |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm check`         | Svelte and strict TypeScript                                                                                                             |
-| `pnpm lint`          | Oxlint on JavaScript, TypeScript, and Svelte                                                                                             |
-| `pnpm format:check`  | Oxfmt formatting of source and Markdown (`pnpm format` fixes it)                                                                         |
-| `pnpm check:rust`    | `cargo fmt --check` and Clippy with `-D warnings`, all targets and features                                                              |
-| `pnpm test:unit`     | Node unit tests (what CI runs)                                                                                                           |
-| `pnpm test:rust`     | Rust workspace tests                                                                                                                     |
-| `pnpm test`          | Everything: builds protocol and frontend, Rust tests with the embedded UI, then all Node tests including the real HTTP and browser tests |
-| `pnpm build`         | Protocol, frontend, and an RPC-only debug backend                                                                                        |
-| `pnpm build:desktop` | Release desktop binary (no installer)                                                                                                    |
-| `pnpm build:backend` | Release backend with the embedded UI                                                                                                     |
+| Command                | What it checks                                                                                                                           |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm check`           | Svelte and strict TypeScript                                                                                                             |
+| `pnpm lint`            | Oxlint on JavaScript, TypeScript, and Svelte                                                                                             |
+| `pnpm format:check`    | Oxfmt formatting of source and Markdown (`pnpm format` fixes it)                                                                         |
+| `pnpm check:rust`      | `cargo fmt --check` and Clippy with `-D warnings`, all targets and features                                                              |
+| `pnpm test:unit`       | Node unit tests (what CI runs)                                                                                                           |
+| `pnpm test:rust`       | Rust workspace tests                                                                                                                     |
+| `pnpm test`            | Everything: builds protocol and frontend, Rust tests with the embedded UI, then all Node tests including the real HTTP and browser tests |
+| `pnpm build`           | Protocol, frontend, and an RPC-only debug backend                                                                                        |
+| `pnpm build:desktop`   | Release desktop binary (no installer)                                                                                                    |
+| `pnpm package:desktop` | Desktop installers; pass `--bundles` to pick formats ([details](../running.md#installers))                                               |
+| `pnpm build:backend`   | Release backend with the embedded UI                                                                                                     |
 
 Notes:
 
@@ -48,7 +49,9 @@ node --test --test-name-pattern "<regex>" tests/<file>.test.mjs
 [GitHub Actions](../../.github/workflows/ci.yml) and its
 [GitLab mirror](../../.gitlab-ci.yml) run the same jobs on every push:
 formatting, lint, type checks, frontend build, and Node unit tests on Linux; Rust
-format, Clippy, unit tests, and a desktop build on Linux and Windows.
+format, Clippy, unit tests, and a desktop build on Linux and Windows. On GitLab,
+a `vX.Y.Z` tag also builds installers and publishes a release
+([how to cut one](../running.md#cutting-a-release)).
 
 ## Protocol
 

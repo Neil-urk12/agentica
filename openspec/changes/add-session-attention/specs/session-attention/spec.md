@@ -75,7 +75,7 @@ Each session status SHALL include an attention latch with raised state, signal c
 
 ### Requirement: Focus-gated raising and explicit clearing
 
-The controlling attachment SHALL report whether a session's terminal is focused. Signals received while the terminal is reported focused SHALL NOT raise attention. Focusing the terminal or choosing Dismiss SHALL clear the latch. A clear request SHALL name the session identity and the attention sequence it acknowledges and SHALL NOT clear signals received after that sequence. Navigating to a tile, selecting it, or bringing it into the viewport SHALL NOT clear attention. A detached session SHALL be treated as unfocused.
+The controlling attachment SHALL report whether a session's terminal is focused. Signals received while the terminal is reported focused SHALL NOT raise attention. Focusing the terminal or choosing **Mark seen** SHALL clear the latch. A clear request SHALL name the session identity and the attention sequence it acknowledges and SHALL NOT clear signals received after that sequence. Navigating to a tile, selecting it, or bringing it into the viewport SHALL NOT clear attention. A detached session SHALL be treated as unfocused.
 
 #### Scenario: Bell while typing in the terminal
 
@@ -84,12 +84,12 @@ The controlling attachment SHALL report whether a session's terminal is focused.
 
 #### Scenario: Jump does not clear
 
-- **WHEN** the user chooses Go for a tile with raised attention
-- **THEN** the canvas navigates to the tile and its attention remains raised until the user focuses its terminal or chooses Dismiss
+- **WHEN** the user chooses **Jump to** for a tile with raised attention
+- **THEN** the canvas navigates to the tile and its attention remains raised until the user focuses its terminal or chooses **Mark seen**
 
-#### Scenario: Signal arrives during dismissal
+#### Scenario: Signal arrives while marking seen
 
-- **WHEN** the user dismisses attention at sequence 4 while a new notification raises sequence 5
+- **WHEN** the user marks attention seen at sequence 4 while a new notification raises sequence 5
 - **THEN** the latch remains raised for the sequence 5 notification
 
 #### Scenario: Renderer is unmounted while focused
@@ -99,98 +99,78 @@ The controlling attachment SHALL report whether a session's terminal is focused.
 
 ### Requirement: Distinct attention presentation
 
-Raised attention SHALL use a dedicated attention color pair (the theme's warning tokens), distinct from selection, focus, and accent styling, in both themes. Attention text SHALL meet 4.5:1 contrast and attention-only graphics 3:1 against their background. Color SHALL NOT be the only cue: every attention surface SHALL also show a bell icon and text. Attention surfaces SHALL be absent, not shown as zero, when nothing needs attention.
+Raised attention SHALL use a dedicated attention color pair (the theme's warning tokens, or its error tokens for a failed launch), distinct from selection, focus, and accent styling, in both themes. Attention text SHALL meet 4.5:1 contrast and attention-only graphics 3:1 against their background. Color SHALL NOT be the only cue: every attention surface SHALL also show text. When nothing needs attention, tiles and project groups SHALL show no attention styling or zero counts, and the top-bar control SHALL read `Nothing waiting` without a count or attention styling.
 
 #### Scenario: Attention is visible at reduced zoom
 
 - **WHEN** a tile raises attention while the canvas is zoomed out so terminal text is unreadable
-- **THEN** the tile is still distinguishable from tiles without attention by its outline and header strip
+- **THEN** the tile is still distinguishable from tiles without attention by its ring and reason strip
 
 #### Scenario: Nothing needs attention
 
 - **WHEN** no session tile on the current canvas has raised attention
-- **THEN** no attention pill, badge, ring, or zero count is displayed
+- **THEN** no tile ring, strip, or group waiting count is displayed and the top-bar control reads `Nothing waiting`
 
 ### Requirement: Attention surfaces and navigation
 
 While any session tile on the current canvas has raised attention, the system SHALL show:
 
-- an attention pill in the top bar, reporting the number of affected tiles and opening a list of entries (source, project, signal label, Go);
-- on each affected tile, an outline in the attention color and a full-width header strip with the signal label, relative time, repeat count when greater than one, and Dismiss;
-- in the Nodes panel, a marker on each affected tile row, its project row, and the panel header, with the tile row's subtitle replaced by the signal label and a Go control on the row.
+- a top-bar control reading `<N> waiting`, which opens a waiting queue listing every affected tile oldest first, each with the tile's name, its project, the signal label, how long it has waited, **Jump to**, and **Mark seen**;
+- on each affected tile, a ring in the attention color and a full-width reason strip with the signal label, how long it has waited, and **Mark seen**;
+- on each project group, including a collapsed one, a separate `<N> waiting for you` status item alongside its other session counts.
 
-A collapsed group SHALL report attention for its member tiles in its collapsed header. Go SHALL navigate using the existing navigation that accounts for unobscured canvas space, to the group when collapsed, and SHALL change only the viewport. Selecting a row or navigating SHALL NOT clear attention. Attention-count changes SHALL be announced through a polite live region without moving focus. The pill, list, Nodes-panel controls, Go, and Dismiss SHALL be keyboard-operable with accessible names and visible focus in both themes and SHALL remain reachable at a 680 by 800 CSS pixel viewport.
+The queue SHALL toggle with Ctrl+J (Cmd+J on Apple platforms) outside text fields and terminals; Up and Down SHALL move between entries, Enter SHALL jump to the focused entry, and Escape SHALL close it. **Jump to** SHALL navigate using the existing navigation that accounts for unobscured canvas space, to the group when collapsed, and SHALL change only the viewport. Selecting or navigating SHALL NOT clear attention. Attention-count changes SHALL be announced through a polite live region without moving focus. The queue, its entries, **Jump to**, and **Mark seen** SHALL be keyboard-operable with accessible names and visible focus in both themes and SHALL remain reachable at a 680 by 800 CSS pixel viewport.
 
 #### Scenario: Notice and jump from another tile
 
 - **WHEN** the user is working in one tile and an off-viewport Codex tile emits an OSC 9 notification
-- **THEN** the top-bar pill appears with a count of one and the change is announced without moving focus
-- **AND** choosing Go for that entry brings the Codex tile into the usable canvas area with its attention still raised
-
-#### Scenario: Notice from the Nodes panel
-
-- **WHEN** the Nodes panel is open and a listed shell tile rings the bell
-- **THEN** that row, its project row, and the panel header show the attention marker and the row subtitle shows the signal label
-- **AND** the row's Go control navigates to the tile
+- **THEN** the top-bar control reads `1 waiting` and the change is announced without moving focus
+- **AND** choosing **Jump to** for that entry brings the Codex tile into the usable canvas area with its attention still raised
 
 #### Scenario: Attention in a collapsed group
 
 - **WHEN** a member tile of a collapsed group raises attention
-- **THEN** the collapsed group header reports it and Go navigates to the group without expanding it
+- **THEN** the collapsed group reports it as waiting and **Jump to** navigates to the group without expanding it
 
 #### Scenario: Keyboard-only clearing
 
-- **WHEN** a keyboard user opens the pill's list, chooses Go, and activates the tile's Dismiss control
-- **THEN** the tile's attention clears and the pill's count decreases or the pill disappears
+- **WHEN** a keyboard user presses Ctrl+J, moves to an entry, and activates **Mark seen**
+- **THEN** the tile's attention clears and the waiting count decreases or the control reads `Nothing waiting`
 
 ### Requirement: Lightweight arrival cue
 
-When a tile's attention sequence increases, its tile outline and the top-bar pill SHALL play a single brief pulse of at most 600 milliseconds, at most once per tile every 5 seconds. The pulse SHALL animate only compositor-friendly properties (opacity and transform), SHALL NOT loop, SHALL NOT cause terminal re-layout or PTY resize, and SHALL be omitted when the user prefers reduced motion. Status updates that do not increase the sequence SHALL NOT replay the cue.
+When a tile's attention is raised, its ring SHALL play a single brief pulse of at most one second. The pulse SHALL NOT loop, SHALL NOT replay for further signals while attention stays raised, SHALL NOT cause terminal re-layout or PTY resize, and SHALL be omitted when the user prefers reduced motion.
 
 #### Scenario: Bell storm does not animate continuously
 
 - **WHEN** a tile emits hundreds of bells within a few seconds while unfocused
-- **THEN** its outline pulses at most once per 5 seconds and the canvas stays responsive
+- **THEN** its ring pulses once and the canvas stays responsive
 
 #### Scenario: Reduced motion
 
 - **WHEN** the operating system or browser requests reduced motion and a tile raises attention
-- **THEN** the outline, strip, and pill appear without animation
-
-### Requirement: Window-level attention
-
-While attention is raised on the current canvas, the document title SHALL be prefixed with the affected-tile count in parentheses, and SHALL return to its normal title when the count reaches zero. In desktop mode, when a sequence increases while the application window is unfocused, the system SHALL request informational user attention from the window system and SHALL cancel the request when the window regains focus. The system SHALL NOT send operating-system notifications, play sounds, or steal window focus. Notification text SHALL NOT appear in the document title or window-system request.
-
-#### Scenario: Browser tab in the background
-
-- **WHEN** the Agentica tab is in the background and two tiles raise attention
-- **THEN** the tab title reads `(2) Agentica` and returns to `Agentica` after both are cleared
-
-#### Scenario: Desktop window behind another app
-
-- **WHEN** the desktop window is unfocused and a tile raises attention
-- **THEN** the window system's attention request is made once, without focusing the window or showing notification text
+- **THEN** the ring and strip appear without animation
 
 ### Requirement: Plain-language labels limited to received signals
 
 Attention labels SHALL use plain language and describe only the received signal:
 
-- bell: `Rang the bell`, with an accessible explanation that programs ring the terminal bell to ask for attention and Agentica does not know why;
-- OSC 9 notification: the program's own message as the headline, with a `Notification from <source>` caption;
-- exit: `Exited with code <n>` or `Exited by signal <name>`;
-- failure: `Couldn't start`, with the reported error as detail.
+- bell: `Waiting for you`;
+- OSC 9 notification: the program's own message, or `Sent a notification` when it is empty;
+- exit: `Stopped`, with `(exit code <n>)` or `(signal <name>)` when known;
+- failure: `Failed: <error>`, or `Failed to start` when no error is reported.
 
-The source SHALL be the tile's program name (`Terminal` or `Codex`) and MAY prefix the bell label (for example `Codex rang the bell`). Labels SHALL NOT state or imply an approval request, turn completion, task success, task failure, or agent activity, and SHALL NOT be derived by interpreting notification text. Notification text SHALL be rendered as inert plain text.
+Queue entries SHALL identify the tile by its name (`Terminal` or `Codex`). Labels SHALL NOT state or imply an approval request, turn completion, task success, task failure, or agent activity, and SHALL NOT be derived by interpreting notification text. Notification text SHALL be rendered as inert plain text.
 
 #### Scenario: Bell from a terminal tile
 
 - **WHEN** `cargo test` in a shell tile emits a bell
-- **THEN** the tile is labeled `Rang the bell` with its explanation available and is not described as agent activity
+- **THEN** the tile is labeled `Waiting for you` and is not described as agent activity
 
 #### Scenario: Codex notification text mentions approval
 
 - **WHEN** Codex sends an OSC 9 notification whose text says an approval is requested
-- **THEN** the UI shows that text verbatim as the headline with the caption `Notification from Codex`
+- **THEN** the UI shows that text verbatim as the label, and the queue entry names the tile `Codex`
 - **AND** no approval state is recorded or displayed
 
 ### Requirement: Attention data stays out of canvas content

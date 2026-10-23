@@ -64,7 +64,7 @@ A task send SHALL ask the backend to refuse the paste if the target session has 
 
 #### Scenario: Codex is waiting on an approval
 
-- **WHEN** the assigned Codex tile has raised, undismissed attention and the user confirms Send
+- **WHEN** the assigned Codex tile has raised attention not yet marked seen and the user confirms Send
 - **THEN** the backend refuses the paste, no bytes reach the terminal, and the user is told to check the tile
 
 #### Scenario: Signal arrives during preview
