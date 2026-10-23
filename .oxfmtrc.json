@@ -12,6 +12,7 @@
     "node_modules/",
     ".pnpm-store/",
     "PROJECT.md",
+    ".claude/",
     "docs/architecture/application-flow.html",
     "**/*.toml"
   ]
