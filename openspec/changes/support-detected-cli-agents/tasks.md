@@ -41,7 +41,7 @@
 
 ## 6. Docs and verification
 
-- [ ] 6.1 README: built-in agents and `PATH` detection (including the backend-`PATH` caveat), custom agents and why they are machine-local, and that only Codex has a verified notification setup.
+- [x] 6.1 README: built-in agents and `PATH` detection (including the backend-`PATH` caveat), custom agents and why they are machine-local, and that only Codex has a verified notification setup.
 - [x] 6.2 Add a CHANGELOG `Unreleased` dated entry with the rationale (registry vs. remote manifests, machine-local custom agents, deferral of herdr-style state).
 - [ ] 6.3 Update the `cli-agent-tiles` spec Purpose line on archive.
 - [x] 6.4 Run `pnpm check`, `pnpm lint`, `pnpm check:rust`, and `pnpm test`. All must pass with no real agent or provider calls.

@@ -114,7 +114,14 @@ Groups start collapsed; the chevron expands one. The group header has:
 
 **Settings → Advanced → Coding agents** shows whether each built-in agent was
 found and where. Agentica only looks for it on the `PATH`; nothing runs until you
-press **Start** on a tile.
+press **Start** on a tile. A match is by program name only, so an unrelated
+program called `pi` is listed as pi; check the path before starting.
+
+The `PATH` searched is the one the desktop app or backend was started with. A
+desktop app opened from an application launcher may not see programs your shell
+adds to `PATH` (for example in `~/.zshrc`). If an agent you installed shows
+**Not found**, start Agentica from that shell, or add it as a custom agent with
+its absolute path.
 
 **Add a custom agent** registers any other terminal coding agent (for example
 Aider):
@@ -160,8 +167,9 @@ Project paths, session settings, and terminal output are never added to
 conversation context.
 
 **Status:** Linux only, validated with zsh 5.9 and `codex-cli 0.163.0` in both
-launch modes. On other systems project groups are visible and **Start** explains
-why it is unavailable.
+launch modes. Other built-in agents and custom agents are implemented but not
+yet validated. On other systems project groups are visible and **Start**
+explains why it is unavailable.
 
 ## Session attention
 
@@ -211,6 +219,10 @@ avoids depending on terminal detection; `always` lets Agentica decide when the
 terminal is focused. Agentica never reads or changes Codex configuration. Bell
 and exit attention work without it.
 
+Codex is the only agent with a verified notification setup. Other agents raise
+attention when they ring the terminal bell, send OSC 9, or exit; whether and when
+they do depends on the agent and its settings.
+
 ## Changes review
 
 A project group's **Changes** button opens a read-only Changes tile (one per
@@ -225,7 +237,7 @@ diff. **Expand**, or double-clicking the header, opens a full-screen review.
   Feedback is then marked **Sent** (pasted, not run).
 - Removing a tile or project with unsent feedback asks first.
 
-Git runs only when the tile is created or first shown, on **Refresh**, and when a
+Git runs only when the tile is created or first shown, on **Refresh**, and when an
 agent session in the project raises attention. It never writes the repository.
 
 **Status:** validated in browser mode on Linux. Desktop restart behavior is not

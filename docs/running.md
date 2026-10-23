@@ -52,8 +52,31 @@ pnpm build:desktop
 ./target/release/agentica-desktop        # Windows: .\target\release\agentica-desktop.exe
 ```
 
-A single executable with the frontend and runtime embedded. Installers are not
-produced yet.
+A single executable with the frontend and runtime embedded.
+
+## Installers
+
+Tagged versions are published on the
+[releases page](https://gitlab.com/Neil-urk12/agentica/-/releases): a Linux
+AppImage, `.deb`, and `.rpm`, a Windows installer, and the browser-mode backend
+for both platforms. To build installers locally:
+
+```sh
+pnpm package:desktop --bundles deb,rpm,appimage   # Linux; output in target/release/bundle/
+pnpm package:desktop --bundles nsis               # Windows
+```
+
+On Linux, set `APPIMAGE_EXTRACT_AND_RUN=1` if FUSE is unavailable (containers).
+
+### Cutting a release
+
+1. Move the `Unreleased` changelog entries under a new `## X.Y.Z — date` heading.
+2. Set that version in every `package.json`, both `Cargo.toml` files, and
+   `apps/desktop/src-tauri/tauri.conf.json`, then run `cargo update --workspace`.
+3. Merge to `main`, then tag it and push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+
+The tag runs the GitLab `package:*` and `release` jobs. They fail if the tag
+does not match the app version.
 
 ## Browser development
 
