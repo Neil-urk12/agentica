@@ -228,7 +228,9 @@
   );
   let busy = $state(false);
   let inspectorOpen = $state(false);
-  let drawerOpen = $state(true);
+  // The Nodes drawer starts collapsed; opening a canvas also forces it closed
+  // (see the canvas-open reset below) so each canvas opens with a clean stage.
+  let drawerOpen = $state(false);
   // Groups start collapsed whenever a canvas opens. Expanding is a view-only
   // choice until the control persists it, so reopening never leaks a previous
   // expanded layout.
@@ -1193,6 +1195,7 @@
           groupViewCanvasId = document.canvas.id;
           expandedGroups = {};
           inspectorOpen = false;
+          drawerOpen = false;
         }
         const workspaceId = editorState.workspace.workspace.id;
         for (const group of document.projectGroups) {
