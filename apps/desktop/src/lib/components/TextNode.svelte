@@ -222,7 +222,7 @@
         </label>
         <select
           class="task-assignee"
-          aria-label="Assigned Codex tile"
+          aria-label="Assigned agent tile"
           value={t.task.assignedTileId ?? ""}
           disabled={t.busy || !data.editable}
           onchange={(event) => t.onAssign(event.currentTarget.value || null)}

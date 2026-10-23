@@ -145,7 +145,7 @@ pub(super) fn call(tx: &Transaction, method: &str, value: Value) -> Result<Value
                     .optional()?
                     .ok_or_else(|| not_found("Session tile on this canvas"))?;
                 if kind != "cli-agent" {
-                    return Err(invalid("Tasks can only be assigned to a Codex tile."));
+                    return Err(invalid("Tasks can only be assigned to a CLI-agent tile."));
                 }
             }
             let new_assignee = p

@@ -4,11 +4,13 @@
 
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { callRuntime, desktopMode } from "../runtime";
+  import { desktopMode } from "../runtime";
   import type { Theme } from "../theme";
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
   import ToolsSettings from "./ToolsSettings.svelte";
+  import CodingAgents from "./CodingAgents.svelte";
+  import type { SessionManager } from "../sessions";
   import {
     getProviderConfig,
     getProviderKind,
@@ -31,6 +33,8 @@
     connected: boolean;
     /** The open workspace, if any; tool servers are saved with it. */
     workspaceId?: string;
+    /** Agent detection; custom agent changes refresh it. */
+    sessions: SessionManager;
     theme: Theme;
     /** Section to open at; without one, narrow windows start at the category list. */
     section?: SettingsSection;
@@ -46,6 +50,7 @@
     connectionKey,
     connected,
     workspaceId,
+    sessions,
   }: Props = $props();
 
   const sections: { id: SettingsSection; label: string; icon: string }[] = [
@@ -59,30 +64,8 @@
   // svelte-ignore state_referenced_locally
   let listOpen = $state(!section);
 
-  let codexStatus = $state(
-    "Connect to Agentica's background service to see whether Codex is available. Chatting and editing by hand work without it.",
-  );
   let checkAbort: AbortController | undefined;
-  onMount(() => {
-    if (connected) {
-      codexStatus = "Checking whether Codex is available…";
-      void callRuntime(
-        connectionKey.trim(),
-        false,
-        "agent.capabilities",
-        {},
-      ).then(
-        (capabilities) => {
-          codexStatus = capabilities.reason;
-        },
-        () => {
-          codexStatus =
-            "Couldn't check whether Codex is available. Reconnect and open settings again. Chatting and editing by hand still work.";
-        },
-      );
-    }
-    return () => checkAbort?.abort();
-  });
+  onMount(() => () => checkAbort?.abort());
 
   const dark = $derived(theme === "dark");
 
@@ -537,16 +520,7 @@
           </div>
         </section>
 
-        <section
-          class="setting setting--stacked"
-          aria-labelledby="codex-status-label"
-        >
-          <span class="setting__icon"><Icon name="terminal" size={20} /></span>
-          <div class="setting__text">
-            <h3 id="codex-status-label">Coding agent (Codex)</h3>
-            <p role="status">{codexStatus}</p>
-          </div>
-        </section>
+        <CodingAgents {connectionKey} {connected} {sessions} />
       </section>
     </div>
   </div>

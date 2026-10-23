@@ -35,6 +35,56 @@ released version and date. Keep validation evidence in the
   Editor tests cover held and aborted drags, collapse, reload, and which
   conversation steps clear history.
 
+- Saving a custom agent no longer closes a different agent's form opened while
+  the save was running, and the form fields are locked during the save so
+  typed edits can't be silently dropped. The user guide now covers every
+  agent tile, custom-agent setup, and task and feedback targets beyond Codex.
+  Saving custom agents now also syncs the data directory after the atomic
+  rename, so a crash right after a save can't revert it, matching the
+  workspace database's `synchronous = FULL` durability.
+
+- Agent labels now check only the registry's own properties so unknown saved
+  presets such as `toString` fall back to "Agent". Task assignment and paste
+  targets share numbering per preset within each project, counting inactive
+  tiles too so readiness changes do not renumber the targets.
+
+- Agent tiles now host any detected coding agent, not only Codex. The backend
+  holds a fixed registry (Codex, Claude Code, OpenCode, Crush, pi, Gemini CLI,
+  GitHub Copilot CLI, Cursor Agent, Amp, Qwen Code, Droid, Kimi Code) and looks
+  each executable up on its own `PATH` without running it. "Add agent" offers
+  only the agents it found. Codex keeps `--no-daemon`; the others start with no
+  extra arguments and never with approval-bypass flags. A fixed registry was
+  chosen over remotely updated manifests (as herdr uses) because a list that
+  can change remotely would decide what Start executes. Detection matches by
+  name only, so the UI shows the resolved path and never claims identity.
+  Custom agents (label, absolute path, argv) are saved in
+  `<data root>/cli-agents.json`, outside every workspace, so copying or sharing
+  a workspace can never choose what a tile runs; a tile that refers to a custom
+  agent missing on this machine cannot start. Writes take an OS file lock
+  because the desktop app and the detached backend share the data root, and a
+  malformed file is reported, never overwritten. Schema v11 rebuilds
+  `session_tile` to accept any preset string and keeps task assignments. New
+  tiles must name a known preset (checked in Rust and Zod), but a saved tile is
+  read with the storage limits only, so a preset this build does not know makes
+  that one tile unlaunchable instead of failing the whole canvas. "Add agent"
+  stays focusable and its menu explains why nothing can be added, telling
+  "not connected yet" apart from "none found". Tasks can go to any agent tile; Send is still one
+  bracketed paste without Enter. Attention stays limited to BEL and OSC 9, and
+  only Codex shows a notification setup hint, because no other agent's setup is
+  verified yet. Herdr-style working/idle/blocked state is left to a follow-up
+  change. Each agent other than Codex is **unverified** in a real PTY until it
+  is run and recorded here.
+
+- Reorganized the documentation. The README was a 400-line manual that mixed the
+  pitch, feature behavior, and every launch mode. It now gives a short overview,
+  a feature table with planned/implemented/validated status, a quick start, and
+  links. Feature behavior moved to `docs/user-guide.md` (with a new Changes
+  review section) and launch modes to `docs/running.md`. The new
+  `ARCHITECTURE.md` covers components, request flow, trust boundaries, and the
+  reasons for the stack, replacing the outdated "Initial architecture" page,
+  which is now an ADR index. `CONTRIBUTING.md` and `docs/development/README.md`
+  lost duplicated content and gained a docs-update checklist.
+
 - Added `.gitlab-ci.yml`, a copy of the GitHub Actions CI jobs (frontend,
   Linux and Windows native checks), because GitHub Actions jobs are not starting
   while the account is billing-locked. It runs on a GitLab push mirror.

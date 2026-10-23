@@ -257,12 +257,14 @@ pub(super) fn call(tx: &Transaction, method: &str, value: Value) -> Result<Value
             let expected = revision(p.expected_revision)?;
             check_canvas(tx, &p.canvas_id, expected)?;
             tile_geometry(p.x, p.y, p.width, p.height)?;
-            if !matches!(
-                (&p.kind, p.preset.as_deref()),
-                (TileKind::Shell | TileKind::Changes, None) | (TileKind::CliAgent, Some("codex"))
-            ) {
+            let valid = match (&p.kind, p.preset.as_deref()) {
+                (TileKind::Shell | TileKind::Changes, None) => true,
+                (TileKind::CliAgent, Some(preset)) => crate::sessions::agents::valid_preset(preset),
+                _ => false,
+            };
+            if !valid {
                 return Err(invalid(
-                    "Use a shell or Changes tile without a preset, or the Codex CLI-agent preset.",
+                    "Use a shell or Changes tile without a preset, or a CLI-agent tile with a built-in or custom agent preset.",
                 ));
             }
             let exists: bool = tx.query_row(
@@ -461,11 +463,13 @@ mod tests {
         assert_ne!(group, second);
         let mut create = json!({"workspaceId": workspace, "canvasId": canvas, "expectedRevision": 3,
             "projectId": group, "kind": "cli-agent", "preset": "codex", "x": 16, "y": 96, "width": 400, "height": 300});
-        create["preset"] = json!("other");
-        assert_eq!(
-            call(&mut runtime, "project.createTile", create.clone())["error"]["code"],
-            "INVALID_PARAMS"
-        );
+        for preset in ["other", "custom:not-a-uuid"] {
+            create["preset"] = json!(preset);
+            assert_eq!(
+                call(&mut runtime, "project.createTile", create.clone())["error"]["code"],
+                "INVALID_PARAMS"
+            );
+        }
         create["preset"] = json!("codex");
         let tile =
             call(&mut runtime, "project.createTile", create.clone())["result"]["tileId"].clone();

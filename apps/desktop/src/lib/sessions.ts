@@ -1,7 +1,9 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import {
+  BUILTIN_AGENT_LABELS,
   SESSION_LIMITS,
+  type AgentCapability,
   type SessionEvent,
   type SessionOwner,
   type SessionResult,
@@ -22,6 +24,22 @@ const key = (owner: SessionOwner) =>
   `${owner.workspaceId}/${owner.canvasId}/${owner.tileId}`;
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+
+/** A tile's program name: `Terminal`, the agent's label, or `Agent` for a
+ * custom agent this machine does not define. Render as text, never HTML. */
+export function tileName(
+  tile: Pick<SessionTile, "kind" | "preset">,
+  agents: readonly AgentCapability[] = [],
+) {
+  if (tile.kind !== "cli-agent") return "Terminal";
+  return (
+    (tile.preset !== null && Object.hasOwn(BUILTIN_AGENT_LABELS, tile.preset)
+      ? BUILTIN_AGENT_LABELS[tile.preset as keyof typeof BUILTIN_AGENT_LABELS]
+      : undefined) ??
+    agents.find((agent) => agent.id === tile.preset)?.label ??
+    "Agent"
+  );
+}
 interface Entry {
   owner: SessionOwner;
   tile: SessionTile;
@@ -167,6 +185,36 @@ export class SessionManager {
     this.capabilities = await this.client.request({ op: "capabilities" });
     this.connected = true;
     this.changed();
+  }
+
+  /** Re-detect agents, e.g. after custom agents change in Settings. */
+  async refreshCapabilities() {
+    if (!this.connected) return;
+    this.capabilities = await this.client.request({ op: "capabilities" });
+    this.changed();
+  }
+
+  get agents(): readonly AgentCapability[] {
+    return this.capabilities?.capabilities.agents ?? [];
+  }
+
+  name(tile: Pick<SessionTile, "kind" | "preset">) {
+    return tileName(tile, this.agents);
+  }
+
+  /** Number each preset independently within its project, in tile order. */
+  agentLabels(tiles: readonly SessionTile[]) {
+    const projects = new Map<string, Map<string | null, number>>();
+    const labels = new Map<string, string>();
+    for (const tile of tiles) {
+      if (tile.kind !== "cli-agent") continue;
+      let counts = projects.get(tile.projectId);
+      if (!counts) projects.set(tile.projectId, (counts = new Map()));
+      const number = (counts.get(tile.preset) ?? 0) + 1;
+      counts.set(tile.preset, number);
+      labels.set(tile.id, `${this.name(tile)} ${number}`);
+    }
+    return labels;
   }
 
   async reconcile(
@@ -527,19 +575,20 @@ export class SessionManager {
     if (entry?.connected) entry.terminal?.focus();
   }
 
-  /** Running, attached Codex sessions in one project, in tile order. */
+  /** Running, attached CLI-agent sessions in one project, in tile order. */
   pasteTargets(workspaceId: string, canvasId: string, projectId: string) {
-    return [...this.entries.values()]
-      .filter(
-        (entry) =>
-          entry.owner.workspaceId === workspaceId &&
-          entry.owner.canvasId === canvasId &&
-          entry.tile.projectId === projectId &&
-          entry.tile.kind === "cli-agent",
-      )
-      .map((entry, index) => ({
+    const entries = [...this.entries.values()].filter(
+      (entry) =>
+        entry.owner.workspaceId === workspaceId &&
+        entry.owner.canvasId === canvasId &&
+        entry.tile.projectId === projectId &&
+        entry.tile.kind === "cli-agent",
+    );
+    const labels = this.agentLabels(entries.map((entry) => entry.tile));
+    return entries
+      .map((entry) => ({
         owner: entry.owner,
-        label: `Codex ${index + 1}`,
+        label: labels.get(entry.tile.id)!,
         ready:
           !!entry.attachment &&
           entry.connected &&
@@ -564,7 +613,7 @@ export class SessionManager {
       entry.status?.state !== "running"
     )
       throw new Error(
-        "This Codex session is not running. Start it, then retry.",
+        `This ${entry ? this.name(entry.tile) : "agent"} session is not running. Start it, then retry.`,
       );
     // Queue behind typed input so the paste never interleaves with it.
     const run = entry.input.then(() =>

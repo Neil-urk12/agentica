@@ -25,6 +25,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("schema_v8.sql"),
     include_str!("schema_v9.sql"),
     include_str!("schema_v10.sql"),
+    include_str!("schema_v11.sql"),
 ];
 pub const STORAGE_VERSION: i64 = MIGRATIONS.len() as i64;
 
@@ -653,7 +654,8 @@ mod tests {
         for sql in [
             "UPDATE session_tile SET canvas_id = 'other'",
             "UPDATE session_tile SET project_id = 'missing'",
-            "UPDATE session_tile SET preset = 'unsupported'",
+            "UPDATE session_tile SET preset = printf('%065d', 0)",
+            "UPDATE session_tile SET preset = ''",
             "UPDATE session_tile SET preset = NULL",
             "UPDATE session_tile SET kind = 'shell'",
             "UPDATE session_tile SET revision = 0",
@@ -673,6 +675,53 @@ mod tests {
             )
             .unwrap();
         assert_eq!(viewport, (14.0, -20.0, 0.75));
+    }
+
+    #[test]
+    fn agent_preset_migration_keeps_tiles_and_task_assignments() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut conn = connect(&temp.path().join("db"), true).unwrap();
+        let tx = conn.transaction().unwrap();
+        migrate(&tx, 0, &MIGRATIONS[..10]).unwrap();
+        tx.execute_batch(
+            "INSERT INTO workspace(id, name) VALUES ('w', 'Existing');
+            INSERT INTO canvas VALUES ('c', 'Canvas', 3, 0, 0, 1);
+            INSERT INTO project_group (id, canvas_id, root, label, x, y, width, height)
+            VALUES ('g', 'c', '/tmp/project', 'Project', 10, 20, 800, 600);
+            INSERT INTO session_tile (id, canvas_id, project_id, kind, preset, x, y, width, height, revision)
+            VALUES ('t', 'c', 'g', 'cli-agent', 'codex', 16, 96, 400, 300, 7);
+            INSERT INTO text_task (artifact_id, assigned_tile_id) VALUES ('a', 't');",
+        )
+        .unwrap();
+        migrate(&tx, 10, MIGRATIONS).unwrap();
+        tx.commit().unwrap();
+        let tile: (String, i64) = conn
+            .query_row(
+                "SELECT preset, revision FROM session_tile WHERE id = 't'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(tile, ("codex".into(), 7));
+        let assigned: String = conn
+            .query_row("SELECT assigned_tile_id FROM text_task", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(assigned, "t");
+        let dangling: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_foreign_key_check('text_task') WHERE parent = 'session_tile'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(dangling, 0);
+        conn.execute(
+            "UPDATE session_tile SET preset = 'custom:00000000-0000-4000-8000-000000000000'",
+            [],
+        )
+        .unwrap();
     }
 
     #[test]

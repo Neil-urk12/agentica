@@ -29,8 +29,8 @@ export function sendBlocker(
     status: SessionStatus | null;
   } | null,
 ) {
-  if (!task?.assignedTileId) return "Assign a Codex tile to send this task.";
-  if (!target) return "The assigned Codex tile is no longer on this canvas.";
+  if (!task?.assignedTileId) return "Assign an agent tile to send this task.";
+  if (!target) return "The assigned agent tile is no longer on this canvas.";
   if (!target.connected || target.status?.state !== "running")
     return `${target.label} is not running. Start it first; Send never starts a session.`;
   return "";

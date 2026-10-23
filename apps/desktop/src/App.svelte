@@ -16,6 +16,7 @@
     LIMITS,
     PROJECT_HEADER,
     PROJECT_PADDING,
+    type AgentPreset,
     type RuntimeParams,
     type SessionStatus,
     type CanvasOperation,
@@ -187,7 +188,7 @@
       if (reviewTile && !ids.includes(reviewTile)) reviewTile = null;
     });
   });
-  // A Codex session raising attention usually just changed files.
+  // An agent session raising attention usually just changed files.
   const seenAttention = new Set<string>();
   $effect(() => {
     const entries = attentionEntries;
@@ -413,7 +414,7 @@
       ...document.sessionTiles.map((t) => ({
         id: t.id,
         kind: t.kind,
-        label: `${t.kind === "shell" ? "Terminal" : t.kind === "changes" ? "Changes" : "Codex"} · ${document.projectGroups.find((g) => g.id === t.projectId)?.label ?? "Project"}`,
+        label: `${t.kind === "shell" ? "Terminal" : t.kind === "changes" ? "Changes" : sessions.name(t)} · ${document.projectGroups.find((g) => g.id === t.projectId)?.label ?? "Project"}`,
       })),
     ];
   });
@@ -1096,20 +1097,20 @@
         if (projectTiles) projectTiles.push(tile);
         else tilesByProject.set(tile.projectId, [tile]);
       }
-      const codex = codexTiles();
+      const assignable = agentTiles();
       const taskData = (
         node: NonNullable<typeof document>["nodes"][number],
         revision: number,
       ) => {
         const task = node.task ?? null;
-        const target = codex.find((t) => t.id === task?.assignedTileId);
-        const view = target ? sessions.view(codexOwner(target.id)) : null;
+        const target = assignable.find((t) => t.id === task?.assignedTileId);
+        const view = target ? sessions.view(agentOwner(target.id)) : null;
         const status = view?.status ?? null;
         const sentAt = task?.sentAt ? Date.parse(task.sentAt) : null;
         const retry = taskView.unrecorded[node.id];
         return {
           task,
-          assignees: codex,
+          assignees: assignable,
           sent:
             sentAt === null
               ? ""
@@ -1262,9 +1263,14 @@
                 };
                 editor.placeProject(group.id, { collapsed: !collapsed });
               },
-              onAddAgent: () => {
+              agents: sessions.capabilities
+                ? sessions.agents
+                    .filter((agent) => agent.path)
+                    .map(({ id, label }) => ({ id, label }))
+                : null,
+              onAddAgent: (preset: AgentPreset) => {
                 expandedGroups = { ...expandedGroups, [group.id]: true };
-                void editor.addSessionTile(group.id, "cli-agent");
+                void editor.addSessionTile(group.id, "cli-agent", preset);
               },
               onAddTerminal: () => {
                 expandedGroups = { ...expandedGroups, [group.id]: true };
@@ -1383,7 +1389,9 @@
       edges = [
         ...edges,
         ...(document?.nodes ?? []).flatMap((node) => {
-          const target = codex.find((t) => t.id === node.task?.assignedTileId);
+          const target = assignable.find(
+            (t) => t.id === node.task?.assignedTileId,
+          );
           return target
             ? [
                 {
@@ -1819,7 +1827,7 @@
       await requestRemoval(
         workspaceId,
         document.canvas.id,
-        tile.kind === "shell" ? "Terminal" : "Codex",
+        sessions.name(tile),
         () => editor.deleteSessionTile(id),
         (s) => s.owner.tileId === id,
       );
@@ -1834,7 +1842,7 @@
     );
   }
 
-  /** Paste unsent drafts into the chosen Codex PTY; the user presses Enter there. */
+  /** Paste unsent drafts into the chosen agent PTY; the user presses Enter there. */
   async function pasteFeedback(tileId: string) {
     const document = editorState.document;
     const workspaceId = editorState.workspace?.workspace.id;
@@ -1859,7 +1867,7 @@
       targets.find((t) => t.owner.tileId === state.target) ?? targets[0];
     state.notice = "";
     if (!target) {
-      state.error = "Start a Codex tile in this project, then retry.";
+      state.error = "Start an agent tile in this project, then retry.";
       return;
     }
     pasting = true;
@@ -1869,7 +1877,7 @@
       const ids = drafts.map((draft) => draft.id);
       await sessions.paste(target.owner, feedbackMessage(drafts));
       state.markSent(ids);
-      state.notice = "Pasted — press Enter in the Codex tile to send.";
+      state.notice = `Pasted — press Enter in ${target.label} to send.`;
       reviewTile = null;
       expandedGroups = { ...expandedGroups, [tile.projectId]: true };
       await tick();
@@ -1883,22 +1891,23 @@
     }
   }
 
-  /** "Project · Codex n" for each Codex tile on the open canvas, in tile order. */
-  function codexTiles() {
+  /** "Project · <agent> n" for each CLI-agent tile on the open canvas, in tile order. */
+  function agentTiles() {
     const document = editorState.document;
     if (!document) return [];
+    const labels = sessions.agentLabels(document.sessionTiles);
     return document.projectGroups.flatMap((group) =>
       document.sessionTiles
         .filter((t) => t.projectId === group.id && t.kind === "cli-agent")
-        .map((tile, index) => ({
+        .map((tile) => ({
           id: tile.id,
           projectId: group.id,
-          label: `${group.label} · Codex ${index + 1}`,
+          label: `${group.label} · ${labels.get(tile.id)!}`,
         })),
     );
   }
 
-  function codexOwner(tileId: string) {
+  function agentOwner(tileId: string) {
     return {
       workspaceId: editorState.workspace!.workspace.id,
       canvasId: editorState.document!.canvas.id,
@@ -1934,10 +1943,10 @@
   function previewTask(nodeId: string) {
     void taskAction(nodeId, async () => {
       const node = editorState.document?.nodes.find((n) => n.id === nodeId);
-      const target = codexTiles().find(
+      const target = agentTiles().find(
         (t) => t.id === node?.task?.assignedTileId,
       );
-      if (!target) throw new Error("Assign a Codex tile to send this task.");
+      if (!target) throw new Error("Assign an agent tile to send this task.");
       const { text, revision } = await editor.settledText(nodeId);
       taskSend = {
         nodeId,
@@ -1955,7 +1964,7 @@
     await tick();
     focusObject(tileId);
     selectedId = tileId;
-    sessions.focus(codexOwner(tileId));
+    sessions.focus(agentOwner(tileId));
   }
 
   async function recordTaskSend(
@@ -1984,7 +1993,7 @@
     setTaskError(send.nodeId, "");
     try {
       try {
-        await sessions.paste(codexOwner(send.tileId), send.payload, {
+        await sessions.paste(agentOwner(send.tileId), send.payload, {
           refuseIfAttention: true,
         });
       } catch (error) {
@@ -1999,7 +2008,7 @@
         taskSend = null;
       }
       await recordTaskSend(send.nodeId, send);
-      const tile = codexTiles().find((t) => t.id === send.tileId);
+      const tile = agentTiles().find((t) => t.id === send.tileId);
       if (tile) await focusTile(tile.id, tile.projectId);
     } finally {
       taskBusy = "";
@@ -2432,6 +2441,7 @@
             bind:open={queueOpen}
             entries={attentionEntries}
             projects={editorState.document.projectGroups}
+            name={(tile) => sessions.name(tile)}
             onJump={focusObject}
             onMarkSeen={(owner) => void sessions.dismiss(owner)}
           />
@@ -3017,6 +3027,7 @@
       {connectionKey}
       {connected}
       workspaceId={editorState.workspace?.workspace.id}
+      {sessions}
       section={settingsOpen === true ? undefined : settingsOpen}
       onChange={(next) => (theme = next)}
       onClose={() => (settingsOpen = false)}

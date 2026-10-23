@@ -15,7 +15,7 @@ pub struct SessionCapabilities {
     pub platform: &'static str,
     pub supported: bool,
     pub shell: ExecutableCapability,
-    pub codex: ExecutableCapability,
+    pub agents: Vec<AgentCapability>,
 }
 
 #[derive(Clone, Debug)]
@@ -29,12 +29,18 @@ pub struct LaunchSpec {
 }
 
 #[cfg(target_os = "linux")]
-fn executable(path: &Path) -> bool {
+pub(super) fn executable(path: &Path) -> bool {
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
     path.is_absolute()
         && path.is_file()
         && CString::new(path.as_os_str().as_bytes())
             .is_ok_and(|path| unsafe { libc::access(path.as_ptr(), libc::X_OK) } == 0)
+}
+
+/// Native sessions are verified only on Linux, so nothing else is launchable.
+#[cfg(not(target_os = "linux"))]
+pub(super) fn executable(_: &Path) -> bool {
+    false
 }
 
 #[cfg(target_os = "linux")]
@@ -84,41 +90,47 @@ fn resolve_shell(candidate: Option<PathBuf>) -> ExecutableCapability {
     }
 }
 
-pub fn capabilities() -> SessionCapabilities {
+/// Shell launch only; unlike `capabilities`, it skips agent detection.
+fn shell_capability() -> ExecutableCapability {
     #[cfg(target_os = "linux")]
     {
-        let shell = resolve_shell(account_shell());
-        let path = std::env::var_os("PATH")
-            .into_iter()
-            .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
-            .filter_map(|directory| directory.join("codex").canonicalize().ok())
-            .find(|path| executable(path));
-        let codex = ExecutableCapability {
-            reason: path.is_none().then(|| {
-                "Codex is unavailable. Install it or fix the backend's PATH, then retry.".into()
-            }),
-            path,
+        resolve_shell(account_shell())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        ExecutableCapability {
+            path: None,
             fallback: false,
-        };
+            reason: Some("Native sessions are verified only on Linux.".into()),
+        }
+    }
+}
+
+pub fn capabilities(data_root: Option<&Path>) -> SessionCapabilities {
+    let agents = agents::list(data_root);
+    #[cfg(target_os = "linux")]
+    {
         SessionCapabilities {
             platform: std::env::consts::OS,
             supported: true,
-            shell,
-            codex,
+            shell: shell_capability(),
+            agents,
         }
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let unavailable = ExecutableCapability {
-            path: None,
-            fallback: false,
-            reason: Some("Native sessions are verified only on Linux.".into()),
-        };
+        let reason = "Native sessions are verified only on Linux.";
         SessionCapabilities {
             platform: std::env::consts::OS,
             supported: false,
-            shell: unavailable.clone(),
-            codex: unavailable,
+            shell: shell_capability(),
+            agents: agents
+                .into_iter()
+                .map(|agent| AgentCapability {
+                    reason: Some(reason.into()),
+                    ..agent
+                })
+                .collect(),
         }
     }
 }
@@ -130,6 +142,7 @@ impl LaunchSpec {
         root: &str,
         kind: &str,
         preset: Option<&str>,
+        data_root: Option<&Path>,
     ) -> Result<Self, RuntimeError> {
         owner.validate()?;
         let directory = PathBuf::from(root);
@@ -142,17 +155,15 @@ impl LaunchSpec {
         if !directory.is_absolute() || canonical != directory || !canonical.is_dir() {
             return Err(RuntimeError::new("INVALID_PARAMS", "The saved project no longer identifies its canonical directory. Use Locate folder."));
         }
-        let caps = capabilities();
-        if !caps.supported {
+        if !cfg!(target_os = "linux") {
             return Err(RuntimeError::new(
                 "UNSUPPORTED_CAPABILITY",
                 "Native sessions are verified only on Linux.",
             ));
         }
         let (capability, argv) = match (kind, preset) {
-            ("shell", None) => (caps.shell, vec!["-i".into()]),
-            // Keep CLI work inside the PTY session instead of the shared daemon.
-            ("cli-agent", Some("codex")) => (caps.codex, vec!["--no-daemon".into()]),
+            ("shell", None) => (shell_capability(), vec!["-i".into()]),
+            ("cli-agent", Some(preset)) => agents::resolve(preset, data_root)?,
             _ => {
                 return Err(RuntimeError::new(
                     "INVALID_PARAMS",
@@ -194,6 +205,7 @@ mod tests {
             root.to_str().unwrap(),
             "shell",
             None,
+            None,
         )
         .unwrap();
         assert_eq!(spec.directory, root);
@@ -210,15 +222,46 @@ mod tests {
             new_id().unwrap(),
             "relative",
             "shell",
+            None,
             None
         )
         .is_err());
+        // A custom agent launches from its saved definition with literal argv.
+        let data = tempfile::tempdir().unwrap();
+        let created = agents::call(
+            Some(data.path()),
+            "agents.custom.create",
+            serde_json::json!({"label": "Shell agent", "executable": "/bin/sh",
+                "argv": ["-c", "; $(no-command)"]}),
+        )
+        .unwrap();
+        let preset = format!("custom:{}", created["agent"]["id"].as_str().unwrap());
+        let custom = |data_root: Option<&Path>| {
+            LaunchSpec::from_saved(
+                owner.clone(),
+                new_id().unwrap(),
+                root.to_str().unwrap(),
+                "cli-agent",
+                Some(&preset),
+                data_root,
+            )
+        };
+        let spec = custom(Some(data.path())).unwrap();
+        assert_eq!(spec.executable, PathBuf::from("/bin/sh"));
+        assert_eq!(spec.argv, ["-c", "; $(no-command)"]);
+        // Another machine without the definition cannot start it.
+        let other = tempfile::tempdir().unwrap();
+        assert_eq!(
+            custom(Some(other.path())).unwrap_err().message,
+            agents::NOT_CONFIGURED
+        );
         std::fs::remove_dir(&root).unwrap();
         assert!(LaunchSpec::from_saved(
             owner,
             new_id().unwrap(),
             root.to_str().unwrap(),
             "shell",
+            None,
             None
         )
         .is_err());

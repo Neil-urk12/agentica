@@ -80,7 +80,14 @@ impl SessionService {
 
     fn launch_spec(&self, owner: &SessionOwner) -> Result<LaunchSpec, RuntimeError> {
         let (project, root, kind, preset) = self.saved(owner)?;
-        LaunchSpec::from_saved(owner.clone(), project, &root, &kind, preset.as_deref())
+        LaunchSpec::from_saved(
+            owner.clone(),
+            project,
+            &root,
+            &kind,
+            preset.as_deref(),
+            self.data_root.as_deref(),
+        )
     }
 
     /// This short gate covers saved ownership checks and launch reservation,
@@ -134,11 +141,13 @@ impl SessionService {
     pub fn execute(&self, command: SessionCommand) -> Result<Value, RuntimeError> {
         command.validate()?;
         if matches!(command, SessionCommand::Capabilities) {
-            let mut caps = capabilities();
+            let mut caps = capabilities(self.data_root.as_deref());
             if let Some(reason) = &self.unavailable {
                 caps.supported = false;
                 caps.shell.reason = Some(reason.clone());
-                caps.codex.reason = Some(reason.clone());
+                for agent in &mut caps.agents {
+                    agent.reason = Some(reason.clone());
+                }
             }
             return Ok(
                 json!({"capabilities": caps, "limits": {"liveSessions": MAX_LIVE_SESSIONS,

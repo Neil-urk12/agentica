@@ -62,12 +62,22 @@ impl Canvas {
         ok(runtime, "project.open", self.params(json!({"expectedRevision":revision,"path":path,"x":0,"y":0,"width":1200,"height":800})))["projectId"].clone()
     }
     fn tile(&self, runtime: &mut Runtime, project: &Value, kind: &str, x: f64) -> Value {
-        let revision = self.revision(runtime);
         let preset = if kind == "cli-agent" {
             json!("codex")
         } else {
             Value::Null
         };
+        self.preset_tile(runtime, project, kind, preset, x)
+    }
+    fn preset_tile(
+        &self,
+        runtime: &mut Runtime,
+        project: &Value,
+        kind: &str,
+        preset: Value,
+        x: f64,
+    ) -> Value {
+        let revision = self.revision(runtime);
         ok(runtime, "project.createTile", self.params(json!({"expectedRevision":revision,"projectId":project,"kind":kind,"preset":preset,"x":x,"y":96,"width":300,"height":200})))["tileId"].clone()
     }
     fn text(&self, runtime: &mut Runtime, text: &str) -> (Value, Value) {
@@ -97,6 +107,35 @@ fn setup() -> (tempfile::TempDir, tempfile::TempDir, Runtime, Canvas) {
         ok(&mut runtime, "workspace.create", json!({"name":"Tasks"}))["workspace"]["id"].clone();
     let canvas = Canvas::new(&mut runtime, &workspace);
     (data, project, runtime, canvas)
+}
+
+#[test]
+fn tasks_accept_any_cli_agent_tile() {
+    let (_data, project, mut runtime, canvas) = setup();
+    let group = canvas.project(&mut runtime, project.path());
+    // Neither agent needs to be installed or defined here: assignment never launches.
+    let claude = canvas.preset_tile(&mut runtime, &group, "cli-agent", json!("claude"), 16.0);
+    let custom = canvas.preset_tile(
+        &mut runtime,
+        &group,
+        "cli-agent",
+        json!("custom:00000000-0000-4000-8000-000000000000"),
+        400.0,
+    );
+    let (node, _) = canvas.text(&mut runtime, "Review the parser");
+    ok(
+        &mut runtime,
+        "task.set",
+        canvas.params(json!({"nodeId":node,"enabled":true})),
+    );
+    for (expected, tile) in [(1, &claude), (2, &custom)] {
+        let assigned = ok(
+            &mut runtime,
+            "task.update",
+            canvas.params(json!({"nodeId":node,"expectedRevision":expected,"assignedTileId":tile})),
+        );
+        assert_eq!(assigned["task"]["assignedTileId"], *tile);
+    }
 }
 
 #[test]

@@ -37,6 +37,82 @@ const ProjectGeometry = {
   width: Size.min(320),
   height: Size.min(240),
 };
+// Keep in sync with BUILTINS in packages/agent-runtime/src/sessions/agents.rs.
+export const BUILTIN_AGENT_IDS = [
+  "codex",
+  "claude",
+  "opencode",
+  "crush",
+  "pi",
+  "gemini",
+  "copilot",
+  "cursor-agent",
+  "amp",
+  "qwen",
+  "droid",
+  "kimi",
+] as const;
+export type BuiltinAgentId = (typeof BUILTIN_AGENT_IDS)[number];
+export const BUILTIN_AGENT_LABELS: Record<BuiltinAgentId, string> = {
+  codex: "Codex",
+  claude: "Claude Code",
+  opencode: "OpenCode",
+  crush: "Crush",
+  pi: "pi",
+  gemini: "Gemini CLI",
+  copilot: "GitHub Copilot CLI",
+  "cursor-agent": "Cursor Agent",
+  amp: "Amp",
+  qwen: "Qwen Code",
+  droid: "Droid",
+  kimi: "Kimi Code",
+};
+// Custom agent limits shared with packages/agent-runtime/src/sessions/agents.rs.
+export const AGENT_LIMITS = {
+  customAgents: 32,
+  executableBytes: 4096,
+  argv: 64,
+  argvBytes: 8 * 1024,
+} as const;
+const utf8Bytes = (value: string) => new TextEncoder().encode(value).length;
+/** A built-in agent id or `custom:<uuid>`; availability is a backend question. */
+export const AgentPresetSchema = z.union([
+  z.enum(BUILTIN_AGENT_IDS),
+  z
+    .string()
+    .regex(
+      /^custom:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    ),
+]);
+export type AgentPreset = z.infer<typeof AgentPresetSchema>;
+const ExecutablePath = z
+  .string()
+  .refine(
+    (value) =>
+      value.startsWith("/") &&
+      !value.includes("\0") &&
+      utf8Bytes(value) <= AGENT_LIMITS.executableBytes,
+    "Must be an absolute path",
+  );
+const Argv = z
+  .array(z.string().refine((value) => !value.includes("\0")))
+  .max(AGENT_LIMITS.argv)
+  .refine(
+    (argv) =>
+      argv.reduce((total, arg) => total + utf8Bytes(arg), 0) <=
+      AGENT_LIMITS.argvBytes,
+    "Arguments exceed 8 KiB",
+  );
+const CustomAgentDefinition = {
+  label: Label,
+  executable: ExecutablePath,
+  argv: Argv,
+};
+export const CustomAgentSchema = z.strictObject({
+  id: IdSchema,
+  ...CustomAgentDefinition,
+});
+export type CustomAgent = z.infer<typeof CustomAgentSchema>;
 const TileGeometry = {
   x: z.number().min(16).max(4000),
   y: z.number().min(96).max(4000),
@@ -74,13 +150,13 @@ export const SessionTileSchema = z
     revision: Revision,
     // "changes" is a read-only Git tile; it never owns a native process.
     kind: z.enum(["shell", "cli-agent", "changes"]),
-    preset: z.enum(["codex"]).nullable(),
+    // Saved presets match the storage CHECK, not AgentPresetSchema: an unknown
+    // one must leave one tile unlaunchable, not fail the whole canvas.
+    preset: z.string().min(1).max(64).nullable(),
   })
   .refine(
     (tile) =>
-      tile.kind === "cli-agent"
-        ? tile.preset === "codex"
-        : tile.preset === null,
+      tile.kind === "cli-agent" ? tile.preset !== null : tile.preset === null,
     "Invalid launch preset",
   );
 export type ProjectGroup = z.infer<typeof ProjectGroupSchema>;
@@ -572,14 +648,12 @@ const ParamSchemas = {
       projectId: IdSchema,
       ...TileGeometry,
       kind: z.enum(["shell", "cli-agent", "changes"]),
-      preset: z.literal("codex").nullable().optional(),
+      preset: AgentPresetSchema.nullable().optional(),
       growProject: z.boolean().optional(),
     })
     .refine(
       (tile) =>
-        tile.kind === "cli-agent"
-          ? tile.preset === "codex"
-          : tile.preset == null,
+        tile.kind === "cli-agent" ? tile.preset != null : tile.preset == null,
       "Invalid launch preset",
     ),
   "changes.status": z.strictObject({ ...CanvasRef, projectId: IdSchema }),
@@ -713,6 +787,14 @@ const ParamSchemas = {
     tool: McpToolName,
     arguments: z.record(z.string(), z.unknown()),
   }),
+  // Machine-local: never part of a workspace.
+  "agents.custom.list": z.strictObject({}),
+  "agents.custom.create": z.strictObject(CustomAgentDefinition),
+  "agents.custom.update": z.strictObject({
+    agentId: IdSchema,
+    ...CustomAgentDefinition,
+  }),
+  "agents.custom.remove": z.strictObject({ agentId: IdSchema }),
 } as const;
 
 export type RuntimeMethod = "runtime.ping" | keyof typeof ParamSchemas;
@@ -961,6 +1043,12 @@ export const ResultSchemas = {
     status: z.enum(["ok", "error", "timeout"]),
     text: z.string(),
   }),
+  "agents.custom.list": z.strictObject({
+    agents: z.array(CustomAgentSchema).max(AGENT_LIMITS.customAgents),
+  }),
+  "agents.custom.create": z.strictObject({ agent: CustomAgentSchema }),
+  "agents.custom.update": z.strictObject({ agent: CustomAgentSchema }),
+  "agents.custom.remove": z.strictObject({}),
 } as const satisfies Record<RuntimeMethod, z.ZodType>;
 
 export type RuntimeResult<M extends RuntimeMethod> = z.infer<
@@ -1137,6 +1225,16 @@ const ExecutableCapability = z.strictObject({
   reason: z.string().nullable(),
   fallback: z.boolean(),
 });
+export const AgentCapabilitySchema = z.strictObject({
+  id: AgentPresetSchema,
+  label: z.string(),
+  custom: z.boolean(),
+  path: z.string().nullable(),
+  reason: z.string().nullable(),
+  // Present only for agents whose notification setup has been verified.
+  setupHint: z.enum(["codex"]).nullable(),
+});
+export type AgentCapability = z.infer<typeof AgentCapabilitySchema>;
 const StatusResult = z.strictObject({ status: SessionStatusSchema });
 const EmptySessionResult = z.strictObject({});
 export const SessionResultSchemas = {
@@ -1145,7 +1243,7 @@ export const SessionResultSchemas = {
       platform: z.string(),
       supported: z.boolean(),
       shell: ExecutableCapability,
-      codex: ExecutableCapability,
+      agents: z.array(AgentCapabilitySchema),
     }),
     limits: z.strictObject({
       liveSessions: z.literal(8),

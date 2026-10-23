@@ -32,13 +32,24 @@
   });
   const phase = $derived(view.status?.state ?? "stopped");
   const live = $derived(["starting", "running", "stopping"].includes(phase));
-  const title = $derived(data.tile.kind === "cli-agent" ? "Codex" : "Terminal");
+  const agent = $derived.by(() => {
+    void data.revision;
+    return data.tile.kind === "cli-agent"
+      ? data.manager.agents.find((entry) => entry.id === data.tile.preset)
+      : undefined;
+  });
+  const title = $derived.by(() => {
+    void data.revision;
+    return data.manager.name(data.tile);
+  });
   const available = $derived.by(() => {
     void data.revision;
     const capabilities = data.manager.capabilities?.capabilities;
     if (!capabilities) return "Connect to check native session availability.";
-    const executable =
-      data.tile.kind === "cli-agent" ? capabilities.codex : capabilities.shell;
+    // A custom agent another machine defined is absent from this list.
+    if (data.tile.kind === "cli-agent" && !agent)
+      return "Agent not configured on this machine. Add it in Settings → Advanced → Coding agents, or remove this tile.";
+    const executable = agent ?? capabilities.shell;
     if (!capabilities.supported || !executable.path)
       return executable.reason ?? "Native sessions are unavailable.";
     if (!data.group.available)
@@ -163,7 +174,7 @@
       >
     </div>
   </header>
-  {#if data.tile.kind === "cli-agent"}
+  {#if agent?.setupHint === "codex"}
     <details class="session-notice nodrag nopan nowheel">
       <summary>Codex notification setup</summary>
       <p>
