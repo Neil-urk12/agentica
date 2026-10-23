@@ -12,6 +12,12 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Start the Nodes drawer collapsed
+
+- The Nodes drawer now starts closed and closes again whenever a canvas opens,
+  matching the inspector, so each canvas opens on an unobstructed stage. The
+  toolbar toggle still opens it on demand.
+
 ### Add images, PDFs, Word documents, and text files to the canvas
 
 - Add a `file` artifact type and manual import from the canvas toolbar, composer,
