@@ -12,6 +12,12 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Fix CI coverage report directory (2026-10-23)
+
+- Ensure the `coverage/` directory exists before running `cargo llvm-cov` in CI.
+  `llvm-cov` requires the destination directory to exist when outputting the
+  LCOV report, which previously failed before the upload step.
+
 ## 0.1.0 — 2026-10-23
 
 First tagged pre-release. Everything below was developed before versioning began.

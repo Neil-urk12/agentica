@@ -136,7 +136,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r build
       - name: Rust coverage
-        run: cargo llvm-cov --locked -p agentica-runtime --features bundled-frontend --lcov --output-path coverage/rust.lcov
+        run: |
+          mkdir -p coverage
+          cargo llvm-cov --locked -p agentica-runtime --features bundled-frontend --lcov --output-path coverage/rust.lcov
       - name: Frontend coverage
         run: pnpm test:unit:coverage
       - uses: codecov/codecov-action@v7
