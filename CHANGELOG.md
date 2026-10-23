@@ -24,18 +24,36 @@ installers and publishes the release. Keep validation evidence in the
   Ungroup, and Delete. Selecting any member selects the whole group, and a
   member dragged on its own brings the others along. Groups have dashed
   outlines drawn behind the nodes.
-- **Delete** / **Backspace** deletes the selected objects; several objects need
-  confirmation because deletion is not undoable. Escape clears the selection.
-  Project groups and terminal tiles keep their own removal controls.
-- Upgrade workspace storage to version 13 with a nullable `group_id` on canvas
-  nodes. A group is the set of nodes sharing an ID and needs no row of its own;
-  `canvas.save` layouts carry optional `groupId` values (omitted means
-  ungrouped) and `canvas.open` returns them only for grouped nodes, so existing
-  fixtures keep their shape. Regrouping never makes a pending proposal conflict.
-- Rust tests cover group save, reopen, invalid IDs, ungrouping, and the
-  upgrade; Node tests cover the group helpers and editor grouping; a rendered
-  browser test box-selects two of three notes, groups them, drags one member,
-  ungroups, and deletes them after confirmation.
+- **Delete** / **Backspace** deletes the selected objects after confirmation,
+  even for one object, because deletion is not undoable and Backspace is easy
+  to press by accident. Escape clears the selection.
+  Project groups and terminal tiles keep their own removal controls. The keys
+  do nothing while a button, link, or other control has focus, so a key meant
+  for a focused toolbar or tile button cannot delete the selected note.
+- Deleting several objects sends one `node.deleteMany` request (1 to 128 unique
+  IDs) that runs in a single transaction: a missing object or stale revision
+  leaves every object in place and still selected, instead of a partial delete.
+  Selections larger than the 128-ID limit (`MAX_IDS`, now exported by the
+  protocol) are sent as consecutive requests of 128 that stop at the first
+  failure; before, they failed validation and paused autosave.
+  `node.delete` and `node.deleteMany` share one Rust helper.
+- Group and Ungroup are undo steps (`group:<nodeId>` history entries holding
+  the group ID before and after), separate from the moves around them.
+- Upgrade workspace storage to version 13 (`schema_v13.sql`) with a nullable
+  `group_id` on canvas nodes. A group is the set of nodes sharing an ID and
+  needs no row of its own; `canvas.save` layouts carry optional `groupId`
+  values (omitted means ungrouped) and `canvas.open` returns them only for
+  grouped nodes, so existing fixtures keep their shape. Group IDs stay out of
+  the model's canvas context and `conversation.read` results: the model cannot
+  change them, and each would cost about 49 bytes of the 16 KiB context limit.
+  Because the stored context has no group IDs, regrouping never makes a
+  pending proposal conflict.
+- Rust tests cover group save, reopen, invalid IDs, ungrouping, the upgrade,
+  all-or-nothing `node.deleteMany`, and group-free model context; Node tests
+  cover the group helpers, editor grouping, group undo and redo, the single
+  bulk delete request, and 128-object chunks; a rendered browser test box-selects two of three notes,
+  groups them, drags one member, ungroups, checks that Backspace on a focused
+  button deletes nothing, and deletes the pair after confirmation.
 
 ### Canvas undo and redo
 

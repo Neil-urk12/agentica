@@ -90,6 +90,7 @@ pub(crate) const METHODS: &[&str] = &[
     "file.discard",
     "file.read",
     "node.delete",
+    "node.deleteMany",
     "project.open",
     "project.delete",
     "project.deleteTile",
@@ -530,6 +531,38 @@ struct DeleteNode {
     canvas_id: String,
     expected_revision: f64,
     node_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeleteNodes {
+    workspace_id: String,
+    canvas_id: String,
+    expected_revision: f64,
+    node_ids: Vec<String>,
+}
+
+/// Remove one placement, its connections, and its artifact once unreferenced.
+fn delete_node(tx: &Transaction, canvas_id: &str, node_id: &str) -> Result<(), RuntimeError> {
+    let artifact_id: Option<String> = tx
+        .query_row(
+            "SELECT artifact_id FROM canvas_node WHERE canvas_id = ?1 AND id = ?2",
+            (canvas_id, node_id),
+            |row| row.get(0),
+        )
+        .optional()?;
+    let artifact_id = artifact_id.ok_or_else(|| not_found("Node on this canvas"))?;
+    tx.execute(
+        "DELETE FROM canvas_edge WHERE canvas_id = ?1
+         AND (source_node_id = ?2 OR target_node_id = ?2)",
+        (canvas_id, node_id),
+    )?;
+    tx.execute(
+        "DELETE FROM canvas_node WHERE canvas_id = ?1 AND id = ?2",
+        (canvas_id, node_id),
+    )?;
+    // Drop the artifact once nothing on any canvas references it.
+    delete_artifact_content(tx, &artifact_id)
 }
 
 /// Domain state shared by both transports. Browser tabs share one runtime, so
@@ -1140,24 +1173,29 @@ impl Runtime {
                 let expected = revision(params.expected_revision)?;
                 self.transact(&params.workspace_id, |tx| {
                     check_canvas(tx, &params.canvas_id, expected)?;
-                    let artifact_id: Option<String> = tx
-                        .query_row(
-                            "SELECT artifact_id FROM canvas_node\n                             WHERE canvas_id = ?1 AND id = ?2",
-                            (&params.canvas_id, &params.node_id),
-                            |row| row.get(0),
-                        )
-                        .optional()?;
-                    let artifact_id = artifact_id.ok_or_else(|| not_found("Node on this canvas"))?;
-                    tx.execute(
-                        "DELETE FROM canvas_edge WHERE canvas_id = ?1\n                         AND (source_node_id = ?2 OR target_node_id = ?2)",
-                        (&params.canvas_id, &params.node_id),
-                    )?;
-                    tx.execute(
-                        "DELETE FROM canvas_node WHERE canvas_id = ?1 AND id = ?2",
-                        (&params.canvas_id, &params.node_id),
-                    )?;
-                    // Drop the artifact once nothing on any canvas references it.
-                    delete_artifact_content(tx, &artifact_id)?;
+                    delete_node(tx, &params.canvas_id, &params.node_id)?;
+                    Ok(json!({ "revision": bump(tx, &params.canvas_id, expected)? }))
+                })
+            }
+            "node.deleteMany" => {
+                let params: DeleteNodes = parse(params)?;
+                id("canvasId", &params.canvas_id)?;
+                if params.node_ids.is_empty()
+                    || params.node_ids.len() > 128
+                    || params.node_ids.iter().collect::<HashSet<_>>().len() != params.node_ids.len()
+                {
+                    return Err(invalid("Delete 1 to 128 unique objects."));
+                }
+                for node in &params.node_ids {
+                    id("nodeIds", node)?;
+                }
+                let expected = revision(params.expected_revision)?;
+                // One transaction: a missing object leaves every object in place.
+                self.transact(&params.workspace_id, |tx| {
+                    check_canvas(tx, &params.canvas_id, expected)?;
+                    for node in &params.node_ids {
+                        delete_node(tx, &params.canvas_id, node)?;
+                    }
                     Ok(json!({ "revision": bump(tx, &params.canvas_id, expected)? }))
                 })
             }

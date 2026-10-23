@@ -1906,6 +1906,9 @@
   const isTyping = (target: EventTarget | null) =>
     target instanceof HTMLElement &&
     (target.isContentEditable || TYPING_TAGS.includes(target.tagName));
+  /** Focusable controls whose keystrokes never delete canvas objects. */
+  const CONTROL_SELECTOR =
+    'button, a[href], summary, [role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="option"], [role="checkbox"], [role="switch"], [role="slider"]';
 
   async function openProject(projectId?: string) {
     projectError = "";
@@ -2023,20 +2026,17 @@
       );
   }
 
-  /** Delete one object at once; several only after confirmation. */
+  /** Deleting can't be undone, so even one object asks first. */
   function deleteSelection() {
     if (!connected || editorState.busy || !selectedIds.length) return;
-    if (selectedIds.length === 1) void deleteObjects([...selectedIds]);
-    else deleteConfirm = [...selectedIds];
+    deleteConfirm = [...selectedIds];
   }
 
   async function deleteObjects(ids: string[]) {
     deleteConfirm = null;
-    clearSelection();
-    for (const id of ids) {
-      await editor.deleteNode(id);
-      if (editorState.error) return;
-    }
+    // One request: a failure leaves every object, still selected, in place.
+    await editor.deleteNodes(ids);
+    if (!editorState.error) clearSelection();
   }
 
   async function removeObject(id: string) {
@@ -2382,11 +2382,14 @@
         else groupSelection();
         return;
       }
+      // A focused button or link keeps the key: deletion only follows
+      // keystrokes on the canvas itself, never on a control.
       if (
         !mod &&
         !event.altKey &&
         (event.key === "Delete" || event.key === "Backspace") &&
-        selectedIds.length
+        selectedIds.length &&
+        !target?.closest(CONTROL_SELECTOR)
       ) {
         event.preventDefault();
         deleteSelection();
@@ -3440,8 +3443,8 @@
   {#if deleteConfirm}
     {@const ids = deleteConfirm}
     <Modal
-      title={`Delete ${ids.length} objects?`}
-      subtitle="Their connections are removed too. Deleting can't be undone."
+      title={`Delete ${ids.length} ${ids.length === 1 ? "object" : "objects"}?`}
+      subtitle="Connections are removed too. Deleting can't be undone."
       icon="delete"
       onClose={() => (deleteConfirm = null)}
     >

@@ -257,9 +257,11 @@ export const ArtifactBatchSchema = z
   });
 export type ArtifactBatch = z.infer<typeof ArtifactBatchSchema>;
 
+/** Most IDs one request may list (`UniqueIds`); the runtime enforces the same. */
+export const MAX_IDS = 128;
 const UniqueIds = z
   .array(IdSchema)
-  .max(128)
+  .max(MAX_IDS)
   .refine((ids) => new Set(ids).size === ids.length, "IDs must be unique");
 export const AgentStartSchema = z
   .strictObject({
@@ -794,6 +796,12 @@ const ParamSchemas = {
     expectedRevision: Revision,
     nodeId: IdSchema,
   }),
+  /** Deletes every listed object in one transaction, or none of them. */
+  "node.deleteMany": z.strictObject({
+    ...CanvasRef,
+    expectedRevision: Revision,
+    nodeIds: UniqueIds.refine((ids) => ids.length > 0, "Select an object"),
+  }),
   "task.set": z.strictObject({
     ...CanvasRef,
     nodeId: IdSchema,
@@ -1115,6 +1123,7 @@ export const ResultSchemas = {
     data: z.string(),
   }),
   "node.delete": z.strictObject({ revision: Revision }),
+  "node.deleteMany": z.strictObject({ revision: Revision }),
   "task.set": z.strictObject({ task: TaskSchema.nullable() }),
   "task.update": z.strictObject({ task: TaskSchema }),
   "task.recordSent": z.strictObject({ task: TaskSchema }),

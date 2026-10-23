@@ -1,6 +1,7 @@
 import {
   FILE_LIMITS,
   MAX_FRAME_BYTES,
+  MAX_IDS,
   type Drawing,
   type FileMime,
   type RuntimeResult,
@@ -96,8 +97,13 @@ export interface EditorState {
 }
 
 type Geometry = { x: number; y: number; width: number; height: number };
-/** One undoable value: an object's geometry or a text artifact's content. */
-type HistoryKey = `${"node" | "project" | "tile"}:${string}` | `text:${string}`;
+/**
+ * One undoable value: an object's geometry, a text artifact's content, or a
+ * placement's group ID ("" for ungrouped).
+ */
+type HistoryKey =
+  | `${"node" | "project" | "tile"}:${string}`
+  | `${"text" | "group"}:${string}`;
 type HistoryValue = Geometry | string;
 /** One user gesture: the value of every object it touched, before and after. */
 interface HistoryEntry {
@@ -1113,6 +1119,47 @@ export class Editor {
         });
       });
     });
+  } /**
+   * Delete several objects. Each request of up to `MAX_IDS` objects is all or
+   * nothing; a failure stops before the next request, so only larger
+   * selections can end partly deleted.
+   */
+  async deleteNodes(nodeIds: string[]) {
+    if (nodeIds.length === 1) return this.deleteNode(nodeIds[0]!);
+    if (!nodeIds.length) return;
+    await this.enqueue(async () => {
+      await this.settleSave();
+      if (this.state.error || this.disposed) return;
+      const ids = [...new Set(nodeIds.map((id) => this.nodeIds.get(id) ?? id))];
+      await this.mutation(async () => {
+        for (let start = 0; start < ids.length; start += MAX_IDS) {
+          const chunk = ids.slice(start, start + MAX_IDS);
+          const document = this.state.document!;
+          const result = await this.call(this.key(), false, "node.deleteMany", {
+            workspaceId: this.state.workspace!.workspace.id,
+            canvasId: document.canvas.id,
+            expectedRevision: document.canvas.revision,
+            nodeIds: chunk,
+          });
+          const doomed = new Set(chunk);
+          const nodes = document.nodes.filter((node) => !doomed.has(node.id));
+          const retained = new Set(nodes.map((node) => node.artifactId));
+          this.load({
+            ...document,
+            canvas: { ...document.canvas, revision: result.revision },
+            nodes,
+            edges: document.edges.filter(
+              (edge) =>
+                !doomed.has(edge.sourceNodeId) &&
+                !doomed.has(edge.targetNodeId),
+            ),
+            artifacts: document.artifacts.filter((artifact) =>
+              retained.has(artifact.id),
+            ),
+          });
+        }
+      });
+    });
   } /** Link two nodes already on the canvas; used by the arrow tool. */
   async createEdge(sourceNodeId: string, targetNodeId: string) {
     if (sourceNodeId === targetNodeId) return;
@@ -1568,8 +1615,17 @@ export class Editor {
     );
   }
 
-  /** Apply group IDs ("" for none) to the placements. */
+  /** Apply group IDs ("" for none) to the placements as one undo step. */
   private regroup(document: CanvasDocument, next: Map<string, string>) {
+    this.historyBreak = true;
+    this.holding = false;
+    for (const node of document.nodes) {
+      const after = next.get(node.id);
+      const before = node.groupId ?? "";
+      if (after !== undefined && after !== before)
+        this.record(`group:${node.id}`, before, after);
+    }
+    this.historyBreak = true;
     this.edit({
       ...document,
       nodes: document.nodes.map((node) => withGroup(node, next.get(node.id))),
@@ -1699,6 +1755,7 @@ export class Editor {
     const fields = {
       text: "artifacts",
       node: "nodes",
+      group: "nodes",
       project: "projectGroups",
       tile: "sessionTiles",
     } as const;
@@ -1713,12 +1770,24 @@ export class Editor {
       const recorded = key.slice(split + 1);
       // Draft drawings adopt a server ID after they are created.
       const id =
-        kind === "node" ? (this.nodeIds.get(recorded) ?? recorded) : recorded;
+        kind === "node" || kind === "group"
+          ? (this.nodeIds.get(recorded) ?? recorded)
+          : recorded;
       const field = fields[kind];
       const items = next[field] as { id: string; type?: string }[] | undefined;
       const matches = (item: { id: string; type?: string }) =>
         item.id === id && (kind !== "text" || item.type === "text");
       if (!items?.some(matches)) continue;
+      if (kind === "group") {
+        next = {
+          ...next,
+          nodes: next.nodes.map((node) =>
+            node.id === id ? withGroup(node, value as string) : node,
+          ),
+        };
+        applied = true;
+        continue;
+      }
       const patch = kind === "text" ? { text: value } : (value as Geometry);
       next = {
         ...next,
