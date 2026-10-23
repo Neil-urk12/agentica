@@ -57,7 +57,8 @@ A single executable with the frontend and runtime embedded.
 ## Installers
 
 Tagged versions are published on the
-[releases page](https://gitlab.com/Neil-urk12/agentica/-/releases): a Linux
+[GitHub](https://github.com/Neil-urk12/agentica/releases) and
+[GitLab](https://gitlab.com/Neil-urk12/agentica/-/releases) releases pages: a Linux
 AppImage, `.deb`, and `.rpm`, a Windows installer, and the browser-mode backend
 for both platforms. To build installers locally:
 
@@ -75,8 +76,9 @@ On Linux, set `APPIMAGE_EXTRACT_AND_RUN=1` if FUSE is unavailable (containers).
    `apps/desktop/src-tauri/tauri.conf.json`, then run `cargo update --workspace`.
 3. Merge to `main`, then tag it and push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 
-The tag runs the GitLab `package:*` and `release` jobs. They fail if the tag
-does not match the app version.
+The tag runs the GitHub `Release` workflow and the GitLab `package:*` and
+`release` jobs, which build the same files. Both fail if the tag does not match
+the app version.
 
 ## Browser development
 

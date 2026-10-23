@@ -6,11 +6,19 @@ compatibility. Dated subsections record development updates within a version.
 
 Add completed changes under `Unreleased`. To release, move them under a new
 version heading, set that version in every `package.json`, `Cargo.toml`, and
-`tauri.conf.json`, merge, and push a `vX.Y.Z` tag; GitLab CI builds the
-installers and publishes the release. Keep validation evidence in the
+`tauri.conf.json`, merge, and push a `vX.Y.Z` tag; GitHub Actions and GitLab CI
+build the installers and publish the release. Keep validation evidence in the
 [development docs](docs/development/README.md).
 
 ## Unreleased
+
+### Publish GitHub Releases from version tags (2026-10-24)
+
+- Add `.github/workflows/release.yml`: a `vX.Y.Z` tag creates a draft GitHub
+  Release, builds the Linux (AppImage, deb, rpm) and Windows (NSIS) installers
+  plus the browser-mode backend, uploads them with the same names as the GitLab
+  release, then publishes. Previously only the GitLab mirror published installers;
+  CI's `main` release build kept no artifacts.
 
 ### Fix non-Linux build warnings in session process supervisor (2026-10-23)
 
