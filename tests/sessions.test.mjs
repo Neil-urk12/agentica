@@ -68,7 +68,7 @@ class Terminal {
   }
 }
 globalThis.sessionTest = { Terminal };
-const { SessionManager } = await import(sessionsUrl.href);
+const { SessionManager, tileName } = await import(sessionsUrl.href);
 hooks.deregister();
 
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -621,4 +621,68 @@ test("scoped draining leaves unrelated live sessions alone", async (t) => {
   assert.equal(client.active.size, 3);
   for (const item of [sameCanvas, otherCanvas, otherWorkspace])
     assert.equal(manager.view(item.owner).connected, true);
+});
+
+test("tile names come from the agent registry or this machine's custom agents", () => {
+  const custom = "custom:00000000-0000-4000-8000-000000000001";
+  const agents = [
+    {
+      id: custom,
+      label: "<b>Aider</b>",
+      custom: true,
+      path: "/usr/bin/aider",
+      reason: null,
+      setupHint: null,
+    },
+  ];
+  assert.equal(tileName({ kind: "shell", preset: null }), "Terminal");
+  // Built-in labels resolve before the backend reports capabilities.
+  assert.equal(
+    tileName({ kind: "cli-agent", preset: "claude" }),
+    "Claude Code",
+  );
+  assert.equal(
+    tileName({ kind: "cli-agent", preset: custom }, agents),
+    "<b>Aider</b>",
+  );
+  // Another machine's custom agent stays generic.
+  assert.equal(tileName({ kind: "cli-agent", preset: custom }), "Agent");
+  for (const preset of [
+    "toString",
+    "constructor",
+    "hasOwnProperty",
+    "__proto__",
+  ])
+    assert.equal(tileName({ kind: "cli-agent", preset }), "Agent", preset);
+});
+
+test("agent labels count each preset per project before filtering paste readiness", async (t) => {
+  const statuses = Array.from({ length: 5 }, (_, n) => status(n));
+  statuses[0].state = "failed";
+  statuses[4].projectId = id(6);
+  const saved = document(statuses);
+  saved.sessionTiles = statuses.map((item, index) => ({
+    id: item.owner.tileId,
+    projectId: item.projectId,
+    kind: index === 3 ? "shell" : "cli-agent",
+    preset: ["codex", "claude", "codex", null, "claude"][index],
+  }));
+  const { manager } = setup(t, statuses);
+  await manager.reconcile(workspaceId, saved);
+  assert.deepEqual(
+    [...manager.agentLabels(saved.sessionTiles).values()],
+    ["Codex 1", "Claude Code 1", "Codex 2", "Claude Code 1"],
+  );
+  assert.deepEqual(
+    manager
+      .pasteTargets(workspaceId, canvasId, id(5))
+      .map((target) => target.label),
+    ["Claude Code 1", "Codex 2"],
+  );
+  assert.deepEqual(
+    manager
+      .pasteTargets(workspaceId, canvasId, id(6))
+      .map((target) => target.label),
+    ["Claude Code 1"],
+  );
 });

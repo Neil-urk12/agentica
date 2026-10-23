@@ -6,7 +6,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+pub(crate) mod agents;
 mod launch;
+pub use agents::AgentCapability;
 pub use launch::{capabilities, LaunchSpec, SessionCapabilities};
 mod output;
 pub use output::{OutputFrame, OutputPage};

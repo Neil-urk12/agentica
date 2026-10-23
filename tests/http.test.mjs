@@ -1512,10 +1512,11 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
       browser,
       `document.querySelector('[aria-label="Settings"]').click()`,
     );
+    // Advanced lists every built-in agent with its detection result.
     await waitFor(
       browser,
-      `document.querySelector("[aria-labelledby='codex-status-label']")?.textContent.includes("Codex execution is unsupported")`,
-      "the explicit unsupported Codex state",
+      `["Codex", "Claude Code", "OpenCode"].every((label) => document.querySelector("[aria-labelledby='coding-agents-label']")?.textContent.includes(label))`,
+      "the coding agents list",
     );
   } finally {
     editor.dispose();
@@ -2585,7 +2586,7 @@ wait
     const canvasId = editor.state.document.canvas.id;
     await editor.openProject(project);
     const projectId = editor.state.document.projectGroups.at(-1).id;
-    await editor.addSessionTile(projectId, "cli-agent");
+    await editor.addSessionTile(projectId, "cli-agent", "codex");
     const tileId = editor.state.document.sessionTiles.at(-1).id;
     const nodeId = (await editor.addText({ x: -400, y: 0 }, text)).node.id;
     await editor.setTask(nodeId, true);

@@ -25,6 +25,8 @@
   interface Props {
     entries: Entry[];
     projects: ProjectGroup[];
+    /** The tile's program name: `Terminal` or its agent's label. */
+    name: (tile: SessionTile) => string;
     open?: boolean;
     onJump: (tileId: string) => void;
     onMarkSeen: (owner: SessionOwner) => void;
@@ -32,6 +34,7 @@
   let {
     entries,
     projects,
+    name,
     open = $bindable(false),
     onJump,
     onMarkSeen,
@@ -55,8 +58,7 @@
   let wasOpen = false;
   let restoreOnClose = true;
 
-  const nameOf = (entry: Entry) =>
-    entry.tile.kind === "cli-agent" ? "Codex" : "Terminal";
+  const nameOf = (entry: Entry) => name(entry.tile);
   const projectOf = (entry: Entry) =>
     projects.find((project) => project.id === entry.tile.projectId)?.label ??
     "Project";

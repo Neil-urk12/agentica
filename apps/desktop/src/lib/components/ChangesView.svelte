@@ -128,7 +128,7 @@
     <textarea
       id={`comment-${layout}-${uid}`}
       rows="3"
-      placeholder="Feedback for Codex"
+      placeholder="Feedback for the agent"
       bind:value={state.composeText}
       onkeydown={editorKey}
       use:focusOnOpen></textarea>
@@ -155,7 +155,8 @@
       <span class="badges">
         {#if draft.sent}<span
             class="badge"
-            title="Pasted into Codex; running it is not confirmed">Sent</span
+            title="Pasted into the agent; running it is not confirmed"
+            >Sent</span
           >{/if}
         {#if draft.outdated && !draft.sent}<span class="badge badge--warn"
             >Outdated</span
@@ -275,7 +276,7 @@
       disabled={!targets.length}
       onchange={(event) => (state.target = event.currentTarget.value)}
     >
-      {#if !targets.length}<option value="">No running Codex</option>{/if}
+      {#if !targets.length}<option value="">No running agent</option>{/if}
       {#each targets as option (option.owner.tileId)}
         <option value={option.owner.tileId}>{option.label}</option>
       {/each}
@@ -409,11 +410,11 @@
             class="btn btn--primary"
             type="button"
             disabled={!canPaste}
-            title={target ? "" : "Start a Codex tile in this project first."}
+            title={target ? "" : "Start an agent tile in this project first."}
             onclick={onPaste}
             >{pasting
               ? "Pasting…"
-              : `Paste into ${target?.label ?? "Codex"}`}</button
+              : `Paste into ${target?.label ?? "agent"}`}</button
           >
         </div>
       </div>
@@ -481,8 +482,11 @@
           class="btn btn--primary"
           type="button"
           disabled={!canPaste}
-          title={target ? "" : "Start a Codex tile in this project first."}
-          onclick={onPaste}>{pasting ? "Pasting…" : "Paste into Codex"}</button
+          title={target ? "" : "Start an agent tile in this project first."}
+          onclick={onPaste}
+          >{pasting
+            ? "Pasting…"
+            : `Paste into ${target?.label ?? "agent"}`}</button
         >
       </div>
     </aside>

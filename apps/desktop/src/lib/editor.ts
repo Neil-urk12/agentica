@@ -6,6 +6,7 @@ import {
   type ConversationTurn,
   PROJECT_HEADER,
   PROJECT_PADDING,
+  type AgentPreset,
   type ProjectGroup,
   type SessionTile,
   type Task,
@@ -620,9 +621,11 @@ export class Editor {
     );
   }
 
+  /** `preset` names the agent for a CLI-agent tile and is ignored otherwise. */
   async addSessionTile(
     projectId: string,
     kind: "shell" | "cli-agent" | "changes",
+    preset?: AgentPreset,
   ) {
     const document = this.state.document;
     if (!document) return;
@@ -638,7 +641,7 @@ export class Editor {
         ...reference,
         projectId,
         kind,
-        ...(kind === "cli-agent" ? { preset: "codex" as const } : {}),
+        ...(kind === "cli-agent" ? { preset } : {}),
         x: PROJECT_PADDING,
         y,
         width: 576,

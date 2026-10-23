@@ -16,6 +16,11 @@ import {
   MAX_FRAME_BYTES,
   CONVERSATION_READ,
   MCP_LIMITS,
+  BUILTIN_AGENT_IDS,
+  BUILTIN_AGENT_LABELS,
+  AGENT_LIMITS,
+  AgentPresetSchema,
+  AgentCapabilitySchema,
 } from "@agentica/protocol";
 
 test("review records and method contracts are bounded within RPC frames", () => {
@@ -346,7 +351,10 @@ test("project collections validate explicit membership, geometry and saved prese
       doc.sessionTiles[0].y = 0;
     },
     (doc) => {
-      doc.sessionTiles[0].preset = "other";
+      doc.sessionTiles[0].preset = "";
+    },
+    (doc) => {
+      doc.sessionTiles[0].preset = "x".repeat(65);
     },
     (doc) => {
       doc.sessionTiles[0].preset = null;
@@ -361,6 +369,12 @@ test("project collections validate explicit membership, geometry and saved prese
     const invalid = structuredClone(document);
     mutate(invalid);
     assert.equal(schema.safeParse(invalid).success, false);
+  }
+  // A preset this build does not know still loads; only launching it fails.
+  for (const preset of ["other", "custom:not-a-uuid"]) {
+    const unknown = structuredClone(document);
+    unknown.sessionTiles[0].preset = preset;
+    assert.equal(schema.safeParse(unknown).success, true, preset);
   }
   const request = {
     protocolVersion: 1,
@@ -380,10 +394,23 @@ test("project collections validate explicit membership, geometry and saved prese
     },
   };
   assert.equal(RuntimeRequestSchema.safeParse(request).success, true);
+  for (const preset of [
+    "claude",
+    "custom:00000000-0000-4000-8000-000000000001",
+  ])
+    assert.equal(
+      RuntimeRequestSchema.safeParse({
+        ...request,
+        params: { ...request.params, preset },
+      }).success,
+      true,
+      preset,
+    );
   for (const extra of [
     { command: "evil" },
     { cwd: "/other" },
     { preset: "other" },
+    { preset: null },
     { kind: "shell", preset: "codex" },
   ])
     assert.equal(
@@ -404,6 +431,72 @@ test("conversation read limits match the runtime's", () => {
       ),
     ),
     CONVERSATION_READ,
+  );
+});
+
+test("agent registry and custom agent limits match the runtime's", () => {
+  assert.deepEqual(
+    JSON.parse(
+      readFileSync(
+        new URL("./fixtures/agent-registry.json", import.meta.url),
+        "utf8",
+      ),
+    ),
+    {
+      builtinIds: [...BUILTIN_AGENT_IDS],
+      builtinLabels: BUILTIN_AGENT_LABELS,
+      limits: AGENT_LIMITS,
+    },
+  );
+});
+
+test("agent presets and custom agent definitions are validated", () => {
+  const uuid = "00000000-0000-4000-8000-000000000001";
+  for (const preset of ["claude", "cursor-agent", `custom:${uuid}`])
+    assert.equal(AgentPresetSchema.safeParse(preset).success, true, preset);
+  for (const preset of ["", "Codex", "other", "custom:", "custom:codex"])
+    assert.equal(AgentPresetSchema.safeParse(preset).success, false, preset);
+  const create = (params) =>
+    RuntimeRequestSchema.safeParse({
+      protocolVersion: 1,
+      id: "agent",
+      method: "agents.custom.create",
+      params: {
+        label: "Aider",
+        executable: "/usr/bin/aider",
+        argv: ["; rm -rf ~"],
+        ...params,
+      },
+    }).success;
+  assert.equal(create({}), true);
+  for (const invalid of [
+    { executable: "aider" },
+    { executable: "/usr/bin/a\0" },
+    { label: " " },
+    { argv: ["a\0b"] },
+    { argv: Array(65).fill("x") },
+    { argv: ["é".repeat(4097)] },
+    { workspaceId: uuid },
+  ])
+    assert.equal(create(invalid), false, JSON.stringify(invalid));
+  const agent = { id: uuid, label: "Aider", executable: "/a", argv: [] };
+  assert.equal(
+    ResultSchemas["agents.custom.list"].safeParse({ agents: [agent] }).success,
+    true,
+  );
+  const capability = {
+    id: `custom:${uuid}`,
+    label: "Aider",
+    custom: true,
+    path: null,
+    reason: "Agent not configured on this machine.",
+    setupHint: null,
+  };
+  assert.equal(AgentCapabilitySchema.safeParse(capability).success, true);
+  assert.equal(
+    AgentCapabilitySchema.safeParse({ ...capability, setupHint: "claude" })
+      .success,
+    false,
   );
 });
 

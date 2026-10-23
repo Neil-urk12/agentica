@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { Handle, NodeResizeControl, Position } from "@xyflow/svelte";
-  import type { ProjectGroup } from "@agentica/protocol";
+  import type { AgentPreset, ProjectGroup } from "@agentica/protocol";
   import Icon from "./Icon.svelte";
   import { projectStatusItems, type ProjectCounts } from "../canvas-view";
   interface Props {
@@ -14,7 +14,10 @@
       minWidth: number;
       minHeight: number;
       onCollapse: () => void;
-      onAddAgent: () => void;
+      /** Agents found on this machine; only these can be added. `null` until
+       * detection has run. */
+      agents: { id: AgentPreset; label: string }[] | null;
+      onAddAgent: (preset: AgentPreset) => void;
       onAddTerminal: () => void;
       /** Create the project's Changes tile, or reveal the existing one. */
       onChanges: () => void;
@@ -29,8 +32,17 @@
   const items = $derived(projectStatusItems(data.status));
   const menuId = $derived(`project-menu-${data.group.id}`);
   const addDisabled = $derived(!data.editable || !data.group.available);
-  let menuOpen = $state(false);
+  const agentTitle = $derived(
+    !data.agents
+      ? "Connect to Agentica's background service to find coding agents."
+      : data.agents.length
+        ? "Add agent"
+        : "No coding agents found on this machine. Install one, or add a custom agent in Settings → Advanced.",
+  );
+  let open = $state<"more" | "agents" | null>(null);
+  const menuOpen = $derived(open !== null);
   let trigger: HTMLButtonElement;
+  let agentTrigger: HTMLButtonElement;
   let menu = $state<HTMLDivElement>();
 
   function resizeKey(event: KeyboardEvent) {
@@ -51,16 +63,17 @@
       ...(menu?.querySelectorAll<HTMLButtonElement>("[role=menuitem]") ?? []),
     ].filter((item) => !item.disabled);
 
-  async function toggleMenu() {
-    menuOpen = !menuOpen;
-    if (!menuOpen) return;
+  async function toggleMenu(which: "more" | "agents" = "more") {
+    open = open === which ? null : which;
+    if (!open) return;
     await tick();
     menuItems()[0]?.focus();
   }
 
   function closeMenu(restoreFocus = true) {
-    menuOpen = false;
-    if (restoreFocus) trigger.focus();
+    const owner = open === "agents" ? agentTrigger : trigger;
+    open = null;
+    if (restoreFocus) owner.focus();
   }
 
   function choose(action: () => void) {
@@ -107,7 +120,12 @@
     if (!menuOpen) return;
     const outside = (event: PointerEvent) => {
       const target = event.target as Node | null;
-      if (target && (menu?.contains(target) || trigger.contains(target)))
+      if (
+        target &&
+        (menu?.contains(target) ||
+          trigger.contains(target) ||
+          agentTrigger.contains(target))
+      )
         return;
       closeMenu(false);
     };
@@ -149,11 +167,16 @@
     {#if data.group.collapsed}{@render status()}{/if}
     <div class="actions nodrag">
       <button
+        bind:this={agentTrigger}
         class="btn btn--soft add"
         type="button"
         aria-label="Add agent"
-        title="Add agent"
-        onclick={data.onAddAgent}
+        title={agentTitle}
+        aria-haspopup="menu"
+        aria-expanded={open === "agents"}
+        aria-controls={menuId}
+        onclick={() => void toggleMenu("agents")}
+        onkeydown={triggerKey}
         disabled={addDisabled}
         ><Icon name="smart_toy" size={16} /><span class="label">Add agent</span
         ></button
@@ -202,7 +225,7 @@
         aria-label={`More actions for ${data.group.label}`}
         title="More actions"
         aria-haspopup="menu"
-        aria-expanded={menuOpen}
+        aria-expanded={open === "more"}
         aria-controls={menuId}
         onclick={() => void toggleMenu()}
         onkeydown={triggerKey}><Icon name="more_horiz" size={18} /></button
@@ -216,23 +239,43 @@
       class="menu nodrag nopan nokey"
       role="menu"
       tabindex="-1"
-      aria-label={`Actions for ${data.group.label}`}
+      aria-label={open === "agents"
+        ? `Agents to add to ${data.group.label}`
+        : `Actions for ${data.group.label}`}
       onkeydown={menuKey}
     >
-      <button
-        type="button"
-        role="menuitem"
-        disabled={!data.editable}
-        onclick={() => choose(data.onRemove)}
-        ><Icon name="delete_outline" size={16} />Remove project</button
-      >
-      {#if !data.group.available}<button
+      {#if open === "agents"}
+        {#each data.agents ?? [] as agent (agent.id)}
+          <button
+            type="button"
+            role="menuitem"
+            onclick={() => choose(() => data.onAddAgent(agent.id))}
+            ><Icon name="smart_toy" size={16} />{agent.label}</button
+          >
+        {:else}
+          <!-- Focusable, unlike a disabled button, so keyboard and touch users can read why. -->
+          <button
+            type="button"
+            role="menuitem"
+            class="note"
+            aria-disabled="true">{agentTitle}</button
+          >
+        {/each}
+      {:else}<button
           type="button"
           role="menuitem"
-          disabled={!data.editable || !data.locatable}
-          onclick={() => choose(data.onLocate)}
-          ><Icon name="folder_open" size={16} />Locate folder</button
-        >{/if}
+          disabled={!data.editable}
+          onclick={() => choose(data.onRemove)}
+          ><Icon name="delete_outline" size={16} />Remove project</button
+        >
+        {#if !data.group.available}<button
+            type="button"
+            role="menuitem"
+            disabled={!data.editable || !data.locatable}
+            onclick={() => choose(data.onLocate)}
+            ><Icon name="folder_open" size={16} />Locate folder</button
+          >{/if}
+      {/if}
     </div>
   {/if}
   {#if !data.group.collapsed}
@@ -423,6 +466,13 @@
     font-size: 13px;
     text-align: left;
     cursor: pointer;
+  }
+  .menu .note {
+    max-width: 260px;
+    padding: 6px 10px;
+    color: var(--ink-soft);
+    line-height: 1.35;
+    cursor: default;
   }
   .menu button:hover:not(:disabled),
   .menu button:focus-visible {

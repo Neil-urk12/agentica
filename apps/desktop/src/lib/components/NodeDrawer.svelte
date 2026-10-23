@@ -44,7 +44,7 @@
   const KINDS: Record<string, string> = {
     project: "Project",
     shell: "Terminal",
-    "cli-agent": "Codex",
+    "cli-agent": "Coding agent",
     changes: "Changes",
     instruction: "Instruction note",
     text: "Text",

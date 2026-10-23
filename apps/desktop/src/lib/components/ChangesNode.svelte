@@ -31,7 +31,7 @@
   );
   const maxWidth = $derived(data.group.width - data.tile.x - 16);
   const maxHeight = $derived(data.group.height - data.tile.y - 16);
-  // Load on first show; later reads are manual or follow Codex attention.
+  // Load on first show; later reads are manual or follow agent attention.
   onMount(() => {
     if (!data.state.status && !data.state.loading) void data.state.refresh();
   });

@@ -72,6 +72,10 @@ pub(crate) const METHODS: &[&str] = &[
     "task.set",
     "task.update",
     "task.recordSent",
+    "agents.custom.list",
+    "agents.custom.create",
+    "agents.custom.update",
+    "agents.custom.remove",
 ];
 
 pub(crate) fn invalid(message: impl Into<String>) -> RuntimeError {
@@ -462,6 +466,10 @@ impl Runtime {
                     .ok_or_else(|| invalid("workspaceId is required."))?
                     .to_owned();
                 self.transact(&workspace_id, |tx| projects::call(tx, method, params))
+            }
+            // Machine-local, never workspace data: see sessions/agents.rs.
+            method if method.starts_with("agents.custom.") => {
+                crate::sessions::agents::call(self.data_root.as_deref(), method, params)
             }
             // Not in METHODS: only `mcp_internal` (the MCP dispatcher) reaches these.
             method if method.starts_with("mcp.") => {
