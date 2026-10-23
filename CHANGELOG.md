@@ -12,6 +12,37 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-23
 
+- MCP failures now return generic transport/protocol errors to the model and
+  redact configured environment values from Settings diagnostics. Stdin writes
+  and response reads share a deadline; a timed-out client is killed so a blocked
+  pipe cannot poison later calls. Stop signals active I/O before waiting for the
+  client lock. Queued calls recheck tool/server opt-ins and turn state after
+  acquiring that lock, closing the gap between authorization and execution.
+
+- MCP follow-ups from review: Cancel and the turn deadline no longer wait for a
+  pending tool call (the harness races it against the turn signal; the runtime
+  call still finishes, and queued calls are refused once the turn has ended).
+  Turning a server on rereads the stored flag after start and stops the process
+  if it was turned off meanwhile. Deleting a workspace stops its running
+  servers in both hosts. Settings can remove all saved variables of a server.
+  MCP length checks count code points, matching Zod 4 (checked with 4.6.5),
+  instead of UTF-16 units.
+
+- MCP review round 3: the browser backend released the runtime lock only after
+  stopping a deleted workspace's servers, while a queued call held a server's
+  lock and waited on the runtime to re-authorize; the two waited on each other
+  and hung the backend. The runtime lock is now released first, as the Tauri
+  host already did. A failed or timed-out tool call no longer marks a working
+  server "Couldn't start"; the redacted note shows in Settings until a call
+  succeeds. Servers run in their own process group so stopping one also ends
+  launcher children (`npx` → node). Tool input schemas always carry
+  `type: "object"`. Settings tracks busy state per server, not globally.
+- Both hosts stop every MCP server on exit (`McpService::shutdown`). Servers run
+  in their own process group, so a terminal Ctrl+C no longer reaches them and a
+  server that ignores a closed stdin would otherwise outlive the backend. The
+  browser backend gets the service through `http::serve_with_services`. The
+  README documents the Tools settings and what is validated and planned.
+
 - Landing-page camera navigation now adds section fragments to browser history,
   so destinations can be bookmarked and Back/Forward restores the camera,
   including returning to the initial URL without a fragment. Repeated clicks on
@@ -75,6 +106,31 @@ released version and date. Keep validation evidence in the
   an inert overlay; `show()` runs the dialog focusing steps, which took focus
   back, and the unmount restore was already spent. Focus is now restored after
   `show()`.
+
+- The canvas agent can use read-only tools from stdio MCP servers, and Settings
+  has a Tools section that lists them. Servers (command, arguments, environment)
+  are saved once per workspace store, start only when the user turns them on,
+  and are spawned without a shell. Every discovered tool is off by default and
+  can be turned on only when the server reports `readOnlyHint: true`; the
+  per-tool opt-in, not the hint, is the gate, and the runtime rechecks it on
+  every call. Enabled tools reach the model as `server__tool` and run through
+  the runtime with a 30 s timeout and a 32 KiB result cap; results are delimited
+  untrusted data, failures go back to the model as rejected results, and each
+  call is logged per turn (server, tool, status, size; never arguments or
+  results). Environment values are stored in plain text in the workspace
+  database like other local state, and are never returned or logged. The client
+  is hand-rolled JSON-RPC over `std::process` (no new dependency). Planned, not
+  implemented: remote HTTP servers, mutating tools with a confirmation step,
+  per-project servers.
+  The runtime is synchronous behind one mutex in both hosts, so process I/O
+  cannot run inside it: `mcp.server.set_enabled`, `mcp.tools.refresh` and
+  `mcp.call` are routed ahead of the runtime lock (like `changes.*`) and take it
+  only for short storage steps, and the `mcp.internal.*` storage methods that
+  return launch secrets are absent from `METHODS`. Storage version 10
+  (`mcp_server`, `mcp_tool`, `mcp_call`). Validated by Rust tests with a fake
+  stdio server, a backend-over-HTTP test that confirms a slow tool does not block
+  other requests, and harness tests; the Tauri host path compiles and shares the
+  dispatcher but has not been run.
 
 - Task recording retries reconcile persisted task metadata before writing. A lost
   reply after commit now adopts the recorded send without another write or paste;

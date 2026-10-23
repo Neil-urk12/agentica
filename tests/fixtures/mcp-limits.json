@@ -1,0 +1,14 @@
+{
+  "servers": 32,
+  "name": 32,
+  "command": 512,
+  "args": 32,
+  "arg": 1024,
+  "env": 32,
+  "envKey": 128,
+  "envValue": 4096,
+  "tools": 128,
+  "toolName": 128,
+  "description": 512,
+  "resultBytes": 32768
+}

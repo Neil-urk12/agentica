@@ -2,7 +2,8 @@ use std::{io, process::ExitCode, sync::Arc};
 
 use agentica_runtime::{
     default_data_root,
-    http::{serve_with_sessions, BACKEND_PORT, FRONTEND_ORIGIN},
+    http::{serve_with_services, BACKEND_PORT, FRONTEND_ORIGIN},
+    mcp::McpService,
     sessions::SessionService,
     Runtime,
 };
@@ -43,14 +44,18 @@ async fn run() -> io::Result<()> {
     let sessions = Arc::new(SessionService::new(
         runtime.data_root().map(std::path::Path::to_owned),
     ));
+    let mcp = Arc::new(McpService::new());
     let result = tokio::select! {
-        result = serve_with_sessions(listener, &connection_key, runtime, sessions.clone()) => result,
+        result = serve_with_services(listener, &connection_key, runtime, sessions.clone(), mcp.clone()) => result,
         result = shutdown_signal() => result,
     };
-    tokio::task::spawn_blocking(move || sessions.shutdown())
-        .await
-        .map_err(|error| io::Error::other(error.to_string()))?
-        .map_err(|error| io::Error::other(error.to_string()))?;
+    tokio::task::spawn_blocking(move || {
+        mcp.shutdown();
+        sessions.shutdown()
+    })
+    .await
+    .map_err(|error| io::Error::other(error.to_string()))?
+    .map_err(|error| io::Error::other(error.to_string()))?;
     result
 }
 

@@ -2,11 +2,12 @@
 
 use agentica_runtime::{
     changes, default_data_root,
+    mcp::{self, McpService},
     sessions::{
         wire::{SessionCommand, SessionEvent, SessionRequest, MAX_CONNECTION_SUBSCRIPTIONS},
         SessionOwner, SessionService, StreamLease,
     },
-    DesktopBackend, Runtime, MAX_FRAME_BYTES,
+    DesktopBackend, Runtime, RuntimeError, MAX_FRAME_BYTES,
 };
 use std::{
     collections::HashMap,
@@ -22,6 +23,7 @@ type Lease = (String, SessionOwner, String);
 struct BackendState {
     runtime: Arc<Mutex<DesktopBackend>>,
     sessions: Arc<SessionService>,
+    mcp: Arc<McpService>,
     attachments: Arc<Mutex<HashMap<String, Lease>>>,
     connected: Arc<AtomicBool>,
     data_root: Option<PathBuf>,
@@ -71,8 +73,36 @@ async fn runtime_request(
         .await
         .map_err(|error| format!("Backend task failed: {error}"))?;
     }
+    // A tool call can wait on a child process for 30 s; it locks the runtime only per step.
+    if request["method"]
+        .as_str()
+        .is_some_and(|method| method.starts_with("mcp."))
+    {
+        let bytes = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
+        if bytes.len() > MAX_FRAME_BYTES {
+            return Err("Requests must fit in 16 KiB.".into());
+        }
+        if connect {
+            state.connected.store(true, Ordering::SeqCst);
+        }
+        let (backend, mcp) = (state.runtime.clone(), state.mcp.clone());
+        return tauri::async_runtime::spawn_blocking(move || {
+            Ok(mcp::handle_request(&mcp, &bytes, &mut |method, params| {
+                backend
+                    .lock()
+                    .map_err(|_| RuntimeError {
+                        code: "STORAGE_ERROR",
+                        message: "Backend state is unavailable.".into(),
+                    })?
+                    .mcp_internal(method, params)
+            }))
+        })
+        .await
+        .map_err(|error| format!("Backend task failed: {error}"))?;
+    }
     let backend = state.runtime.clone();
     let sessions = state.sessions.clone();
+    let mcp = state.mcp.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let method = request["method"].as_str().unwrap_or("");
         let params = &request["params"];
@@ -87,6 +117,11 @@ async fn runtime_request(
             sessions
                 .forget_removed(method, params)
                 .map_err(|error| error.to_string())?;
+            if method == "workspace.delete" {
+                if let Some(workspace_id) = params["workspaceId"].as_str() {
+                    mcp.stop_workspace(workspace_id);
+                }
+            }
         }
         Ok(response)
     })
@@ -228,6 +263,7 @@ async fn session_shutdown(
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = default_data_root();
     let sessions = Arc::new(SessionService::new(root.clone()));
+    let mcp = Arc::new(McpService::new());
     let exiting = Arc::new(AtomicU8::new(0));
     let backend = DesktopBackend::new(Runtime::new(root.clone()));
     let connected = backend.connected_flag();
@@ -237,6 +273,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .manage(BackendState {
             runtime: Arc::new(Mutex::new(backend)),
             sessions: sessions.clone(),
+            mcp: mcp.clone(),
             attachments: Arc::new(Mutex::new(HashMap::new())),
             connected,
             data_root: root,
@@ -258,8 +295,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
                     .is_ok()
                 {
-                    let (sessions, exiting, app) = (sessions.clone(), exiting.clone(), app.clone());
+                    let (sessions, mcp, exiting, app) =
+                        (sessions.clone(), mcp.clone(), exiting.clone(), app.clone());
                     tauri::async_runtime::spawn_blocking(move || {
+                        // MCP servers have no unsaved state, so they stop even if sessions refuse.
+                        mcp.shutdown();
                         if sessions.shutdown().is_ok() {
                             exiting.store(2, Ordering::SeqCst);
                             app.exit(0);

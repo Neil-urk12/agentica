@@ -36,6 +36,7 @@ struct HttpState {
     // Browser tabs share this runtime; it is the workspace writer.
     runtime: Arc<Mutex<Runtime>>,
     sessions: Arc<SessionService>,
+    mcp: Arc<crate::mcp::McpService>,
     session_connections: Arc<tokio::sync::Semaphore>,
     data_root: Option<std::path::PathBuf>,
 }
@@ -210,6 +211,20 @@ async fn dispatch_local(state: Arc<HttpState>, request: Request) -> Response {
             Err(_) => reject(StatusCode::INTERNAL_SERVER_ERROR, "Backend runtime failed."),
         };
     }
+    // A tool call can wait on a child process for 30 s; it locks the runtime only per step.
+    if crate::mcp::is_mcp_request(&bytes) {
+        let (runtime, mcp) = (state.runtime.clone(), state.mcp.clone());
+        return match tokio::task::spawn_blocking(move || {
+            crate::mcp::handle_request(&mcp, &bytes, &mut |method, params| {
+                runtime.blocking_lock().mcp_internal(method, params)
+            })
+        })
+        .await
+        {
+            Ok(reply) => Json(reply).into_response(),
+            Err(_) => reject(StatusCode::INTERNAL_SERVER_ERROR, "Backend runtime failed."),
+        };
+    }
     let mut runtime =
         match tokio::time::timeout_at(deadline, state.runtime.clone().lock_owned()).await {
             Ok(runtime) => runtime,
@@ -222,6 +237,7 @@ async fn dispatch_local(state: Arc<HttpState>, request: Request) -> Response {
         };
     // A started blocking mutation cannot be cancelled; await its committed outcome.
     let sessions = state.sessions.clone();
+    let mcp = state.mcp.clone();
     match tokio::task::spawn_blocking(move || {
         let request: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
         let method = request["method"].as_str().unwrap_or("");
@@ -229,7 +245,17 @@ async fn dispatch_local(state: Arc<HttpState>, request: Request) -> Response {
         match sessions.guard_metadata(method, params) {
             Ok(_guard) => {
                 let response = runtime.handle_request(&bytes);
-                if response.get("error").is_none() { let _ = sessions.forget_removed(method, params); }
+                // Release the runtime before stopping MCP servers: a queued tool call holds a
+                // server's client lock while it waits for this lock to re-authorize.
+                drop(runtime);
+                if response.get("error").is_none() {
+                    let _ = sessions.forget_removed(method, params);
+                    if method == "workspace.delete" {
+                        if let Some(workspace_id) = params["workspaceId"].as_str() {
+                            mcp.stop_workspace(workspace_id);
+                        }
+                    }
+                }
                 response
             }
             Err(error) => serde_json::json!({"protocolVersion": 1, "id": request["id"], "error": {"code": error.code, "message": error.message}}),
@@ -258,6 +284,18 @@ pub async fn serve_with_sessions(
     runtime: Runtime,
     sessions: Arc<SessionService>,
 ) -> io::Result<()> {
+    let mcp = Arc::new(crate::mcp::McpService::new());
+    serve_with_services(listener, connection_key, runtime, sessions, mcp).await
+}
+
+/// Serve with caller-owned session and MCP services, so the caller can stop both on exit.
+pub async fn serve_with_services(
+    listener: TcpListener,
+    connection_key: &str,
+    runtime: Runtime,
+    sessions: Arc<SessionService>,
+    mcp: Arc<crate::mcp::McpService>,
+) -> io::Result<()> {
     if !listener.local_addr()?.ip().is_loopback() {
         return Err(io::Error::other("The backend must bind to loopback."));
     }
@@ -271,6 +309,7 @@ pub async fn serve_with_sessions(
             data_root: runtime.data_root().map(std::path::Path::to_owned),
             runtime: Arc::new(Mutex::new(runtime)),
             sessions,
+            mcp,
             session_connections: Arc::new(tokio::sync::Semaphore::new(MAX_SESSION_CONNECTIONS)),
         }));
     loop {

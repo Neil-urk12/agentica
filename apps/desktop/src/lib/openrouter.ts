@@ -182,6 +182,7 @@ export async function runCanvasAgent(
     signal: AbortSignal;
     tools: boolean;
     read: HarnessDeps["read"];
+    mcp?: HarnessDeps["mcp"];
     apiKey?: string;
     provider?: ProviderConfig;
     budget?: Budget;
@@ -204,6 +205,7 @@ export async function runCanvasAgent(
     signal: options.signal,
     tools: options.tools,
     read: options.read,
+    mcp: options.mcp,
     budget: options.budget,
     label: provider?.kind === "custom" ? "Provider" : "OpenRouter",
     request: {

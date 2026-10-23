@@ -1237,6 +1237,15 @@ export class Editor {
     return this.call(this.key(), false, "conversation.read", params);
   }
 
+  /** MCP calls never touch the canvas, so like reads they skip the save queue. */
+  listMcpTools(workspaceId: string) {
+    return this.call(this.key(), false, "mcp.tools.list", { workspaceId });
+  }
+
+  callMcp(params: RuntimeParams<"mcp.call">) {
+    return this.call(this.key(), false, "mcp.call", params);
+  }
+
   async startConversation(params: RuntimeParams<"conversation.start">) {
     let result: RuntimeResult<"conversation.start"> | undefined;
     await this.enqueue(async () => {

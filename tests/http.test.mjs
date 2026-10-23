@@ -635,6 +635,294 @@ test("the shared workspace and conversation fixtures round-trip over authenticat
   }
 });
 
+test("MCP tools run over HTTP without blocking other requests and never expose env values", async () => {
+  const backend = await startBackend();
+  key = backend.connectionKey;
+  try {
+    const rpc = async (method, params) =>
+      JSON.parse(
+        (
+          await send(port, {
+            body: JSON.stringify({
+              protocolVersion: 1,
+              id: "mcp",
+              method,
+              params,
+            }),
+            timeout: 15000,
+          })
+        ).text,
+      );
+    const ok = async (method, params) => {
+      const reply = await rpc(method, params);
+      assert.equal(
+        reply.error,
+        undefined,
+        `${method}: ${JSON.stringify(reply)}`,
+      );
+      // The strict protocol schemas are what the browser applies to every reply.
+      return ResultSchemas[method].parse(reply.result);
+    };
+    const workspaceId = (await ok("workspace.create", { name: "Tools" }))
+      .workspace.id;
+    const canvasId = (await ok("canvas.create", { workspaceId, title: "C" }))
+      .canvas.id;
+    const turnId = "30000000-0000-4000-8000-000000000001";
+    await ok("conversation.start", {
+      workspaceId,
+      canvasId,
+      turnId,
+      prompt: "Help",
+      model: "m",
+      nodeIds: [],
+      anchor: { x: 0, y: 0 },
+    });
+
+    const created = await ok("mcp.server.create", {
+      workspaceId,
+      name: "fake",
+      command: process.execPath,
+      args: [fileURLToPath(new URL("./support/fake-mcp.mjs", import.meta.url))],
+      env: { SECRET_TOKEN: "do-not-leak-me" },
+    });
+    const serverId = created.server.id;
+    assert.equal(created.server.status, "stopped");
+    const enabled = await ok("mcp.server.set_enabled", {
+      workspaceId,
+      serverId,
+      enabled: true,
+    });
+    assert.equal(enabled.server.status, "running");
+    for (const tool of ["echo", "slow"])
+      await ok("mcp.tool.set_enabled", {
+        workspaceId,
+        serverId,
+        tool,
+        enabled: true,
+      });
+    const listed = JSON.stringify(await ok("mcp.server.list", { workspaceId }));
+    assert.ok(listed.includes("SECRET_TOKEN"));
+    assert.ok(!listed.includes("do-not-leak-me"));
+
+    const call = (tool) =>
+      ok("mcp.call", {
+        workspaceId,
+        canvasId,
+        turnId,
+        server: "fake",
+        tool,
+        arguments: { text: "hi" },
+      });
+    assert.deepEqual(await call("echo"), { status: "ok", text: "echo:hi" });
+
+    // A tool call that waits on the child must not hold up the rest of the backend.
+    const started = Date.now();
+    const slow = call("slow");
+    await delay(150);
+    await ok("canvas.create", { workspaceId, title: "During the call" });
+    assert.ok(
+      Date.now() - started < 1200,
+      "other requests waited for the tool",
+    );
+    assert.deepEqual(await slow, { status: "ok", text: "slow:hi" });
+
+    const rows = new DatabaseSync(
+      join(dataDir, "workspaces", workspaceId, "workspace.sqlite3"),
+    )
+      .prepare("SELECT tool_name, status FROM mcp_call ORDER BY sequence")
+      .all();
+    assert.deepEqual(
+      rows.map((row) => [row.tool_name, row.status]),
+      [
+        ["echo", "ok"],
+        ["slow", "ok"],
+      ],
+    );
+
+    // Turning the server off stops the child and closes its tools.
+    await ok("mcp.server.set_enabled", {
+      workspaceId,
+      serverId,
+      enabled: false,
+    });
+    const refused = await rpc("mcp.call", {
+      workspaceId,
+      canvasId,
+      turnId,
+      server: "fake",
+      tool: "echo",
+      arguments: {},
+    });
+    assert.equal(refused.error.code, "SCOPE_DENIED");
+  } finally {
+    await stopBackend(backend.child);
+  }
+});
+
+test("stopping the backend stops running MCP servers", async () => {
+  const backend = await startBackend();
+  key = backend.connectionKey;
+  let stopped = false;
+  const pidFile = join(dataDir, "fake-mcp.pid");
+  rmSync(pidFile, { force: true });
+  try {
+    const ok = async (method, params) => {
+      const reply = JSON.parse(
+        (
+          await send(port, {
+            body: JSON.stringify({
+              protocolVersion: 1,
+              id: "s",
+              method,
+              params,
+            }),
+            timeout: 15000,
+          })
+        ).text,
+      );
+      assert.equal(
+        reply.error,
+        undefined,
+        `${method}: ${JSON.stringify(reply)}`,
+      );
+      return reply.result;
+    };
+    const workspaceId = (await ok("workspace.create", { name: "Exit" }))
+      .workspace.id;
+    const serverId = (
+      await ok("mcp.server.create", {
+        workspaceId,
+        name: "fake",
+        command: process.execPath,
+        args: [
+          fileURLToPath(new URL("./support/fake-mcp.mjs", import.meta.url)),
+        ],
+        env: { FAKE_MCP_PID_FILE: pidFile, FAKE_MCP_LINGER: "1" },
+      })
+    ).server.id;
+    await ok("mcp.server.set_enabled", {
+      workspaceId,
+      serverId,
+      enabled: true,
+    });
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    const alive = () => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    assert.ok(alive(), "the fake server should be running");
+    stopped = true;
+    await stopBackend(backend.child);
+    // The fake ignores its closed stdin, so only the backend's stop can end it.
+    const started = Date.now();
+    while (alive() && Date.now() - started < 3000) await delay(50);
+    assert.ok(!alive(), `MCP server ${pid} outlived the backend`);
+  } finally {
+    if (!stopped) await stopBackend(backend.child);
+  }
+});
+
+test("deleting a workspace during queued MCP calls does not hang the backend", async () => {
+  const backend = await startBackend();
+  key = backend.connectionKey;
+  try {
+    const rpc = async (method, params) =>
+      JSON.parse(
+        (
+          await send(port, {
+            body: JSON.stringify({
+              protocolVersion: 1,
+              id: "d",
+              method,
+              params,
+            }),
+            timeout: 15000,
+          })
+        ).text,
+      );
+    const ok = async (method, params) => {
+      const reply = await rpc(method, params);
+      assert.equal(
+        reply.error,
+        undefined,
+        `${method}: ${JSON.stringify(reply)}`,
+      );
+      return reply.result;
+    };
+    const workspaceId = (await ok("workspace.create", { name: "Gone" }))
+      .workspace.id;
+    const canvasId = (await ok("canvas.create", { workspaceId, title: "C" }))
+      .canvas.id;
+    const turnId = "30000000-0000-4000-8000-000000000002";
+    await ok("conversation.start", {
+      workspaceId,
+      canvasId,
+      turnId,
+      prompt: "Help",
+      model: "m",
+      nodeIds: [],
+      anchor: { x: 0, y: 0 },
+    });
+    const serverId = (
+      await ok("mcp.server.create", {
+        workspaceId,
+        name: "fake",
+        command: process.execPath,
+        args: [
+          fileURLToPath(new URL("./support/fake-mcp.mjs", import.meta.url)),
+        ],
+        env: {},
+      })
+    ).server.id;
+    await ok("mcp.server.set_enabled", {
+      workspaceId,
+      serverId,
+      enabled: true,
+    });
+    for (const tool of ["echo", "slow"])
+      await ok("mcp.tool.set_enabled", {
+        workspaceId,
+        serverId,
+        tool,
+        enabled: true,
+      });
+    const call = (tool) =>
+      rpc("mcp.call", {
+        workspaceId,
+        canvasId,
+        turnId,
+        server: "fake",
+        tool,
+        arguments: {},
+      });
+    // The slow call holds the server; the echo call waits behind it for the client lock.
+    const slow = call("slow");
+    await delay(150);
+    const queued = call("echo");
+    await delay(150);
+    const settled = Promise.all([
+      slow,
+      queued,
+      rpc("workspace.delete", { workspaceId }),
+    ]);
+    const outcome = await Promise.race([
+      settled.then(() => "settled"),
+      delay(8000).then(() => "hung"),
+    ]);
+    assert.equal(outcome, "settled");
+    const [, , deleted] = await settled;
+    assert.equal(deleted.error, undefined, JSON.stringify(deleted));
+    // The backend still answers afterwards.
+    await ok("workspace.list", {});
+  } finally {
+    await stopBackend(backend.child);
+  }
+});
+
 test("queued persistence calls expire without writes and started calls return their outcome", async () => {
   const backend = await startBackend();
   key = backend.connectionKey;
@@ -1231,6 +1519,161 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
     );
   } finally {
     editor.dispose();
+    await browser?.close();
+    await stopBackend(backend.child);
+  }
+});
+
+test("Settings Tools lists built-in tools and manages MCP servers in the rendered app", async () => {
+  const backend = await startBackend();
+  key = backend.connectionKey;
+  let browser;
+  const rpc = async (method, params) => {
+    const reply = await send(port, {
+      body: JSON.stringify({
+        protocolVersion: 1,
+        id: crypto.randomUUID(),
+        method,
+        params,
+      }),
+    });
+    const response = RuntimeResponseSchema.parse(JSON.parse(reply.text));
+    assert.equal(response.error, undefined, JSON.stringify(response));
+    return ResultSchemas[method].parse(response.result);
+  };
+  try {
+    const { workspace } = await rpc("workspace.create", { name: "Tools UI" });
+    const workspaceId = workspace.id;
+    await rpc("canvas.create", { workspaceId, title: "Tools canvas" });
+    browser = await launchBrowser();
+    await browser.send(
+      "Page.navigate",
+      { url: `http://127.0.0.1:${port}/` },
+      browser.sessionId,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('#connection-key')`,
+      "the connection form",
+    );
+    await evaluate(
+      browser,
+      `(async () => { const input = document.querySelector('#connection-key'); input.value = ${JSON.stringify(key)}; input.dispatchEvent(new Event('input', {bubbles:true})); await new Promise(requestAnimationFrame); document.querySelector('.connbar button[type=submit]').click(); })()`,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('.connbar--ok')`,
+      "connection",
+    );
+    const open = async (label) => {
+      const expression = `[...document.querySelectorAll('.tiles .tile__open, .cards .card')].find(c => c.querySelector('.tile__name, strong')?.textContent === ${JSON.stringify(label)})`;
+      await waitFor(
+        browser,
+        `${expression} && !(${expression}).disabled`,
+        label,
+      );
+      await evaluate(
+        browser,
+        `(${expression}).focus(); (${expression}).scrollIntoView({block:'center'})`,
+      );
+      await clickAt(
+        browser,
+        await boxByText(browser, ".tiles .tile__open, .cards .card", label),
+      );
+    };
+    await open("Tools UI");
+    await open("Tools canvas");
+    await waitFor(
+      browser,
+      `!!document.querySelector('.svelte-flow')`,
+      "the canvas",
+    );
+    await evaluate(
+      browser,
+      `document.querySelector('[aria-label="Settings"]').click()`,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('.settings__tab')`,
+      "settings",
+    );
+    await evaluate(
+      browser,
+      `[...document.querySelectorAll('.settings__tab')].find((tab) => tab.textContent.includes('Tools')).click()`,
+    );
+    await waitFor(
+      browser,
+      `document.body.innerText.includes('canvas_read') && document.body.innerText.includes('canvas_edit')`,
+      "built-in tools",
+    );
+    const setValue = (selector, value) =>
+      evaluate(
+        browser,
+        `(() => { const el = document.querySelector(${JSON.stringify(selector)}); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event('input', {bubbles:true})); })()`,
+      );
+    await waitFor(
+      browser,
+      `[...document.querySelectorAll('button')].some((b) => b.textContent.includes('Add a tool server'))`,
+      "the add button",
+    );
+    await evaluate(
+      browser,
+      `[...document.querySelectorAll('button')].find((b) => b.textContent.includes('Add a tool server')).click()`,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('.tools__form input')`,
+      "the server form",
+    );
+    await setValue(".tools__form input:nth-of-type(1)", "fake");
+    await evaluate(
+      browser,
+      `(() => { const [name, command] = document.querySelectorAll('.tools__form input'); for (const [el, value] of [[name, 'fake'], [command, ${JSON.stringify(process.execPath)}]]) { el.value = value; el.dispatchEvent(new Event('input', {bubbles:true})); } const [args, env] = document.querySelectorAll('.tools__form textarea'); args.value = ${JSON.stringify(fileURLToPath(new URL("./support/fake-mcp.mjs", import.meta.url)))}; args.dispatchEvent(new Event('input', {bubbles:true})); env.value = 'SECRET_TOKEN=do-not-show'; env.dispatchEvent(new Event('input', {bubbles:true})); document.querySelector('.tools__form button[type=submit]').click(); })()`,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('section[aria-label="fake"]')`,
+      "the saved server",
+    );
+    const text = () => evaluate(browser, `document.body.innerText`);
+    assert.ok((await text()).includes("Off"), "new servers start off");
+    assert.ok((await text()).includes("SECRET_TOKEN"));
+    assert.ok(!(await text()).includes("do-not-show"));
+    assert.deepEqual((await rpc("mcp.tools.list", { workspaceId })).tools, []);
+
+    await evaluate(
+      browser,
+      `document.querySelector('button[aria-label="fake on"]').click()`,
+    );
+    await waitFor(
+      browser,
+      `document.body.innerText.includes('Running') && document.body.innerText.includes('Echoes text.')`,
+      "the running server and its tools",
+    );
+    await evaluate(
+      browser,
+      `document.querySelector('button[aria-label="echo on"]').click()`,
+    );
+    await waitFor(
+      browser,
+      `document.querySelector('button[aria-label="echo on"]')?.getAttribute('aria-checked') === 'true'`,
+      "the enabled tool",
+    );
+    assert.deepEqual(
+      (await rpc("mcp.tools.list", { workspaceId })).tools.map(
+        (tool) => `${tool.server}__${tool.name}`,
+      ),
+      ["fake__echo"],
+    );
+    // Editing needs the server off.
+    assert.equal(
+      await evaluate(
+        browser,
+        `[...document.querySelectorAll('section[aria-label="fake"] button')].find((b) => b.textContent.trim() === 'Edit').disabled`,
+      ),
+      true,
+    );
+  } finally {
     await browser?.close();
     await stopBackend(backend.child);
   }

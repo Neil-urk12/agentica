@@ -1,5 +1,5 @@
 <script module lang="ts">
-  export type SettingsSection = "ai" | "appearance" | "advanced";
+  export type SettingsSection = "ai" | "tools" | "appearance" | "advanced";
 </script>
 
 <script lang="ts">
@@ -8,6 +8,7 @@
   import type { Theme } from "../theme";
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
+  import ToolsSettings from "./ToolsSettings.svelte";
   import {
     getProviderConfig,
     getProviderKind,
@@ -28,6 +29,8 @@
   interface Props {
     connectionKey: string;
     connected: boolean;
+    /** The open workspace, if any; tool servers are saved with it. */
+    workspaceId?: string;
     theme: Theme;
     /** Section to open at; without one, narrow windows start at the category list. */
     section?: SettingsSection;
@@ -35,11 +38,19 @@
     onClose: () => void;
   }
 
-  let { theme, section, onChange, onClose, connectionKey, connected }: Props =
-    $props();
+  let {
+    theme,
+    section,
+    onChange,
+    onClose,
+    connectionKey,
+    connected,
+    workspaceId,
+  }: Props = $props();
 
   const sections: { id: SettingsSection; label: string; icon: string }[] = [
     { id: "ai", label: "AI assistant", icon: "smart_toy" },
+    { id: "tools", label: "Tools", icon: "extension" },
     { id: "appearance", label: "Appearance", icon: "palette" },
     { id: "advanced", label: "Advanced", icon: "tune" },
   ];
@@ -256,7 +267,8 @@
         <h2 id="settings-ai-title" class="settings__title">AI assistant</h2>
         <p class="settings__intro">
           The AI assistant answers on the canvas and can suggest edits for you
-          to accept. It can't run commands or open your files.
+          to accept. It can't run commands or open your files; only tools you
+          turn on in Tools can look anything else up.
         </p>
 
         <div
@@ -367,6 +379,22 @@
           >
             <Icon name="tune" size={16} />Change your server in Advanced
           </button>
+        {/if}
+      </section>
+
+      <section
+        class="settings__section"
+        aria-labelledby="settings-tools-title"
+        hidden={selected !== "tools"}
+      >
+        <h2 id="settings-tools-title" class="settings__title">Tools</h2>
+        <p class="settings__intro">
+          Tools are what the AI assistant can use besides reading the canvas and
+          proposing edits. Tools you add stay off until you turn them on, and
+          only tools that say they just read can be turned on.
+        </p>
+        {#if selected === "tools"}
+          <ToolsSettings {connectionKey} {connected} {workspaceId} />
         {/if}
       </section>
 
