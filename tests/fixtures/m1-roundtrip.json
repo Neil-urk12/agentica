@@ -1,0 +1,563 @@
+{
+  "steps": [
+    {
+      "method": "agent.capabilities",
+      "params": {},
+      "expect": {
+        "provider": "codex",
+        "status": "unsupported",
+        "executionEnabled": false,
+        "osIsolationVerified": false
+      }
+    },
+    {
+      "method": "workspace.create",
+      "params": {
+        "name": "M1 contracts"
+      },
+      "expect": {},
+      "save": {
+        "m1workspace": "/workspace/id"
+      }
+    },
+    {
+      "method": "canvas.create",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "title": "Instructions"
+      },
+      "expect": {},
+      "save": {
+        "m1canvas": "/canvas/id"
+      }
+    },
+    {
+      "method": "node.createText",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas",
+        "expectedRevision": 1,
+        "x": 40,
+        "y": 40,
+        "width": 240,
+        "height": 160,
+        "text": "Plan the release",
+        "purpose": "instruction"
+      },
+      "expect": {
+        "artifact": {
+          "type": "text",
+          "purpose": "instruction",
+          "text": "Plan the release",
+          "revision": 1
+        }
+      },
+      "save": {
+        "m1first": "/artifact/id",
+        "m1firstNode": "/node/id"
+      }
+    },
+    {
+      "method": "node.createText",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas",
+        "expectedRevision": 2,
+        "x": 340,
+        "y": 40,
+        "width": 240,
+        "height": 160,
+        "text": "Original note",
+        "purpose": "note"
+      },
+      "expect": {
+        "artifact": {
+          "type": "text",
+          "purpose": "note",
+          "text": "Original note",
+          "revision": 1
+        }
+      },
+      "save": {
+        "m1second": "/artifact/id",
+        "m1secondNode": "/node/id"
+      }
+    },
+    {
+      "method": "canvas.create",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "title": "Outside scope"
+      },
+      "save": {
+        "m1outsideCanvas": "/canvas/id"
+      },
+      "expect": {}
+    },
+    {
+      "method": "node.createText",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1outsideCanvas",
+        "expectedRevision": 1,
+        "x": 0,
+        "y": 0,
+        "width": 240,
+        "height": 160,
+        "text": "Private other canvas"
+      },
+      "save": {
+        "m1outsideArtifact": "/artifact/id"
+      },
+      "expect": {
+        "artifact": {
+          "purpose": "note",
+          "text": "Private other canvas"
+        }
+      }
+    },
+    {
+      "method": "artifact.applyBatch",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas",
+        "operations": [
+          {
+            "op": "text.replace",
+            "artifactId": "$m1first",
+            "expectedRevision": 1,
+            "text": "Must roll back"
+          },
+          {
+            "op": "text.replace",
+            "artifactId": "$m1second",
+            "expectedRevision": 2,
+            "text": "stale"
+          }
+        ]
+      },
+      "error": "CONFLICT"
+    },
+    {
+      "method": "artifact.applyBatch",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas",
+        "operations": [
+          {
+            "op": "text.replace",
+            "artifactId": "$m1first",
+            "expectedRevision": 1,
+            "text": "Must roll back"
+          },
+          {
+            "op": "text.replace",
+            "artifactId": "$m1outsideArtifact",
+            "expectedRevision": 1,
+            "text": "outside"
+          }
+        ]
+      },
+      "error": "SCOPE_DENIED"
+    },
+    {
+      "method": "artifact.applyBatch",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas",
+        "operations": [
+          {
+            "op": "text.replace",
+            "artifactId": "$m1first",
+            "expectedRevision": 1,
+            "text": "duplicate"
+          },
+          {
+            "op": "text.replace",
+            "artifactId": "$m1first",
+            "expectedRevision": 1,
+            "text": "again"
+          }
+        ]
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "artifact.applyBatch",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas",
+        "operations": []
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "artifact.applyBatch",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas",
+        "operations": [
+          {
+            "op": "text.replace",
+            "artifactId": "$m1first",
+            "expectedRevision": 0,
+            "text": "invalid"
+          }
+        ]
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "artifact.applyBatch",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas",
+        "operations": [
+          {
+            "op": "mindmap.addTopic",
+            "artifactId": "$m1first",
+            "expectedRevision": 1,
+            "topicId": "00000000-0000-4000-8000-000000000006",
+            "parentId": null,
+            "title": "Root"
+          }
+        ]
+      },
+      "error": "UNSUPPORTED_CAPABILITY"
+    },
+    {
+      "method": "artifact.applyBatch",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas",
+        "operations": [
+          {
+            "op": "text.replace",
+            "artifactId": "$m1first",
+            "expectedRevision": 1,
+            "text": "Must roll back"
+          },
+          {
+            "op": "mindmap.renameTopic",
+            "artifactId": "$m1second",
+            "expectedRevision": 1,
+            "topicId": "00000000-0000-4000-8000-000000000006",
+            "title": "New"
+          }
+        ]
+      },
+      "error": "UNSUPPORTED_CAPABILITY"
+    },
+    {
+      "method": "artifact.applyBatch",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas",
+        "operations": [
+          {
+            "op": "mindmap.moveTopic",
+            "artifactId": "$m1first",
+            "expectedRevision": 1,
+            "topicId": "00000000-0000-4000-8000-000000000006",
+            "parentId": "00000000-0000-4000-8000-000000000006"
+          }
+        ]
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "artifact.applyBatch",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas",
+        "operations": [
+          {
+            "op": "mindmap.moveTopic",
+            "artifactId": "$m1first",
+            "expectedRevision": 1,
+            "topicId": "00000000-0000-4000-8000-000000000006"
+          }
+        ]
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "artifact.applyBatch",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas",
+        "operations": [
+          {
+            "op": "files.write",
+            "artifactId": "$m1first",
+            "expectedRevision": 1,
+            "path": "/tmp/escape"
+          }
+        ]
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "canvas.open",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas"
+      },
+      "expect": {
+        "artifacts": [
+          {
+            "id": "$m1first",
+            "revision": 1,
+            "purpose": "instruction",
+            "text": "Plan the release"
+          },
+          {
+            "id": "$m1second",
+            "revision": 1,
+            "purpose": "note",
+            "text": "Original note"
+          }
+        ]
+      }
+    },
+    {
+      "method": "artifact.applyBatch",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas",
+        "operations": [
+          {
+            "op": "text.replace",
+            "artifactId": "$m1first",
+            "expectedRevision": 1,
+            "text": "Updated instructions"
+          },
+          {
+            "op": "text.replace",
+            "artifactId": "$m1second",
+            "expectedRevision": 1,
+            "text": "Updated note"
+          }
+        ]
+      },
+      "expect": {
+        "artifacts": [
+          {
+            "id": "$m1first",
+            "revision": 2,
+            "purpose": "instruction",
+            "text": "Updated instructions"
+          },
+          {
+            "id": "$m1second",
+            "revision": 2,
+            "purpose": "note",
+            "text": "Updated note"
+          }
+        ]
+      }
+    },
+    {
+      "method": "canvas.save",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas",
+        "expectedRevision": 3,
+        "viewport": {
+          "x": 10,
+          "y": 20,
+          "zoom": 1
+        },
+        "nodes": [
+          {
+            "id": "$m1firstNode",
+            "x": 160,
+            "y": 120,
+            "width": 280,
+            "height": 180
+          },
+          {
+            "id": "$m1secondNode",
+            "x": 340,
+            "y": 40,
+            "width": 240,
+            "height": 160
+          }
+        ]
+      },
+      "expect": {
+        "revision": 4
+      }
+    },
+    {
+      "method": "agent.start",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas",
+        "instructionArtifactId": "$m1first",
+        "readArtifactIds": ["$m1first", "$m1second"],
+        "writeArtifactIds": ["$m1second"]
+      },
+      "error": "UNSUPPORTED_CAPABILITY"
+    },
+    {
+      "method": "agent.start",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas",
+        "instructionArtifactId": "$m1first",
+        "readArtifactIds": [],
+        "writeArtifactIds": ["$m1second"]
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "agent.start",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas",
+        "instructionArtifactId": "$m1first",
+        "readArtifactIds": ["$m1first", "$m1first"],
+        "writeArtifactIds": ["$m1second"]
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "agent.start",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas",
+        "instructionArtifactId": "$m1first",
+        "readArtifactIds": ["$m1first", "$m1second"],
+        "writeArtifactIds": ["00000000-0000-4000-8000-000000000003"]
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "agent.start",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas",
+        "instructionArtifactId": "$m1first",
+        "readArtifactIds": ["$m1first", "$m1second"],
+        "writeArtifactIds": ["$m1second"],
+        "shell": true
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "agent.cancel",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "runId": "00000000-0000-4000-8000-000000000006"
+      },
+      "error": "UNSUPPORTED_CAPABILITY"
+    },
+    {
+      "method": "agent.events",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "after": 0
+      },
+      "error": "UNSUPPORTED_CAPABILITY"
+    },
+    {
+      "method": "agent.events",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "runId": "00000000-0000-4000-8000-000000000006"
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "agent.events",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "after": null
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "agent.events",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "after": -1
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "agent.cancel",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "after": 0
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "restart": true
+    },
+    {
+      "method": "workspace.open",
+      "params": {
+        "workspaceId": "$m1workspace"
+      },
+      "expect": {}
+    },
+    {
+      "method": "canvas.open",
+      "params": {
+        "workspaceId": "$m1workspace",
+        "canvasId": "$m1canvas"
+      },
+      "expect": {
+        "canvas": {
+          "revision": 4,
+          "viewport": {
+            "x": 10,
+            "y": 20,
+            "zoom": 1
+          }
+        },
+        "nodes": [
+          {
+            "id": "$m1firstNode",
+            "artifactId": "$m1first",
+            "x": 160,
+            "y": 120,
+            "width": 280,
+            "height": 180
+          },
+          {
+            "id": "$m1secondNode",
+            "artifactId": "$m1second"
+          }
+        ],
+        "artifacts": [
+          {
+            "id": "$m1first",
+            "revision": 2,
+            "purpose": "instruction",
+            "text": "Updated instructions"
+          },
+          {
+            "id": "$m1second",
+            "revision": 2,
+            "purpose": "note",
+            "text": "Updated note"
+          }
+        ]
+      }
+    },
+    {
+      "method": "workspace.close",
+      "params": {
+        "workspaceId": "$m1workspace"
+      },
+      "expect": {}
+    }
+  ]
+}

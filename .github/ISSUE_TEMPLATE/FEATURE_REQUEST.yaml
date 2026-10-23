@@ -1,0 +1,92 @@
+name: Feature request
+description: Suggest an improvement, new capability, or changed behavior.
+labels:
+  - type: feature
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Open a feature request to discuss a proposal before spending time on implementation. This project evolves around its roadmap and current scope, so early alignment helps.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or goal
+      description: What problem does this solve, or what workflow are you trying to improve?
+      placeholder: |
+        e.g. I want to search across text artifacts without opening every canvas first.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the feature or change you are suggesting. Include the user-facing behavior you imagine.
+      placeholder: |
+        1. Where the change should live
+        2. What the user does
+        3. What the UI or workflow should do
+        4. Any cases that should be excluded
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds, existing features, or other approaches you have considered.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Likely area
+      description: Optional starting point. Pick the closest fit if you know it.
+      options:
+        - Canvas / editing
+        - Workspaces / persistence
+        - Transport / connection
+        - Desktop app
+        - Detached backend
+        - Protocol / contracts
+        - Documentation
+        - I'm not sure yet
+      allow_empty_selection: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority for you
+      description: How important is this to your workflow today?
+      options:
+        - Nice to have
+        - Should have
+        - Would block my workflow
+      allow_empty_selection: false
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and dependencies
+      description: Does this touch the frontend, the shared Rust runtime, the protocol, desktop packaging, or multiple layers? Mention related projects or agents if relevant.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: readiness
+    attributes:
+      label: Before submitting
+      options:
+        - I discussed the idea in an issue before starting a large implementation
+        - I kept the request focused on one concern
+        - I described the expected behavior clearly enough for reviewers to discuss it
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        If the feature depends on agent integration or packaging scope, note that here. The current roadmap and milestone gates are the best reference for whether a proposal is in scope.

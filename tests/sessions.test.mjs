@@ -1,0 +1,688 @@
+import assert from "node:assert/strict";
+import { registerHooks, stripTypeScriptTypes } from "node:module";
+import { test } from "node:test";
+import { setImmediate } from "node:timers/promises";
+import { SessionEventSchema } from "@agentica/protocol";
+
+const sessionsUrl = new URL(
+  "../apps/desktop/src/lib/sessions.ts",
+  import.meta.url,
+);
+const mocks = {
+  "@xterm/xterm": "export const Terminal = globalThis.sessionTest.Terminal;",
+  "@xterm/addon-fit": "export class FitAddon {}",
+  "./session-client":
+    "export const createSessionClient = () => globalThis.sessionTest.client;",
+  "./runtime": "export const desktopMode = false;",
+};
+// Exercise the manager with controlled transport replies and renderer callbacks.
+const hooks = registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (context.parentURL === sessionsUrl.href && specifier in mocks)
+      return { url: `session-test:${specifier}`, shortCircuit: true };
+    return nextResolve(specifier, context);
+  },
+  load(url, context, nextLoad) {
+    if (url.startsWith("session-test:"))
+      return {
+        format: "module",
+        source: mocks[url.slice("session-test:".length)],
+        shortCircuit: true,
+      };
+    const result = nextLoad(url, context);
+    return url === sessionsUrl.href
+      ? {
+          ...result,
+          format: "module",
+          source: stripTypeScriptTypes(result.source.toString(), {
+            mode: "transform",
+          }),
+        }
+      : result;
+  },
+});
+
+class Terminal {
+  rows = 24;
+  cols = 80;
+  parser = { registerOscHandler() {} };
+  written = [];
+  constructor(options) {
+    this.options = options;
+  }
+  loadAddon() {}
+  onData() {}
+  onBinary() {}
+  attachCustomKeyEventHandler() {}
+  resize() {}
+  reset() {}
+  dispose() {}
+  open() {
+    this.textarea = { tabIndex: 0 };
+  }
+  write(bytes, callback) {
+    this.written.push(...bytes);
+    if (globalThis.sessionTest.client.blockWrites)
+      globalThis.sessionTest.client.writes.push(callback);
+    else callback();
+  }
+}
+globalThis.sessionTest = { Terminal };
+const { SessionManager, tileName } = await import(sessionsUrl.href);
+hooks.deregister();
+
+const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const workspaceId = id(1);
+const canvasId = id(2);
+const owner = (n, canvas = canvasId) => ({
+  workspaceId,
+  canvasId: canvas,
+  tileId: id(n + 10),
+});
+const status = (n, state = "running", canvas) => ({
+  owner: owner(n, canvas),
+  sessionId: id(n + 100),
+  backendId: id(3),
+  state,
+  rows: 24,
+  cols: 80,
+  exitCode: null,
+  exitSignal: null,
+  error: null,
+  executable: "/bin/bash",
+  shellFallback: false,
+  projectId: id(5),
+  attention: {
+    raised: false,
+    count: 0,
+    sequence: 0,
+    kind: null,
+    at: null,
+    message: null,
+  },
+});
+const document = (statuses, canvas = canvasId) => ({
+  canvas: { id: canvas },
+  sessionTiles: statuses.map((item) => ({ id: item.owner.tileId })),
+});
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+};
+
+function setup(t, statuses) {
+  const client = {
+    statuses,
+    active: new Set(),
+    subscriptions: new Map(),
+    calls: [],
+    writes: [],
+    async request(command) {
+      this.calls.push(command);
+      if (command.op === "capabilities")
+        return { capabilities: { supported: true } };
+      if (command.op === "list")
+        return {
+          sessions: structuredClone(
+            this.statuses.filter(
+              (item) =>
+                item.owner.workspaceId === command.workspaceId &&
+                item.owner.canvasId === command.canvasId,
+            ),
+          ),
+        };
+      if (command.op === "acknowledge") {
+        await this.acknowledging?.promise;
+        return {};
+      }
+      if (command.op === "focus") return {};
+      if (command.op === "clearAttention") {
+        const item = this.statuses.find(
+          (item) => item.sessionId === command.sessionId,
+        );
+        if (command.sequence >= item.attention.sequence)
+          item.attention = {
+            ...item.attention,
+            raised: false,
+            count: 0,
+            kind: null,
+            at: null,
+            message: null,
+          };
+        return {};
+      }
+      if (command.op === "status")
+        return {
+          status: this.statuses.find(
+            (item) => item.owner.tileId === command.owner.tileId,
+          ),
+        };
+      if (command.op === "stop") {
+        const item = this.statuses.find(
+          (item) => item.owner.tileId === command.owner.tileId,
+        );
+        item.state = "exited";
+        return { status: structuredClone(item) };
+      }
+      if (command.op === "start") {
+        const item = this.statuses.find(
+          (item) => item.owner.tileId === command.owner.tileId,
+        );
+        item.sessionId = id(900);
+        item.state = "running";
+        return { status: structuredClone(item) };
+      }
+      throw new Error(`Unexpected command: ${command.op}`);
+    },
+    async subscribe(owner, sessionId, after, event, error) {
+      assert.ok(
+        this.active.size < 8,
+        "ninth subscription closes the connection",
+      );
+      const attachmentId = id(this.calls.length + 1000);
+      this.calls.push({ op: "subscribe", sessionId, after });
+      this.active.add(attachmentId);
+      this.subscriptions.set(sessionId, { event, error, attachmentId });
+      if (this.replay) queueMicrotask(() => this.emit(sessionId, [], 0, 0));
+      return {
+        id: attachmentId,
+        detach: async () => {
+          this.calls.push({ op: "detach", sessionId });
+          await this.detaching?.promise;
+          this.active.delete(attachmentId);
+        },
+      };
+    },
+    emit(sessionId, frames, nextSequence, lastSequence) {
+      const subscription = this.subscriptions.get(sessionId);
+      const status = this.statuses.find((item) => item.sessionId === sessionId);
+      subscription.event(
+        SessionEventSchema.parse({
+          event: "session",
+          sessionId,
+          attachmentId: subscription.attachmentId,
+          owner: status.owner,
+          status: structuredClone(status),
+          output: { frames, nextSequence, lastSequence, historyGap: false },
+        }),
+      );
+    },
+    async close() {
+      this.active.clear();
+    },
+  };
+  globalThis.sessionTest.client = client;
+  const manager = new SessionManager(
+    () => "key",
+    () => {},
+  );
+  t.after(() => manager.dispose());
+  return { manager, client };
+}
+
+test("concurrent reconciles coalesce into one capability and list request", async (t) => {
+  const item = status(0);
+  const { manager, client } = setup(t, [item]);
+  const saved = document([item]);
+  await Promise.all(
+    Array.from({ length: 60 }, () => manager.reconcile(workspaceId, saved)),
+  );
+  assert.equal(
+    client.calls.filter((call) => call.op === "capabilities").length,
+    1,
+  );
+  assert.equal(client.calls.filter((call) => call.op === "list").length, 1);
+});
+test("attention updates offscreen and dismissal acknowledges only the displayed sequence", async (t) => {
+  const item = status(0);
+  const { manager, client } = setup(t, [item]);
+  const saved = document([item]);
+  const before = JSON.stringify(saved);
+  await manager.reconcile(workspaceId, saved);
+  item.attention = {
+    raised: true,
+    count: 2,
+    sequence: 2,
+    kind: "notification",
+    at: Date.now(),
+    message: "<script>inert</script>",
+  };
+  client.emit(item.sessionId, [], 0, 0);
+  await setImmediate();
+  assert.equal(manager.attention(workspaceId, canvasId).length, 1);
+  assert.equal(manager.attention(workspaceId, id(999)).length, 0);
+  // A newer backend signal exists before the displayed sequence is acknowledged.
+  item.attention = {
+    ...item.attention,
+    count: 3,
+    sequence: 3,
+    message: "newer",
+  };
+  await manager.dismiss(item.owner);
+  assert.equal(
+    client.calls.find((call) => call.op === "clearAttention").sequence,
+    2,
+  );
+  assert.equal(manager.view(item.owner).status.attention.raised, true);
+  await manager.dismiss(item.owner);
+  assert.equal(manager.attention(workspaceId, canvasId).length, 0);
+  assert.equal(
+    JSON.stringify(saved),
+    before,
+    "runtime attention never enters the saved document",
+  );
+});
+
+test("terminal and window focus report only actual textarea focus and unmount clears focus", async (t) => {
+  const item = status(0);
+  const { manager, client } = setup(t, [item]);
+  await manager.reconcile(workspaceId, document([item]));
+  const old = {
+    document: globalThis.document,
+    window: globalThis.window,
+    ResizeObserver: globalThis.ResizeObserver,
+    requestAnimationFrame: globalThis.requestAnimationFrame,
+    cancelAnimationFrame: globalThis.cancelAnimationFrame,
+  };
+  t.after(() => Object.assign(globalThis, old));
+  let hasFocus = true;
+  const host = new EventTarget();
+  host.append = () => {};
+  globalThis.document = {
+    activeElement: null,
+    hasFocus: () => hasFocus,
+    createElement: () => ({ style: {}, remove() {} }),
+  };
+  globalThis.window = new EventTarget();
+  globalThis.ResizeObserver = class {
+    observe() {}
+    disconnect() {}
+  };
+  globalThis.requestAnimationFrame = () => 1;
+  globalThis.cancelAnimationFrame = () => {};
+  const unmount = manager.mount(item.owner, host, () => {});
+  await setImmediate();
+  const terminal = manager.entries.values().next().value.terminal;
+  globalThis.document.activeElement = terminal.textarea;
+  host.dispatchEvent(new Event("focusin"));
+  await setImmediate();
+  hasFocus = false;
+  globalThis.window.dispatchEvent(new Event("blur"));
+  await setImmediate();
+  hasFocus = true;
+  globalThis.window.dispatchEvent(new Event("focus"));
+  await setImmediate();
+  unmount();
+  await setImmediate();
+  assert.deepEqual(
+    client.calls
+      .filter((call) => call.op === "focus")
+      .map((call) => call.focused),
+    [false, true, false, true, false],
+  );
+});
+
+test("focus clears detached exited attention without acknowledging newer signals", async (t) => {
+  const item = status(0);
+  const { manager, client } = setup(t, [item]);
+  await manager.reconcile(workspaceId, document([item]));
+  const old = {
+    document: globalThis.document,
+    window: globalThis.window,
+    ResizeObserver: globalThis.ResizeObserver,
+    requestAnimationFrame: globalThis.requestAnimationFrame,
+    cancelAnimationFrame: globalThis.cancelAnimationFrame,
+  };
+  t.after(() => Object.assign(globalThis, old));
+  let hasFocus = false;
+  const host = new EventTarget();
+  host.append = () => {};
+  globalThis.document = {
+    activeElement: null,
+    hasFocus: () => hasFocus,
+    createElement: () => ({ style: {}, remove() {} }),
+  };
+  globalThis.window = new EventTarget();
+  globalThis.ResizeObserver = class {
+    observe() {}
+    disconnect() {}
+  };
+  globalThis.requestAnimationFrame = () => 1;
+  globalThis.cancelAnimationFrame = () => {};
+  const unmount = manager.mount(item.owner, host, () => {});
+  const terminal = manager.entries.values().next().value.terminal;
+  item.state = "exited";
+  item.attention = {
+    raised: true,
+    count: 1,
+    sequence: 1,
+    kind: "exited",
+    at: Date.now(),
+    message: null,
+  };
+  client.emit(item.sessionId, [{ sequence: 1, bytes: [65] }], 1, 1);
+  await setImmediate();
+  assert.equal(client.active.size, 0);
+  assert.equal(manager.view(item.owner).connected, false);
+  assert.equal(manager.attention(workspaceId, canvasId).length, 1);
+  const callsBeforeFocus = client.calls.length;
+
+  globalThis.document.activeElement = terminal.textarea;
+  host.dispatchEvent(new Event("focusin"));
+  await setImmediate();
+  assert.equal(
+    client.calls.length,
+    callsBeforeFocus,
+    "an unfocused window must not clear attention",
+  );
+  hasFocus = true;
+  globalThis.document.activeElement = host;
+  globalThis.window.dispatchEvent(new Event("focus"));
+  await setImmediate();
+  assert.equal(
+    client.calls.length,
+    callsBeforeFocus,
+    "only textarea focus clears attention",
+  );
+
+  // A newer signal reaches the backend before the displayed exit is cleared.
+  item.attention = { ...item.attention, count: 2, sequence: 2 };
+  globalThis.document.activeElement = terminal.textarea;
+  host.dispatchEvent(new Event("focusin"));
+  await setImmediate();
+  assert.equal(
+    client.calls.find((call) => call.op === "clearAttention")?.sequence,
+    1,
+  );
+  assert.equal(manager.view(item.owner).status.attention.raised, true);
+  assert.equal(manager.view(item.owner).status.attention.sequence, 2);
+
+  hasFocus = false;
+  globalThis.window.dispatchEvent(new Event("blur"));
+  hasFocus = true;
+  globalThis.window.dispatchEvent(new Event("focus"));
+  await setImmediate();
+  assert.equal(manager.attention(workspaceId, canvasId).length, 0);
+  assert.deepEqual(
+    client.calls
+      .filter((call) => call.op === "clearAttention")
+      .map((call) => call.sequence),
+    [1, 2],
+  );
+  unmount();
+  await setImmediate();
+  assert.equal(
+    client.calls.slice(callsBeforeFocus).filter((call) => call.op === "focus")
+      .length,
+    0,
+  );
+});
+
+test("eight exited subscriptions drain and release before a ninth live subscription", async (t) => {
+  const statuses = Array.from({ length: 8 }, (_, n) => status(n));
+  const { manager, client } = setup(t, statuses);
+  await manager.reconcile(workspaceId, document(statuses));
+  assert.equal(client.active.size, 8);
+  client.blockWrites = true;
+  client.acknowledging = deferred();
+  client.detaching = deferred();
+  for (const item of statuses) {
+    item.state = "exited";
+    client.emit(item.sessionId, [{ sequence: 1, bytes: [65] }], 1, 1);
+  }
+  statuses.push(status(8));
+  const reconcile = manager.reconcile(workspaceId, document(statuses));
+  await setImmediate();
+  assert.equal(client.writes.length, 8);
+  assert.equal(
+    client.calls.filter((call) => call.op === "subscribe").length,
+    8,
+  );
+  for (const write of client.writes) write();
+  await setImmediate();
+  assert.equal(client.calls.filter((call) => call.op === "detach").length, 0);
+  client.acknowledging.resolve();
+  await setImmediate();
+  assert.equal(client.calls.filter((call) => call.op === "detach").length, 8);
+  assert.equal(
+    client.calls.filter((call) => call.op === "subscribe").length,
+    8,
+  );
+  client.detaching.resolve();
+  await reconcile;
+  assert.equal(client.active.size, 1);
+  assert.equal(
+    client.calls.filter((call) => call.op === "subscribe").length,
+    9,
+  );
+  assert.equal(manager.connected, true);
+  assert.equal(manager.view(statuses[8].owner).connected, true);
+  assert.equal(manager.view(statuses[0].owner).connected, false);
+});
+
+test("exited output spanning pages survives an empty backpressured page", async (t) => {
+  const item = status(0);
+  const { manager, client } = setup(t, [item]);
+  await manager.reconcile(workspaceId, document([item]));
+  item.state = "exited";
+  assert.throws(() => client.emit(item.sessionId, [], 1, 0));
+  client.emit(item.sessionId, [{ sequence: 1, bytes: [65] }], 1, 3);
+  client.emit(item.sessionId, [], 1, 3);
+  await setImmediate();
+  assert.equal(client.active.size, 1);
+  client.emit(item.sessionId, [{ sequence: 2, bytes: [66] }], 2, 3);
+  await setImmediate();
+  assert.equal(client.active.size, 1);
+  client.emit(item.sessionId, [{ sequence: 3, bytes: [67] }], 3, 3);
+  await setImmediate();
+  assert.equal(client.active.size, 0);
+  const entry = [...manager.entries.values()][0];
+  assert.deepEqual(entry.terminal.written, [65, 66, 67]);
+  assert.equal(entry.cursor, 3);
+  // Delayed events from the released attachment cannot revive or write to it.
+  client.emit(item.sessionId, [{ sequence: 3, bytes: [67] }], 3, 3);
+  await setImmediate();
+  assert.deepEqual(entry.terminal.written, [65, 66, 67]);
+});
+
+test("more than eight exited tiles replay once without retaining subscriptions", async (t) => {
+  const statuses = Array.from({ length: 10 }, (_, n) => status(n, "exited"));
+  const { manager, client } = setup(t, statuses);
+  client.replay = true;
+  await manager.reconcile(workspaceId, document(statuses));
+  await setImmediate();
+  assert.equal(client.active.size, 0);
+  assert.equal(
+    client.calls.filter((call) => call.op === "subscribe").length,
+    10,
+  );
+  await manager.reconcile(workspaceId, document(statuses), true);
+  assert.equal(
+    client.calls.filter((call) => call.op === "subscribe").length,
+    10,
+  );
+});
+
+test("switching canvases releases exited attachments before subscribing", async (t) => {
+  const statuses = Array.from({ length: 8 }, (_, n) => status(n));
+  const { manager, client } = setup(t, statuses);
+  await manager.reconcile(workspaceId, document(statuses));
+  for (const item of statuses) {
+    item.state = "exited";
+    client.emit(item.sessionId, [], 0, 0);
+  }
+  const next = status(8, "running", id(4));
+  statuses.push(next);
+  await manager.reconcile(workspaceId, document([next], next.owner.canvasId));
+  assert.equal(client.active.size, 1);
+  assert.equal(manager.entries.size, 1);
+  assert.equal(manager.view(next.owner).connected, true);
+});
+
+test("starting a replacement waits for an in-flight detach without detaching twice", async (t) => {
+  const item = status(0);
+  const { manager, client } = setup(t, [item]);
+  await manager.reconcile(workspaceId, document([item]));
+  client.detaching = deferred();
+  item.state = "exited";
+  client.emit(item.sessionId, [], 0, 0);
+  await setImmediate();
+  const start = manager.start(item.owner);
+  await setImmediate();
+  assert.equal(client.calls.filter((call) => call.op === "detach").length, 1);
+  assert.equal(
+    client.calls.filter((call) => call.op === "subscribe").length,
+    1,
+  );
+  client.detaching.resolve();
+  await start;
+  assert.equal(
+    client.calls.filter((call) => call.op === "subscribe").length,
+    2,
+  );
+  assert.equal(client.active.size, 1);
+  assert.equal(manager.view(item.owner).status.state, "running");
+  assert.equal(manager.view(item.owner).connected, true);
+});
+
+for (const scope of ["canvas", "workspace"])
+  for (const stopped of [true, false])
+    test(`${scope} removal waits for final output after ${stopped ? "stop polling" : "natural exit"}`, async (t) => {
+      const item = status(0);
+      const { manager, client } = setup(t, [item]);
+      await manager.reconcile(workspaceId, document([item]));
+      if (stopped) await manager.stopSessions([structuredClone(item)]);
+      else item.state = "exited";
+      client.blockWrites = true;
+      client.acknowledging = deferred();
+      client.detaching = deferred();
+      let removed = false;
+      const removal = (async () => {
+        await manager.drainScope(
+          workspaceId,
+          scope === "canvas" ? canvasId : undefined,
+        );
+        removed = true;
+        client.statuses = [];
+      })();
+      await setImmediate();
+      assert.equal(removed, false, "metadata must outlive the final event");
+      client.emit(item.sessionId, [{ sequence: 1, bytes: [65] }], 1, 1);
+      await setImmediate();
+      assert.equal(removed, false);
+      client.writes[0]();
+      await setImmediate();
+      assert.equal(removed, false, "metadata must outlive acknowledgement");
+      client.acknowledging.resolve();
+      await setImmediate();
+      assert.equal(removed, false, "metadata must outlive detach");
+      client.detaching.resolve();
+      await removal;
+      const next = status(1, "running", id(4));
+      if (scope === "workspace") next.owner.workspaceId = id(6);
+      client.statuses = [next];
+      await manager.reconcile(
+        next.owner.workspaceId,
+        document([next], next.owner.canvasId),
+      );
+      assert.equal(manager.view(next.owner).connected, true);
+      assert.equal(manager.entries.size, 1);
+      assert.equal(client.active.size, 1);
+    });
+
+test("scoped draining leaves unrelated live sessions alone", async (t) => {
+  const target = status(0);
+  const sameCanvas = status(1);
+  const otherCanvas = status(2, "running", id(4));
+  const otherWorkspace = status(3);
+  otherWorkspace.owner.workspaceId = id(6);
+  const statuses = [target, sameCanvas, otherCanvas, otherWorkspace];
+  const { manager, client } = setup(t, statuses);
+  await manager.reconcile(workspaceId, document([target, sameCanvas]));
+  await manager.reconcile(
+    workspaceId,
+    document([otherCanvas], otherCanvas.owner.canvasId),
+  );
+  await manager.reconcile(
+    otherWorkspace.owner.workspaceId,
+    document([otherWorkspace]),
+  );
+  target.state = "exited";
+  const drain = manager.drainScope(
+    workspaceId,
+    canvasId,
+    (status) => status.owner.tileId === target.owner.tileId,
+  );
+  client.emit(target.sessionId, [], 0, 0);
+  await drain;
+  assert.equal(client.active.size, 3);
+  for (const item of [sameCanvas, otherCanvas, otherWorkspace])
+    assert.equal(manager.view(item.owner).connected, true);
+});
+
+test("tile names come from the agent registry or this machine's custom agents", () => {
+  const custom = "custom:00000000-0000-4000-8000-000000000001";
+  const agents = [
+    {
+      id: custom,
+      label: "<b>Aider</b>",
+      custom: true,
+      path: "/usr/bin/aider",
+      reason: null,
+      setupHint: null,
+    },
+  ];
+  assert.equal(tileName({ kind: "shell", preset: null }), "Terminal");
+  // Built-in labels resolve before the backend reports capabilities.
+  assert.equal(
+    tileName({ kind: "cli-agent", preset: "claude" }),
+    "Claude Code",
+  );
+  assert.equal(
+    tileName({ kind: "cli-agent", preset: custom }, agents),
+    "<b>Aider</b>",
+  );
+  // Another machine's custom agent stays generic.
+  assert.equal(tileName({ kind: "cli-agent", preset: custom }), "Agent");
+  for (const preset of [
+    "toString",
+    "constructor",
+    "hasOwnProperty",
+    "__proto__",
+  ])
+    assert.equal(tileName({ kind: "cli-agent", preset }), "Agent", preset);
+});
+
+test("agent labels count each preset per project before filtering paste readiness", async (t) => {
+  const statuses = Array.from({ length: 5 }, (_, n) => status(n));
+  statuses[0].state = "failed";
+  statuses[4].projectId = id(6);
+  const saved = document(statuses);
+  saved.sessionTiles = statuses.map((item, index) => ({
+    id: item.owner.tileId,
+    projectId: item.projectId,
+    kind: index === 3 ? "shell" : "cli-agent",
+    preset: ["codex", "claude", "codex", null, "claude"][index],
+  }));
+  const { manager } = setup(t, statuses);
+  await manager.reconcile(workspaceId, saved);
+  assert.deepEqual(
+    [...manager.agentLabels(saved.sessionTiles).values()],
+    ["Codex 1", "Claude Code 1", "Codex 2", "Claude Code 1"],
+  );
+  assert.deepEqual(
+    manager
+      .pasteTargets(workspaceId, canvasId, id(5))
+      .map((target) => target.label),
+    ["Claude Code 1", "Codex 2"],
+  );
+  assert.deepEqual(
+    manager
+      .pasteTargets(workspaceId, canvasId, id(6))
+      .map((target) => target.label),
+    ["Claude Code 1"],
+  );
+});
