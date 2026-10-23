@@ -130,6 +130,7 @@ export class Editor {
   private undoStack: HistoryEntry[] = [];
   private redoStack: HistoryEntry[] = [];
   private historyBreak = true;
+  private holding = false;
   private clock: () => number;
 
   constructor(
@@ -499,7 +500,6 @@ export class Editor {
   private publish(update: Partial<EditorState> = {}) {
     this.state = { ...this.state, ...update };
     const document = this.state.document;
-    if (!document) this.clearHistory();
     this.state.canUndo = !!document && this.undoStack.length > 0;
     this.state.canRedo = !!document && this.redoStack.length > 0;
     this.state.dirty =
@@ -585,12 +585,13 @@ export class Editor {
           canvasId: document.canvas.id,
           expectedRevision: document.canvas.revision,
         });
-        this.load(
-          await this.call(this.key(), false, "canvas.open", {
-            workspaceId,
-            canvasId: document.canvas.id,
-          }),
-        );
+        const fresh = await this.call(this.key(), false, "canvas.open", {
+          workspaceId,
+          canvasId: document.canvas.id,
+        });
+        // Server-side changes (e.g. auto-grown groups) invalidate recorded steps.
+        this.clearHistory();
+        this.load(fresh);
       });
     });
     return result;
@@ -712,7 +713,10 @@ export class Editor {
     };
     if (JSON.stringify(next) === JSON.stringify(group)) return;
     // Collapsing is view state; only geometry is undoable.
-    this.record(`project:${id}`, pickGeometry(group), pickGeometry(next));
+    const before = pickGeometry(group);
+    const after = pickGeometry(next);
+    if (JSON.stringify(before) !== JSON.stringify(after))
+      this.record(`project:${id}`, before, after);
     this.edit({
       ...document,
       projectGroups: document.projectGroups.map((group) =>
@@ -1244,7 +1248,8 @@ export class Editor {
       this.publish({ turns: result.turns });
   }
 
-  private async reloadConversationCanvas() {
+  /** `clear` only when the server document may differ from the local one. */
+  private async reloadConversationCanvas(clear = false) {
     const workspaceId = this.state.workspace!.workspace.id;
     const canvasId = this.state.document!.canvas.id;
     const document = await this.call(this.key(), false, "canvas.open", {
@@ -1256,14 +1261,16 @@ export class Editor {
       canvasId,
       before: 0,
     });
-    // Applied objects must never be rendered with an older pending proposal.
+    // Applied objects must never be rendered with an older pending proposal,
+    // nor overwritten by undoing a step recorded before they were applied.
+    if (clear) this.clearHistory();
     this.load(document, turns);
   }
 
   async reloadConversation() {
     await this.enqueue(async () => {
       if (this.state.dirty || !this.state.document || this.disposed) return;
-      await this.mutation(() => this.reloadConversationCanvas());
+      await this.mutation(() => this.reloadConversationCanvas(true));
     });
   }
 
@@ -1339,6 +1346,8 @@ export class Editor {
           turnId,
           action,
         });
+        // Apply has committed even if either follow-up reload request fails.
+        if (action === "apply") this.clearHistory();
         await this.reloadConversationCanvas();
       });
     });
@@ -1439,9 +1448,18 @@ export class Editor {
     });
   }
 
-  /** Start a new undo step even if the next edit follows quickly. */
-  checkpoint() {
+  /**
+   * Start a new undo step even if the next edit follows quickly. A held step
+   * (an open drag) keeps absorbing edits across pauses until `release`.
+   */
+  checkpoint(hold = false) {
     this.historyBreak = true;
+    this.holding = hold;
+  }
+
+  /** End a held step; edits within the grouping window still join it. */
+  release() {
+    this.holding = false;
   }
 
   /** Undo the last move, resize, or text edit on this canvas. */
@@ -1458,6 +1476,7 @@ export class Editor {
     this.undoStack = [];
     this.redoStack = [];
     this.historyBreak = true;
+    this.holding = false;
   }
 
   /**
@@ -1467,7 +1486,13 @@ export class Editor {
   private record(key: HistoryKey, before: HistoryValue, after: HistoryValue) {
     const now = this.clock();
     const top = this.undoStack.at(-1);
-    if (top && !this.historyBreak && now - top.at < HISTORY_GROUP_MS) {
+    // A drag can abort without a stop event (multi-touch); typing ends it.
+    if (key.startsWith("text:")) this.holding = false;
+    if (
+      top &&
+      !this.historyBreak &&
+      (this.holding || now - top.at < HISTORY_GROUP_MS)
+    ) {
       const existing = top.changes.get(key);
       top.changes.set(key, {
         before: existing ? existing.before : before,
@@ -1502,6 +1527,7 @@ export class Editor {
       if (!next) continue;
       to.push(entry);
       this.historyBreak = true;
+      this.holding = false;
       this.edit(next);
       return;
     }
@@ -1515,56 +1541,36 @@ export class Editor {
   ): CanvasDocument | null {
     let next = document;
     let applied = false;
-    for (const [key, change] of entry.changes) {
+    const fields = {
+      text: "artifacts",
+      node: "nodes",
+      project: "projectGroups",
+      tile: "sessionTiles",
+    } as const;
+    // A draft drawing dragged while saving is recorded under both of its IDs;
+    // undoing in reverse lets the earliest "before" win, redo the latest "after".
+    const changes = [...entry.changes];
+    if (side === "before") changes.reverse();
+    for (const [key, change] of changes) {
       const value = change[side];
       const split = key.indexOf(":");
-      const kind = key.slice(0, split);
+      const kind = key.slice(0, split) as keyof typeof fields;
       const recorded = key.slice(split + 1);
-      if (kind === "text") {
-        if (
-          !next.artifacts.some(
-            (artifact) => artifact.id === recorded && artifact.type === "text",
-          )
-        )
-          continue;
-        next = {
-          ...next,
-          artifacts: next.artifacts.map((artifact) =>
-            artifact.id === recorded && artifact.type === "text"
-              ? { ...artifact, text: value as string }
-              : artifact,
-          ),
-        };
-      } else if (kind === "node") {
-        // Draft drawings adopt a server ID after they are created.
-        const id = this.nodeIds.get(recorded) ?? recorded;
-        if (!next.nodes.some((node) => node.id === id)) continue;
-        next = {
-          ...next,
-          nodes: next.nodes.map((node) =>
-            node.id === id ? { ...node, ...(value as Geometry) } : node,
-          ),
-        };
-      } else if (kind === "project") {
-        if (!next.projectGroups?.some((group) => group.id === recorded))
-          continue;
-        next = {
-          ...next,
-          projectGroups: next.projectGroups.map((group) =>
-            group.id === recorded
-              ? { ...group, ...(value as Geometry) }
-              : group,
-          ),
-        };
-      } else {
-        if (!next.sessionTiles?.some((tile) => tile.id === recorded)) continue;
-        next = {
-          ...next,
-          sessionTiles: next.sessionTiles.map((tile) =>
-            tile.id === recorded ? { ...tile, ...(value as Geometry) } : tile,
-          ),
-        };
-      }
+      // Draft drawings adopt a server ID after they are created.
+      const id =
+        kind === "node" ? (this.nodeIds.get(recorded) ?? recorded) : recorded;
+      const field = fields[kind];
+      const items = next[field] as { id: string; type?: string }[] | undefined;
+      const matches = (item: { id: string; type?: string }) =>
+        item.id === id && (kind !== "text" || item.type === "text");
+      if (!items?.some(matches)) continue;
+      const patch = kind === "text" ? { text: value } : (value as Geometry);
+      next = {
+        ...next,
+        [field]: items.map((item) =>
+          matches(item) ? { ...item, ...patch } : item,
+        ),
+      };
       applied = true;
     }
     return applied ? next : null;

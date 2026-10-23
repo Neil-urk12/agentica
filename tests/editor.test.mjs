@@ -988,6 +988,135 @@ test("separate gestures undo one at a time and a new edit clears redo", async (t
   assert.deepEqual(position(), [10, 20, 240, 160], "extra undo is a no-op");
 });
 
+test("a held drag stays one step across pauses", async (t) => {
+  const { editor, clock } = await setup(t);
+  editor.checkpoint(true);
+  editor.placeNode(nodeId, { x: 50 });
+  clock.now += 2000;
+  editor.placeNode(nodeId, { x: 90 });
+  editor.release();
+  clock.now += 1000;
+  editor.placeNode(nodeId, { y: 70 });
+  editor.undo();
+  assert.equal(editor.state.document.nodes[0].x, 90);
+  editor.undo();
+  assert.deepEqual(
+    [editor.state.document.nodes[0].x, editor.state.document.nodes[0].y],
+    [10, 20],
+  );
+});
+
+test("collapsing a project is not an undo step and keeps redo", async (t) => {
+  const { editor, disk, clock } = await projectSetup(t);
+  const id = disk.projectGroups[0].id;
+  editor.placeProject(id, { x: 99 });
+  editor.undo();
+  clock.now += 1000;
+  editor.placeProject(id, { collapsed: true });
+  assert.equal(editor.state.canUndo, false);
+  assert.equal(editor.state.canRedo, true);
+  editor.redo();
+  assert.equal(editor.state.document.projectGroups[0].x, 99);
+});
+
+test("reloading the canvas from the server clears undo history", async (t) => {
+  const { editor } = await setup(t);
+  editor.placeNode(nodeId, { x: 77 });
+  await editor.save();
+  assert.equal(editor.state.canUndo, true);
+  await editor.reloadConversation();
+  assert.equal(editor.state.canUndo, false);
+  editor.undo();
+  assert.equal(editor.state.document.nodes[0].x, 77);
+});
+
+test("starting or discarding a conversation keeps undo, applying clears it", async (t) => {
+  const { editor, call } = await setup(t);
+  const turnId = "00000000-0000-4000-8000-000000000021";
+  editor.call = async (...args) => {
+    const [, , method] = args;
+    if (method === "conversation.start") return { turn: { id: turnId } };
+    if (method === "conversation.resolve") return {};
+    return call(...args);
+  };
+  editor.placeNode(nodeId, { x: 77 });
+  await editor.save();
+  await editor.startConversation({ workspaceId, canvasId, turnId });
+  assert.equal(editor.state.canUndo, true);
+  await editor.resolveConversation(turnId, "discard");
+  assert.equal(editor.state.canUndo, true);
+  await editor.resolveConversation(turnId, "apply");
+  assert.equal(editor.state.canUndo, false);
+});
+
+test("applied proposals clear history even when the canvas or status reload fails", async (t) => {
+  for (const failedMethod of ["canvas.open", "conversation.list"])
+    await t.test(failedMethod, async (t) => {
+      const { editor, call, disk } = await setup(t);
+      editor.placeNode(nodeId, { x: 77 });
+      editor.checkpoint();
+      editor.editText(artifactId, "Temporary edit");
+      editor.undo();
+      await editor.save();
+      assert.equal(editor.state.canUndo, true);
+      assert.equal(editor.state.canRedo, true);
+
+      let failReload = false;
+      editor.call = async (...args) => {
+        const method = args[2];
+        if (method === "conversation.resolve") {
+          disk.artifacts[0].text = "Agent result";
+          disk.artifacts[0].revision += 1;
+          disk.canvas.revision += 1;
+          failReload = true;
+          return {};
+        }
+        if (failReload && method === failedMethod) {
+          failReload = false;
+          throw new Error("Reload failed");
+        }
+        return call(...args);
+      };
+
+      await editor.resolveConversation(
+        "00000000-0000-4000-8000-000000000021",
+        "apply",
+      );
+      assert.match(editor.state.error, /Reload failed/);
+      assert.equal(editor.state.canUndo, false);
+      assert.equal(editor.state.canRedo, false);
+      editor.undo();
+      editor.redo();
+      assert.equal(editor.state.dirty, false);
+      await editor.reloadConversation();
+      assert.equal(editor.state.error, "");
+      assert.equal(editor.state.document.artifacts[0].text, "Agent result");
+      assert.equal(editor.state.document.nodes[0].x, 77);
+    });
+});
+
+test("an aborted drag stops holding once text is edited or undo runs", async (t) => {
+  const { editor, clock } = await setup(t);
+  editor.checkpoint(true);
+  editor.placeNode(nodeId, { x: 50 });
+  // No release: the drag aborted without a stop event.
+  clock.now += 2000;
+  editor.editText(artifactId, "Typed later");
+  editor.undo();
+  assert.equal(editor.state.document.artifacts[0].text, "Original");
+  assert.equal(editor.state.document.nodes[0].x, 50, "drag is its own step");
+  clock.now += 2000;
+  editor.checkpoint(true);
+  editor.placeNode(nodeId, { y: 90 });
+  editor.undo();
+  clock.now += 2000;
+  editor.placeNode(nodeId, { x: 5 });
+  clock.now += 2000;
+  editor.placeNode(nodeId, { x: 6 });
+  editor.undo();
+  assert.equal(editor.state.document.nodes[0].x, 5, "undo ended the hold");
+});
+
 test("undo covers text edits, skips deleted objects, and resets per canvas", async (t) => {
   const { editor, disk, clock } = await setup(t);
   editor.editText(artifactId, "Orig");

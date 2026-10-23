@@ -2574,7 +2574,8 @@
             onconnect={({ source, target }) => {
               if (tool === "arrow") void editor.createEdge(source, target);
             }}
-            onnodedragstart={() => editor.checkpoint()}
+            onnodedragstart={() => editor.checkpoint(true)}
+            onnodedragstop={() => editor.release()}
             onmove={(_, next) => editor.setViewport(next)}
           >
             <Background patternColor={dark ? "#2c2c30" : "#d9dbe4"} gap={24} />

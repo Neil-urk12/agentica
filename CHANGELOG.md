@@ -10,6 +10,26 @@ released version and date. Keep validation evidence in the
 
 ## Unreleased
 
+### 2026-10-23
+
+- Clear undo and redo immediately after a proposal apply succeeds, before
+  reloading the canvas and turn status. A failed reload can then be retried
+  without stale undo edits making the canvas dirty and blocking recovery.
+
+- Fix undo history after server reloads: applying an agent proposal,
+  reloading the conversation, and project mutations (open, create tile with
+  auto-grow, close) now clear undo and redo, so Ctrl+Z can no longer write
+  stale text or geometry over the server's result or leave a tile outside a
+  group that grew on the server. Starting, finishing, or discarding a turn
+  leaves the canvas untouched, so those keep history. Collapsing a project no
+  longer pushes an empty step that cleared redo. A node drag now stays one step
+  across pauses until it ends; because xyflow skips the stop event when a drag
+  aborts (multi-touch), a text edit or undo also ends the held step. Undoing a
+  drawing dragged while its creation was saving restores its starting
+  position. `applyHistory` is one generic patch over the four collections.
+  Editor tests cover held and aborted drags, collapse, reload, and which
+  conversation steps clear history.
+
 ### 2026-10-22
 
 - Add **Undo** and **Redo** to the canvas navigation bar, with Ctrl+Z and Ctrl+Y
