@@ -1,6 +1,11 @@
 <script lang="ts">
   import { LIMITS } from "@agentica/protocol";
   import Icon from "./Icon.svelte";
+  import {
+    cleanMicName,
+    pickRecorderType,
+    type AudioFormat,
+  } from "../voice-input";
 
   interface Props {
     placeholder?: string;
@@ -18,7 +23,7 @@
      */
     onTranscribe?: (
       audio: Blob,
-      format: "webm" | "ogg" | "mp3" | "wav",
+      format: AudioFormat,
       signal: AbortSignal,
       onStage?: (stage: { label: string }) => void,
     ) => Promise<string>;
@@ -64,17 +69,6 @@
     | "recording"
     | "transcribing"
     | "error";
-  const PREFERRED_TYPES: {
-    mime: string;
-    format: "webm" | "ogg" | "mp3" | "wav";
-  }[] = [
-    { mime: "audio/webm;codecs=opus", format: "webm" },
-    { mime: "audio/webm", format: "webm" },
-    { mime: "audio/ogg;codecs=opus", format: "ogg" },
-    { mime: "audio/ogg", format: "ogg" },
-    { mime: "audio/mp4", format: "mp3" },
-    { mime: "audio/wav", format: "wav" },
-  ];
 
   const voiceSupported = $derived(
     !!onTranscribe &&
@@ -90,13 +84,8 @@
   let recorder: MediaRecorder | null = null;
   let micStream: MediaStream | null = null;
   let chunks: Blob[] = [];
-  let voiceFormat: "webm" | "ogg" | "mp3" | "wav" = "webm";
+  let voiceFormat: AudioFormat = "webm";
   let transcribeAbort: AbortController | null = null;
-
-  /** Trim the OS device suffix some browsers append, e.g. "(1234:5678)". */
-  function cleanMicName(label: string): string {
-    return label.replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$/i, "").trim();
-  }
 
   /**
    * Resolve the microphone label to show. Device labels are only exposed once
@@ -201,14 +190,6 @@
     scheduleWarmRelease();
   }
 
-  function pickRecorderType() {
-    if (typeof MediaRecorder.isTypeSupported !== "function")
-      return { mime: "", format: "webm" as const };
-    for (const candidate of PREFERRED_TYPES)
-      if (MediaRecorder.isTypeSupported(candidate.mime)) return candidate;
-    return { mime: "", format: "webm" as const };
-  }
-
   async function startVoice() {
     if (!voiceSupported || disabled || loading) return;
     voiceError = "";
@@ -229,7 +210,11 @@
     }
     // The user may have cancelled while the permission/device was resolving.
     if (voiceState !== "preparing") return;
-    const { mime, format } = pickRecorderType();
+    const { mime, format } = pickRecorderType(
+      typeof MediaRecorder.isTypeSupported === "function"
+        ? (type) => MediaRecorder.isTypeSupported(type)
+        : undefined,
+    );
     voiceFormat = format;
     try {
       recorder = mime
