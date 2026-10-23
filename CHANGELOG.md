@@ -12,6 +12,11 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Fix file size rounding at the MB boundary (2026-10-23)
+
+- Display `1.0 MB` when a file's size would round up to `1024 KB`, keeping
+  file nodes and pickers from showing a kilobyte value that reaches the next unit.
+
 ### Fix Linux native dependencies in CI (2026-10-23)
 
 - Install `libglib2.0-dev` and `build-essential` via `apt-get` directly in CI

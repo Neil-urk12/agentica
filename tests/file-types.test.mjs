@@ -55,6 +55,14 @@ test("file kinds drive previews and labels", () => {
   }
 });
 
+test("file sizes roll over to MB when the KB value rounds to 1024", () => {
+  assert.equal(formatFileSize(1047552), "1023 KB");
+  assert.equal(formatFileSize(1048063), "1023 KB");
+  assert.equal(formatFileSize(1048064), "1.0 MB");
+  assert.equal(formatFileSize(1048575), "1.0 MB");
+  assert.equal(formatFileSize(1048576), "1.0 MB");
+});
+
 test("file sizes are compact and base64 round-trips multi-chunk bytes", () => {
   assert.equal(formatFileSize(0), "0 B");
   assert.equal(formatFileSize(999), "999 B");
