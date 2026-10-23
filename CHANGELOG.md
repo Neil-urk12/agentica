@@ -12,6 +12,10 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+## 0.1.0 — 2026-10-23
+
+First tagged pre-release. Everything below was developed before versioning began.
+
 ### Test coverage badge (2026-10-23)
 
 - Add a Codecov coverage badge to the README. A new CI coverage job runs on
@@ -195,10 +199,6 @@ installers and publishes the release. Keep validation evidence in the
   one runtime classifier, `agentica_runtime::route`, and share the post-success
   cleanup (`after_runtime_success`), so the two launch modes cannot drift again.
   A unit test pins each method list to its route.
-
-## 0.1.0 — 2026-10-23
-
-First tagged pre-release. Everything below was developed before versioning began.
 
 ### 2026-10-23
 
