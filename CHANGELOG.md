@@ -12,6 +12,13 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Fix Linux native dependencies in CI (2026-10-23)
+
+- Install `libglib2.0-dev` and `build-essential` via `apt-get` directly in CI
+  native and coverage jobs instead of relying on `cache-apt-pkgs-action`, which
+  omitted `glib-2.0.pc` required by `glib-sys` when building the desktop host on
+  Linux.
+
 ### Fix CI coverage report directory (2026-10-23)
 
 - Ensure the `coverage/` directory exists before running `cargo llvm-cov` in CI.
