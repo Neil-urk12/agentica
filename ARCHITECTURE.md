@@ -120,6 +120,15 @@ because any code in the webview can call `/rpc` directly.
 - **Paste into sessions** is always bracketed and never presses Enter, so text
   sent to an agent waits for the user to submit it.
 - **Git** runs with fixed argv, `GIT_*` overrides cleared, and a 10 s deadline.
+- **Voice input** records from the microphone only after the user grants
+  permission, and transcribes in a Web Worker in the webview with a local Whisper
+  model ([ADR 0005](docs/architecture/0005-local-speech-to-text.md)). Audio and
+  transcripts never leave the machine. The worker downloads the model from
+  `huggingface.co` and the ONNX runtime from `cdn.jsdelivr.net` on first use;
+  both are allowed by the existing `https:` in the CSP `connect-src`. The CSP
+  adds `'wasm-unsafe-eval'` to `script-src` so the runtime can compile
+  WebAssembly, and `blob:` to `worker-src` for the runtime's worker. It still
+  disallows `eval` of JavaScript.
 
 ## Why this stack
 
