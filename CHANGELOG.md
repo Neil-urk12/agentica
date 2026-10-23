@@ -12,6 +12,47 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Canvas undo and redo
+
+- Add **Undo** and **Redo** to the canvas navigation bar, with Ctrl+Z and Ctrl+Y
+  or Ctrl+Shift+Z (⌘Z and ⇧⌘Z on macOS). They reverse moves and resizes of
+  notes, shapes, files, designs, project groups, and session tiles, and text
+  edits. Text fields keep their native undo while focused. Edits less than 600 ms
+  apart form one step, and a node drag starts a new one, so a whole drag or a
+  burst of typing undoes at once. Each step keeps every touched object's first
+  value, holds up to 100 steps, and is cleared when the canvas closes or another
+  one opens; a new edit clears redo. Undo writes through the existing autosave
+  buffer (`canvas.save` and `artifact.saveText`) instead of new runtime commands,
+  so revision checks and save recovery are unchanged. Steps whose objects were
+  deleted are skipped. Server-side mutations (create, delete, connect, applied
+  proposals) and project collapse are not undoable yet. Editor unit tests cover
+  gesture grouping, redo invalidation, text, deleted objects, and per-canvas
+  history; a rendered browser test drags a note, presses Ctrl+Z, checks the
+  saved position, and redoes with the button.
+
+- Clear undo and redo immediately after a proposal apply succeeds, before
+  reloading the canvas and turn status. A failed reload can then be retried
+  without stale undo edits making the canvas dirty and blocking recovery.
+
+- Remove the unused HTTP `serve` convenience wrapper and obsolete PTY spike
+  example. Backend and tests supply their session service directly, and native
+  PTY handling lives in `sessions/`, avoiding duplicate maintenance and an extra
+  example target in all-target checks.
+
+- Fix undo history after server reloads: applying an agent proposal,
+  reloading the conversation, and project mutations (open, create tile with
+  auto-grow, close) now clear undo and redo, so Ctrl+Z can no longer write
+  stale text or geometry over the server's result or leave a tile outside a
+  group that grew on the server. Starting, finishing, or discarding a turn
+  leaves the canvas untouched, so those keep history. Collapsing a project no
+  longer pushes an empty step that cleared redo. A node drag now stays one step
+  across pauses until it ends; because xyflow skips the stop event when a drag
+  aborts (multi-touch), a text edit or undo also ends the held step. Undoing a
+  drawing dragged while its creation was saving restores its starting
+  position. `applyHistory` is one generic patch over the four collections.
+  Editor tests cover held and aborted drags, collapse, reload, and which
+  conversation steps clear history.
+
 ### Start the Nodes drawer collapsed
 
 - The Nodes drawer now starts closed and closes again whenever a canvas opens,
@@ -68,29 +109,6 @@ installers and publishes the release. Keep validation evidence in the
 First tagged pre-release. Everything below was developed before versioning began.
 
 ### 2026-10-23
-
-- Clear undo and redo immediately after a proposal apply succeeds, before
-  reloading the canvas and turn status. A failed reload can then be retried
-  without stale undo edits making the canvas dirty and blocking recovery.
-
-- Remove the unused HTTP `serve` convenience wrapper and obsolete PTY spike
-  example. Backend and tests supply their session service directly, and native
-  PTY handling lives in `sessions/`, avoiding duplicate maintenance and an extra
-  example target in all-target checks.
-
-- Fix undo history after server reloads: applying an agent proposal,
-  reloading the conversation, and project mutations (open, create tile with
-  auto-grow, close) now clear undo and redo, so Ctrl+Z can no longer write
-  stale text or geometry over the server's result or leave a tile outside a
-  group that grew on the server. Starting, finishing, or discarding a turn
-  leaves the canvas untouched, so those keep history. Collapsing a project no
-  longer pushes an empty step that cleared redo. A node drag now stays one step
-  across pauses until it ends; because xyflow skips the stop event when a drag
-  aborts (multi-touch), a text edit or undo also ends the held step. Undoing a
-  drawing dragged while its creation was saving restores its starting
-  position. `applyHistory` is one generic patch over the four collections.
-  Editor tests cover held and aborted drags, collapse, reload, and which
-  conversation steps clear history.
 
 - Added release packaging. Tauri bundling is on (`pnpm package:desktop`), and a
   `vX.Y.Z` tag runs GitLab CI jobs that check the tag matches the app version,
@@ -236,22 +254,6 @@ First tagged pre-release. Everything below was developed before versioning began
     low-end laptop or in Firefox and Safari.
 
 ### 2026-10-22
-
-- Add **Undo** and **Redo** to the canvas navigation bar, with Ctrl+Z and Ctrl+Y
-  or Ctrl+Shift+Z (⌘Z and ⇧⌘Z on macOS). They reverse moves and resizes of
-  notes, shapes, files, designs, project groups, and session tiles, and text
-  edits. Text fields keep their native undo while focused. Edits less than 600 ms
-  apart form one step, and a node drag starts a new one, so a whole drag or a
-  burst of typing undoes at once. Each step keeps every touched object's first
-  value, holds up to 100 steps, and is cleared when the canvas closes or another
-  one opens; a new edit clears redo. Undo writes through the existing autosave
-  buffer (`canvas.save` and `artifact.saveText`) instead of new runtime commands,
-  so revision checks and save recovery are unchanged. Steps whose objects were
-  deleted are skipped. Server-side mutations (create, delete, connect, applied
-  proposals) and project collapse are not undoable yet. Editor unit tests cover
-  gesture grouping, redo invalidation, text, deleted objects, and per-canvas
-  history; a rendered browser test drags a note, presses Ctrl+Z, checks the
-  saved position, and redoes with the button.
 
 - Add OpenAI-compatible presets for NVIDIA NIM, Groq, Together AI, Mistral AI,
   and DeepSeek to **Settings > Advanced > Where the AI runs**. Each keeps its
