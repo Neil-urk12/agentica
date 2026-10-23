@@ -12,6 +12,10 @@ released version and date. Keep validation evidence in the
 
 ### 2026-10-23
 
+- Added `.gitlab-ci.yml`, a copy of the GitHub Actions CI jobs (frontend,
+  Linux and Windows native checks), because GitHub Actions jobs are not starting
+  while the account is billing-locked. It runs on a GitLab push mirror.
+
 - MCP failures now return generic transport/protocol errors to the model and
   redact configured environment values from Settings diagnostics. Stdin writes
   and response reads share a deadline; a timed-out client is killed so a blocked
