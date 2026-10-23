@@ -99,3 +99,47 @@ jobs:
       - name: Desktop build (debug)
         if: github.ref != 'refs/heads/main'
         run: pnpm build:desktop --debug
+
+  coverage:
+    name: Coverage
+    # Pushes only: the badge reads the default branch, so PR runs would spend a
+    # second instrumented Rust build without changing it.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      # Codecov authenticates the upload with a GitHub OIDC token, so no
+      # CODECOV_TOKEN secret is needed once the Codecov app is installed.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - name: Install Linux native libraries
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: libwebkit2gtk-4.1-dev libssl-dev librsvg2-dev
+          version: 1
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - name: Rust coverage
+        run: cargo llvm-cov --locked -p agentica-runtime --features bundled-frontend --lcov --output-path coverage/rust.lcov
+      - name: Frontend coverage
+        run: pnpm test:unit:coverage
+      - uses: codecov/codecov-action@v7
+        with:
+          files: coverage/rust.lcov,coverage/js.lcov
+          use_oidc: true

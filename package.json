@@ -24,6 +24,7 @@
     "test:rust": "cargo test --locked --workspace",
     "test:rust:unit": "cargo test --locked --workspace --lib --bins",
     "test:unit": "pnpm --filter @agentica/protocol build && node --test tests/canvas-agent.test.mjs tests/canvas-view.test.mjs tests/changes.test.mjs tests/contracts.test.mjs tests/editor.test.mjs tests/landing-camera.test.mjs tests/markdown.test.mjs tests/openrouter.test.mjs tests/provider.test.mjs tests/sessions.test.mjs tests/tasks.test.mjs tests/voice-input.test.mjs",
+    "test:unit:coverage": "pnpm --filter @agentica/protocol build && mkdir -p coverage && node --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=coverage/js.lcov tests/canvas-agent.test.mjs tests/canvas-view.test.mjs tests/changes.test.mjs tests/contracts.test.mjs tests/editor.test.mjs tests/landing-camera.test.mjs tests/markdown.test.mjs tests/openrouter.test.mjs tests/provider.test.mjs tests/sessions.test.mjs tests/tasks.test.mjs tests/voice-input.test.mjs",
     "test": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop build && cargo test --locked -p agentica-runtime --features bundled-frontend && cargo build --locked -p agentica-runtime --features bundled-frontend && node --test",
     "build:backend": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop build && cargo build --locked --release -p agentica-runtime --bin agentica-backend --features bundled-frontend",
     "format": "oxfmt",

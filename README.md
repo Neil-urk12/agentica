@@ -1,5 +1,7 @@
 # Agentica
 
+[![codecov](https://codecov.io/gh/Neil-urk12/agentica/branch/develop/graph/badge.svg)](https://codecov.io/gh/Neil-urk12/agentica)
+
 An infinite canvas for working with coding agents. Put notes, diagrams, project
 folders, terminals, and CLI agents side by side, ask a model to sketch on the
 canvas, and review every change it proposes before it lands.

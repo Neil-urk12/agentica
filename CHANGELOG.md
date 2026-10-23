@@ -12,6 +12,17 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Test coverage badge (2026-10-23)
+
+- Add a Codecov coverage badge to the README. A new CI coverage job runs on
+  pushes to `main` and `develop` and uploads two lcov reports: `cargo llvm-cov`
+  over the Rust runtime with the embedded frontend, and Node's built-in coverage
+  over the unit tests (`pnpm test:unit:coverage` reproduces the latter locally).
+  Uploads authenticate with GitHub OIDC (`id-token: write`) instead of a stored
+  token. The badge stays "unknown" until the Codecov GitHub App is installed on
+  the repository and receives its first upload, so that setup is not yet
+  validated.
+
 ### Dictate prompts with on-device speech-to-text (2026-10-23)
 
 - Add a microphone button to the composer. It records with `MediaRecorder` and

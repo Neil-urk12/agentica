@@ -7,19 +7,20 @@ Reference for working on Agentica's code. To run the app, see
 
 ## Checks
 
-| Command                | What it checks                                                                                                                           |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm check`           | Svelte and strict TypeScript                                                                                                             |
-| `pnpm lint`            | Oxlint on JavaScript, TypeScript, and Svelte                                                                                             |
-| `pnpm format:check`    | Oxfmt formatting of source and Markdown (`pnpm format` fixes it)                                                                         |
-| `pnpm check:rust`      | `cargo fmt --check` and Clippy with `-D warnings`, all targets and features                                                              |
-| `pnpm test:unit`       | Node unit tests (what CI runs)                                                                                                           |
-| `pnpm test:rust`       | Rust workspace tests                                                                                                                     |
-| `pnpm test`            | Everything: builds protocol and frontend, Rust tests with the embedded UI, then all Node tests including the real HTTP and browser tests |
-| `pnpm build`           | Protocol, frontend, and an RPC-only debug backend                                                                                        |
-| `pnpm build:desktop`   | Release desktop binary (no installer)                                                                                                    |
-| `pnpm package:desktop` | Desktop installers; pass `--bundles` to pick formats ([details](../running.md#installers))                                               |
-| `pnpm build:backend`   | Release backend with the embedded UI                                                                                                     |
+| Command                   | What it checks                                                                                                                           |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm check`              | Svelte and strict TypeScript                                                                                                             |
+| `pnpm lint`               | Oxlint on JavaScript, TypeScript, and Svelte                                                                                             |
+| `pnpm format:check`       | Oxfmt formatting of source and Markdown (`pnpm format` fixes it)                                                                         |
+| `pnpm check:rust`         | `cargo fmt --check` and Clippy with `-D warnings`, all targets and features                                                              |
+| `pnpm test:unit`          | Node unit tests (what CI runs)                                                                                                           |
+| `pnpm test:unit:coverage` | Node unit tests with an lcov report at `coverage/js.lcov` (uploaded by the coverage job)                                                 |
+| `pnpm test:rust`          | Rust workspace tests                                                                                                                     |
+| `pnpm test`               | Everything: builds protocol and frontend, Rust tests with the embedded UI, then all Node tests including the real HTTP and browser tests |
+| `pnpm build`              | Protocol, frontend, and an RPC-only debug backend                                                                                        |
+| `pnpm build:desktop`      | Release desktop binary (no installer)                                                                                                    |
+| `pnpm package:desktop`    | Desktop installers; pass `--bundles` to pick formats ([details](../running.md#installers))                                               |
+| `pnpm build:backend`      | Release backend with the embedded UI                                                                                                     |
 
 Notes:
 
@@ -53,9 +54,14 @@ desktop build. The native job runs only when Rust code, Cargo files, the shared
 `tests/fixtures` (Rust tests embed them), `package.json`, the pnpm lockfile, or
 the workflow change, and always on `main`. It runs on Linux, plus
 Windows for `main` and pull requests into `main`. The desktop build is a debug
-build except on `main`, which does a release build. A newer push to a pull request
-cancels its running workflow; branch pushes are never cancelled. Tag pushes run
-no checks, so tag only commits that passed CI on `main`. The
+build except on `main`, which does a release build. A coverage job runs on pushes
+to `main` and `develop` only: `cargo llvm-cov` covers the Rust runtime and Node's
+built-in coverage covers the unit tests, and both lcov reports are uploaded to
+Codecov, which serves the README badge. Uploads use GitHub OIDC, so no token is
+stored; the Codecov GitHub App must be installed on the repository. A newer push
+to a pull request cancels its running workflow; branch pushes are never
+cancelled. Tag pushes run no checks, so tag only commits that passed CI on
+`main`. The
 [GitLab mirror](../../.gitlab-ci.yml) runs only on `vX.Y.Z` tags, where it builds
 installers and publishes a release
 ([how to cut one](../running.md#cutting-a-release)).
