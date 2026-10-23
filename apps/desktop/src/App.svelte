@@ -101,6 +101,7 @@
     getProviderConfig,
     validateProvider,
   } from "./lib/provider";
+  import { transcribeSpeech } from "./lib/speech";
   import WorkspacePicker from "./lib/components/WorkspacePicker.svelte";
   import CanvasPicker from "./lib/components/CanvasPicker.svelte";
   import NodeDrawer from "./lib/components/NodeDrawer.svelte";
@@ -3221,6 +3222,19 @@
             onAddFile={() => fileInput?.click()}
             addFileDisabled={!canEdit || importing}
             onSubmit={handlePromptSubmit}
+            onTranscribe={(audio, _format, signal, onStage) =>
+              transcribeSpeech(audio, signal, (progress) => {
+                if (progress.stage === "decoding")
+                  onStage?.({ label: "Preparing audio…" });
+                else if (progress.stage === "downloading")
+                  onStage?.({
+                    label:
+                      progress.percent !== undefined
+                        ? `Downloading speech model… ${progress.percent}% (first use only)`
+                        : "Preparing speech model… (first use only)",
+                  });
+                else onStage?.({ label: "Transcribing your voice…" });
+              })}
           />
         </div>
       </main>
