@@ -26,7 +26,7 @@ provider.
 | [Canvas tasks](docs/user-guide.md#canvas-tasks) assigned and sent to agent tiles                                                                                      | Implemented                                      |
 | [Voice input](docs/user-guide.md#dictate-a-prompt): dictate prompts, transcribed on this machine by a local Whisper model                                             | Implemented; not yet validated                   |
 | [Coding agents](docs/user-guide.md#coding-agents) beyond Codex (Claude Code, OpenCode, Crush, pi, and more) found on `PATH`, plus custom agents                       | Implemented; not yet validated                   |
-| [Installers](docs/running.md#installers) for Linux (AppImage, deb, rpm) and Windows, published as GitLab Releases                                                     | Implemented; not yet validated                   |
+| [Installers](docs/running.md#installers) for Linux (AppImage, deb, rpm) and Windows, published as GitHub and GitLab Releases                                          | Implemented; not yet validated                   |
 | Remote MCP servers, tools that change data, macOS                                                                                                                     | Planned                                          |
 
 "Validated" means tested end to end on the stated platform; see

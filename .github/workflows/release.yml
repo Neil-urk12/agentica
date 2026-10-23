@@ -1,0 +1,89 @@
+name: Release
+
+# Mirrors .gitlab-ci.yml: a `vX.Y.Z` tag builds installers and publishes a
+# GitHub Release. Tag pushes run no checks, so tag only commits that passed CI.
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.ref_name }}
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  draft:
+    name: Create draft release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: test "v$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")" = "$TAG"
+      # A re-run of a failed workflow reuses the draft left by the first attempt.
+      - run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --verify-tag \
+            --title "Agentica $TAG" \
+            --notes "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/$TAG/CHANGELOG.md) for what changed."
+
+  package:
+    name: Package (${{ matrix.os }})
+    needs: draft
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            bundles: deb,rpm,appimage
+          - os: windows-latest
+            bundles: nsis
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      # The runner has no libfuse2 for linuxdeploy to mount the AppImage.
+      APPIMAGE_EXTRACT_AND_RUN: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux native libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libglib2.0-dev libssl-dev librsvg2-dev build-essential file
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm package:desktop --bundles ${{ matrix.bundles }}
+      - run: pnpm build:backend
+      - name: Upload Linux assets
+        if: runner.os == 'Linux'
+        run: |
+          mkdir out
+          cp target/release/bundle/appimage/*.AppImage "out/agentica-$TAG-linux-x86_64.AppImage"
+          cp target/release/bundle/deb/*.deb "out/agentica-$TAG-linux-amd64.deb"
+          cp target/release/bundle/rpm/*.rpm "out/agentica-$TAG-linux-x86_64.rpm"
+          cp target/release/agentica-backend "out/agentica-backend-$TAG-linux-x86_64"
+          gh release upload "$TAG" out/* --clobber
+      - name: Upload Windows assets
+        if: runner.os == 'Windows'
+        run: |
+          mkdir out
+          cp target/release/bundle/nsis/*-setup.exe "out/agentica-$TAG-windows-x64-setup.exe"
+          cp target/release/agentica-backend.exe "out/agentica-backend-$TAG-windows-x64.exe"
+          gh release upload "$TAG" out/* --clobber
+
+  publish:
+    name: Publish release
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: gh release edit "$TAG" --repo "${{ github.repository }}" --draft=false --latest
