@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { test } from "node:test";
-import { FILE_LIMITS, LIMITS, MAX_FRAME_BYTES } from "@agentica/protocol";
+import {
+  FILE_LIMITS,
+  LIMITS,
+  MAX_FRAME_BYTES,
+  MAX_IDS,
+} from "@agentica/protocol";
 import { Editor } from "../apps/desktop/src/lib/editor.ts";
 import { stageOperations } from "../apps/desktop/src/lib/canvas-agent.ts";
 
@@ -166,6 +171,22 @@ async function setup(t, intercept = async () => {}) {
       const node = disk.nodes.find((item) => item.id === params.nodeId);
       if (!node) throw new Error("NOT_FOUND: Node on this canvas");
       disk.nodes = disk.nodes.filter((item) => item.id !== params.nodeId);
+      const retained = new Set(disk.nodes.map((item) => item.artifactId));
+      disk.artifacts = disk.artifacts.filter((item) => retained.has(item.id));
+      disk.canvas = { ...disk.canvas, revision: params.expectedRevision + 1 };
+      return { revision: disk.canvas.revision };
+    }
+    if (method === "node.deleteMany") {
+      assert.equal(params.expectedRevision, disk.canvas.revision);
+      // Like the runtime: one missing object leaves every object in place.
+      if (!params.nodeIds.every((id) => disk.nodes.some((n) => n.id === id)))
+        throw new Error("NOT_FOUND: Node on this canvas");
+      const doomed = new Set(params.nodeIds);
+      disk.nodes = disk.nodes.filter((item) => !doomed.has(item.id));
+      disk.edges = disk.edges.filter(
+        (edge) =>
+          !doomed.has(edge.sourceNodeId) && !doomed.has(edge.targetNodeId),
+      );
       const retained = new Set(disk.nodes.map((item) => item.artifactId));
       disk.artifacts = disk.artifacts.filter((item) => retained.has(item.id));
       disk.canvas = { ...disk.canvas, revision: params.expectedRevision + 1 };
@@ -1206,6 +1227,93 @@ test("undo covers text edits, skips deleted objects, and resets per canvas", asy
   assert.equal(editor.state.canUndo, false);
   editor.undo();
   assert.equal(editor.state.document.nodes[0].x, 77);
+});
+
+test("undo and redo restore grouping as one step", async (t) => {
+  const { editor, disk } = await setup(t);
+  const other = await editor.addText({ x: 400 }, "Second");
+  const ids = [nodeId, other.node.id];
+  const groupOf = () => editor.state.document.nodes.map((n) => n.groupId);
+  editor.checkpoint();
+  editor.placeNode(nodeId, { x: 50 });
+  const groupId = editor.groupNodes(ids);
+  assert.deepEqual(groupOf(), [groupId, groupId]);
+
+  editor.undo();
+  assert.deepEqual(groupOf(), [undefined, undefined], "undo ungroups");
+  assert.equal(
+    editor.state.document.nodes[0].x,
+    50,
+    "the move is its own step",
+  );
+  await editor.save();
+  assert.ok(disk.nodes.every((n) => !("groupId" in n)));
+  editor.redo();
+  assert.deepEqual(groupOf(), [groupId, groupId], "redo regroups");
+
+  editor.ungroupNodes([nodeId]);
+  editor.undo();
+  assert.deepEqual(groupOf(), [groupId, groupId], "undo restores the group");
+  await editor.save();
+  assert.ok(disk.nodes.every((n) => n.groupId === groupId));
+  editor.undo();
+  editor.undo();
+  assert.equal(
+    editor.state.document.nodes[0].x,
+    10,
+    "earlier moves still undo",
+  );
+});
+
+test("deleting several objects is one request that fails as a whole", async (t) => {
+  const { editor, disk, calls } = await setup(t);
+  const other = await editor.addText({ x: 400 }, "Second");
+  const third = await editor.addText({ x: 800 }, "Third");
+  const before = calls.length;
+  await editor.deleteNodes([nodeId, other.node.id]);
+  assert.equal(editor.state.error, "");
+  const sent = calls
+    .slice(before)
+    .filter(({ method }) => method.startsWith("node.delete"));
+  assert.deepEqual(
+    sent.map(({ method }) => method),
+    ["node.deleteMany"],
+  );
+  assert.deepEqual(
+    disk.nodes.map((n) => n.id),
+    [third.node.id],
+  );
+  assert.deepEqual(
+    editor.state.document.nodes.map((n) => n.id),
+    [third.node.id],
+  );
+
+  // A stale object fails the request and leaves everything in place.
+  const kept = await editor.addText({ x: 1200 }, "Kept");
+  disk.nodes = disk.nodes.filter((n) => n.id !== third.node.id);
+  await editor.deleteNodes([third.node.id, kept.node.id]);
+  assert.match(editor.state.error, /NOT_FOUND/);
+  assert.ok(disk.nodes.some((n) => n.id === kept.node.id));
+});
+
+test("deleting more than MAX_IDS objects sends one request per chunk", async (t) => {
+  const { editor, disk, calls } = await setup(t);
+  for (let index = 0; index < MAX_IDS; index += 1)
+    assert.ok(await editor.addText({ x: 300 * (index + 1) }, "More"));
+  const ids = editor.state.document.nodes.map((n) => n.id);
+  assert.equal(ids.length, MAX_IDS + 1);
+  const before = calls.length;
+  await editor.deleteNodes(ids);
+  assert.equal(editor.state.error, "");
+  assert.deepEqual(
+    calls
+      .slice(before)
+      .filter(({ method }) => method === "node.deleteMany")
+      .map(({ params }) => params.nodeIds.length),
+    [MAX_IDS, 1],
+  );
+  assert.equal(disk.nodes.length, 0);
+  assert.equal(editor.state.document.nodes.length, 0);
 });
 
 test("grouping and ungrouping save through the layout", async (t) => {

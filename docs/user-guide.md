@@ -24,12 +24,12 @@ or Ctrl/Cmd+Enter stops editing. Nothing on this page except the conversation
 needs an AI account.
 
 **Undo** and **Redo** (Ctrl+Z and Ctrl+Y or Ctrl+Shift+Z; ⌘Z and ⇧⌘Z on macOS)
-reverse moves, resizes, and text edits on the open canvas. A whole drag or a
-burst of typing is one step, and undone changes are autosaved like any other
-edit. While a text field has focus, the shortcuts use that field's own undo.
-Creating, deleting, connecting, applied proposals, and panning or zooming are
-not undoable. History belongs to the open canvas and is cleared when you leave
-it; a step for an object deleted since is skipped.
+reverse moves, resizes, text edits, grouping, and ungrouping on the open
+canvas. A whole drag or a burst of typing is one step, and undone changes are
+autosaved like any other edit. While a text field has focus, the shortcuts use
+that field's own undo. Creating, deleting, connecting, applied proposals, and
+panning or zooming are not undoable. History belongs to the open canvas and is
+cleared when you leave it; a step for an object deleted since is skipped.
 
 ### Selecting, grouping, and deleting
 
@@ -41,8 +41,11 @@ button, or scroll the view controls. With a selection:
 - **Ctrl+G** (⌘G) groups two or more objects. A dashed outline marks the group;
   clicking or dragging any member selects and moves the whole group.
 - **Ctrl+Shift+G** (⇧⌘G) ungroups every group in the selection.
-- **Delete** or **Backspace** deletes the selection; deleting several objects
-  asks for confirmation first, because deletion can't be undone.
+- **Delete** or **Backspace** deletes the selection after asking for
+  confirmation, because deletion can't be undone. The keys do nothing while a
+  button or other control has focus. Up to 128 objects are deleted together or
+  not at all: if one can't be deleted, all stay selected. Larger selections are
+  deleted 128 at a time, and a failure stops before the next batch.
 
 The same actions appear in a bar above the toolbar whenever two or more objects
 or a group are selected. Groups are saved with the canvas. Project groups and

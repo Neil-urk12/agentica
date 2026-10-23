@@ -1893,6 +1893,21 @@ test("box selection groups, moves, ungroups, and deletes canvas objects", async 
       "the saved ungroup",
     );
 
+    // A key pressed on a focused button never deletes the selection.
+    await evaluate(
+      browser,
+      `document.querySelector('.canvas-dock button:not([disabled])').focus()`,
+    );
+    await press("Backspace", "Backspace", 8);
+    await delay(200);
+    assert.equal(
+      await evaluate(browser, `!!document.querySelector('dialog[open]')`),
+      false,
+      "Backspace on a button opened the delete confirmation",
+    );
+    assert.equal((await stored()).size, 3);
+    await evaluate(browser, `document.activeElement?.blur()`);
+
     // Delete removes the selection after confirmation.
     await press("Delete", "Delete", 46);
     await waitFor(

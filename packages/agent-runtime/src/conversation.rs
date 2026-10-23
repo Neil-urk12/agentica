@@ -115,6 +115,15 @@ fn outline_entry(artifact: &Value) -> (&'static str, String) {
     }
 }
 
+/// A placement as the model sees it. Grouping is UI arrangement the model
+/// cannot change, so `groupId` is left out to save context bytes.
+fn model_node(mut node: Value) -> Value {
+    if let Some(object) = node.as_object_mut() {
+        object.remove("groupId");
+    }
+    node
+}
+
 /// Canvas map for the model: write scope first, then nearest the stored anchor.
 /// Conversation cards are left out unless writable; the model gets them as history.
 fn outline(
@@ -401,16 +410,7 @@ fn scoped_node(
             [artifact_id],
             |row| row.get(0),
         )?;
-        // Grouping is arrangement, not content: it never invalidates a proposal.
-        let ungrouped = |value: &Value| {
-            let mut value = value.clone();
-            if let Some(object) = value.as_object_mut() {
-                object.remove("groupId");
-            }
-            value
-        };
-        if ungrouped(&node) != ungrouped(original)
-            || current_revision != original_artifact["revision"].as_i64().unwrap()
+        if node != *original || current_revision != original_artifact["revision"].as_i64().unwrap()
         {
             return Err(RuntimeError::new("CONFLICT", "A proposal target changed. Discard this proposal and regenerate from current content; nothing was applied."));
         }
@@ -660,6 +660,7 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                         || p.node_ids.iter().any(|id| n["id"] == *id)
                 })
                 .cloned()
+                .map(model_node)
                 .collect();
             if !p.node_ids.is_empty() && nodes.len() != p.node_ids.len() {
                 return Err(not_found("Selected object"));
@@ -738,6 +739,7 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                 .iter()
                 .filter(|n| p.node_ids.iter().any(|id| n["id"] == *id))
                 .cloned()
+                .map(model_node)
                 .collect();
             // One message for missing and foreign IDs, so reads cannot probe other canvases.
             if nodes.len() != p.node_ids.len() {

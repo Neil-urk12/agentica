@@ -418,4 +418,140 @@ mod tests {
             .iter()
             .all(|node| node.get("groupId").is_none()));
     }
+
+    fn rpc(runtime: &mut Runtime, method: &str, params: Value) -> Value {
+        runtime.handle_request(
+            &serde_json::to_vec(
+                &json!({"protocolVersion": 1, "id": "t", "method": method, "params": params}),
+            )
+            .unwrap(),
+        )
+    }
+
+    /// A canvas with `count` notes; returns workspace, canvas, revision, node IDs.
+    fn notes(runtime: &mut Runtime, count: usize) -> (Value, Value, i64, Vec<Value>) {
+        let workspace = rpc(runtime, "workspace.create", json!({"name": "Notes"}))["result"]
+            ["workspace"]["id"]
+            .clone();
+        let canvas = rpc(
+            runtime,
+            "canvas.create",
+            json!({"workspaceId": workspace, "title": "Board"}),
+        )["result"]["canvas"]["id"]
+            .clone();
+        let mut revision = 1;
+        let mut ids = Vec::new();
+        for index in 0..count {
+            let created = rpc(
+                runtime,
+                "node.createText",
+                json!({"workspaceId": workspace, "canvasId": canvas, "expectedRevision": revision,
+                    "x": index as f64 * 300.0, "y": 0, "width": 240, "height": 160, "text": "Note"}),
+            );
+            revision = created["result"]["revision"].as_i64().unwrap();
+            ids.push(created["result"]["node"]["id"].clone());
+        }
+        (workspace, canvas, revision, ids)
+    }
+
+    #[test]
+    fn delete_many_removes_every_object_or_none() {
+        let data = tempfile::tempdir().unwrap();
+        let mut runtime = Runtime::new(Some(data.path().into()));
+        let (workspace, canvas, revision, ids) = notes(&mut runtime, 3);
+        let linked = rpc(
+            &mut runtime,
+            "edge.create",
+            json!({"workspaceId": workspace, "canvasId": canvas, "expectedRevision": revision,
+                "kind": "relationship", "sourceNodeId": ids[0], "targetNodeId": ids[2]}),
+        );
+        let revision = linked["result"]["revision"]
+            .as_i64()
+            .unwrap_or_else(|| panic!("{linked}"));
+        let delete = |runtime: &mut Runtime, revision: i64, node_ids: Value| {
+            rpc(
+                runtime,
+                "node.deleteMany",
+                json!({"workspaceId": workspace, "canvasId": canvas,
+                    "expectedRevision": revision, "nodeIds": node_ids}),
+            )
+        };
+        let open = |runtime: &mut Runtime| {
+            rpc(
+                runtime,
+                "canvas.open",
+                json!({"workspaceId": workspace, "canvasId": canvas}),
+            )["result"]
+                .clone()
+        };
+
+        // A missing object fails the whole request; nothing is deleted.
+        let missing = "00000000-0000-4000-8000-0000000000ff";
+        let failed = delete(&mut runtime, revision, json!([ids[0], ids[1], missing]));
+        assert_eq!(failed["error"]["code"], "NOT_FOUND", "{failed}");
+        let state = open(&mut runtime);
+        assert_eq!(state["nodes"].as_array().unwrap().len(), 3, "{state}");
+        assert_eq!(state["canvas"]["revision"], revision);
+        for bad in [json!([]), json!([ids[0], ids[0]])] {
+            assert_eq!(
+                delete(&mut runtime, revision, bad)["error"]["code"],
+                "INVALID_PARAMS"
+            );
+        }
+
+        let deleted = delete(&mut runtime, revision, json!([ids[0], ids[1]]));
+        assert_eq!(deleted["result"]["revision"], revision + 1, "{deleted}");
+        let state = open(&mut runtime);
+        let nodes = state["nodes"].as_array().unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0]["id"], ids[2]);
+        assert!(state["edges"].as_array().unwrap().is_empty(), "{state}");
+        assert_eq!(state["artifacts"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn model_context_leaves_out_group_ids() {
+        let data = tempfile::tempdir().unwrap();
+        let mut runtime = Runtime::new(Some(data.path().into()));
+        let (workspace, canvas, revision, ids) = notes(&mut runtime, 2);
+        let group = "00000000-0000-4000-8000-0000000000ee";
+        let nodes: Vec<_> = ids
+            .iter()
+            .enumerate()
+            .map(|(index, id)| {
+                json!({"id": id, "x": index as f64 * 300.0, "y": 0,
+                "width": 240, "height": 160, "groupId": group})
+            })
+            .collect();
+        let saved = rpc(
+            &mut runtime,
+            "canvas.save",
+            json!({"workspaceId": workspace, "canvasId": canvas, "expectedRevision": revision,
+                "viewport": {"x": 0, "y": 0, "zoom": 1}, "nodes": nodes}),
+        );
+        assert!(saved["result"]["revision"].is_i64(), "{saved}");
+        let turn = "00000000-0000-4000-8000-0000000000aa";
+        let started = rpc(
+            &mut runtime,
+            "conversation.start",
+            json!({"workspaceId": workspace, "canvasId": canvas, "turnId": turn,
+                "prompt": "Summarize", "model": "test", "nodeIds": ids,
+                "anchor": {"x": 0, "y": 400}}),
+        );
+        let context = &started["result"]["context"]["nodes"];
+        assert_eq!(context.as_array().map(Vec::len), Some(2), "{started}");
+        assert!(context
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|node| node.get("groupId").is_none()));
+        let read = rpc(
+            &mut runtime,
+            "conversation.read",
+            json!({"workspaceId": workspace, "canvasId": canvas, "turnId": turn, "nodeIds": [ids[0]]}),
+        );
+        let read_nodes = &read["result"]["nodes"];
+        assert_eq!(read_nodes.as_array().map(Vec::len), Some(1), "{read}");
+        assert!(read_nodes[0].get("groupId").is_none());
+    }
 }
