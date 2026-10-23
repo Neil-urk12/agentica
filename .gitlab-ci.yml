@@ -1,0 +1,48 @@
+# Mirror of .github/workflows/ci.yml for running CI on GitLab (push mirror of the GitHub repo).
+# Keep the two in sync.
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
+default:
+  interruptible: true
+
+javascript:
+  image: node:24-bookworm
+  before_script:
+    - npm install -g pnpm@11.6.0
+  script:
+    - pnpm install --frozen-lockfile
+    - pnpm format:check
+    - pnpm lint
+    - pnpm check
+    - pnpm -r build
+    - pnpm test:unit
+
+native:linux:
+  image: node:24-bookworm
+  before_script:
+    - apt-get update && apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev
+    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal -c rustfmt,clippy
+    - export PATH="$HOME/.cargo/bin:$PATH"
+    - npm install -g pnpm@11.6.0
+  script: &native_script
+    - pnpm install --frozen-lockfile
+    - pnpm build
+    - pnpm check:rust
+    - pnpm test:rust:unit
+    - pnpm build:desktop
+
+native:windows:
+  tags: [saas-windows-medium-amd64]
+  before_script:
+    - choco install -y fnm
+    - fnm env --shell powershell | Out-String | Invoke-Expression
+    - fnm install 24
+    - fnm use 24
+    - Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
+    - .\rustup-init.exe -y --profile minimal -c rustfmt,clippy
+    - $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+    - npm install -g pnpm@11.6.0
+  script: *native_script
