@@ -1,12 +1,24 @@
 # Mirror of .github/workflows/ci.yml for running CI on GitLab (push mirror of the GitHub repo).
-# Keep the two in sync.
+# Keep the two in sync. The package and release jobs exist only here: pushing a
+# `vX.Y.Z` tag builds installers and publishes a GitLab Release.
 
 workflow:
   rules:
     - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+stages: [test, package, release]
 
 default:
   interruptible: true
+
+variables:
+  PACKAGE_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/agentica/${CI_COMMIT_TAG}"
+
+.release_tag:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+  interruptible: false
 
 javascript:
   image: node:24-bookworm
@@ -22,8 +34,8 @@ javascript:
 
 native:linux:
   image: node:24-bookworm
-  before_script:
-    - apt-get update && apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev
+  before_script: &linux_setup
+    - apt-get update && apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev file
     - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal -c rustfmt,clippy
     - export PATH="$HOME/.cargo/bin:$PATH"
     - npm install -g pnpm@11.6.0
@@ -36,7 +48,7 @@ native:linux:
 
 native:windows:
   tags: [saas-windows-medium-amd64]
-  before_script:
+  before_script: &windows_setup
     - choco install -y fnm
     - fnm env --shell powershell | Out-String | Invoke-Expression
     - fnm install 24
@@ -46,3 +58,71 @@ native:windows:
     - $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
     - npm install -g pnpm@11.6.0
   script: *native_script
+
+package:linux:
+  extends: .release_tag
+  stage: package
+  image: node:24-bookworm
+  timeout: 2h
+  variables:
+    # linuxdeploy cannot mount FUSE inside a container.
+    APPIMAGE_EXTRACT_AND_RUN: "1"
+  before_script: *linux_setup
+  script:
+    - test "v$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")" = "$CI_COMMIT_TAG"
+    - pnpm install --frozen-lockfile
+    - pnpm package:desktop --bundles deb,rpm,appimage
+    - pnpm build:backend
+    - |
+      upload() { curl --fail-with-body --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$1" "$PACKAGE_URL/$2"; }
+      upload target/release/bundle/appimage/*.AppImage "agentica-$CI_COMMIT_TAG-linux-x86_64.AppImage"
+      upload target/release/bundle/deb/*.deb "agentica-$CI_COMMIT_TAG-linux-amd64.deb"
+      upload target/release/bundle/rpm/*.rpm "agentica-$CI_COMMIT_TAG-linux-x86_64.rpm"
+      upload target/release/agentica-backend "agentica-backend-$CI_COMMIT_TAG-linux-x86_64"
+
+package:windows:
+  extends: .release_tag
+  stage: package
+  tags: [saas-windows-medium-amd64]
+  timeout: 2h
+  before_script: *windows_setup
+  script:
+    - $version = (Get-Content apps/desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+    - if ("v$version" -ne $env:CI_COMMIT_TAG) { throw "Tag $env:CI_COMMIT_TAG does not match version $version" }
+    - pnpm install --frozen-lockfile
+    - pnpm package:desktop --bundles nsis
+    - pnpm build:backend
+    - $setup = (Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1).FullName
+    - curl.exe --fail-with-body --header "JOB-TOKEN: $env:CI_JOB_TOKEN" --upload-file $setup "$env:PACKAGE_URL/agentica-$env:CI_COMMIT_TAG-windows-x64-setup.exe"
+    - curl.exe --fail-with-body --header "JOB-TOKEN: $env:CI_JOB_TOKEN" --upload-file target/release/agentica-backend.exe "$env:PACKAGE_URL/agentica-backend-$env:CI_COMMIT_TAG-windows-x64.exe"
+
+release:
+  extends: .release_tag
+  stage: release
+  image: registry.gitlab.com/gitlab-org/cli:latest
+  script:
+    - echo "Publishing $CI_COMMIT_TAG"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    name: Agentica $CI_COMMIT_TAG
+    description: "See [CHANGELOG.md](${CI_PROJECT_URL}/-/blob/${CI_COMMIT_TAG}/CHANGELOG.md) for what changed."
+    assets:
+      links:
+        - name: Linux AppImage (x86_64)
+          url: $PACKAGE_URL/agentica-$CI_COMMIT_TAG-linux-x86_64.AppImage
+          link_type: package
+        - name: Debian/Ubuntu package (amd64)
+          url: $PACKAGE_URL/agentica-$CI_COMMIT_TAG-linux-amd64.deb
+          link_type: package
+        - name: Fedora/RHEL package (x86_64)
+          url: $PACKAGE_URL/agentica-$CI_COMMIT_TAG-linux-x86_64.rpm
+          link_type: package
+        - name: Windows installer (x64)
+          url: $PACKAGE_URL/agentica-$CI_COMMIT_TAG-windows-x64-setup.exe
+          link_type: package
+        - name: Browser-mode backend, Linux (x86_64)
+          url: $PACKAGE_URL/agentica-backend-$CI_COMMIT_TAG-linux-x86_64
+          link_type: package
+        - name: Browser-mode backend, Windows (x64)
+          url: $PACKAGE_URL/agentica-backend-$CI_COMMIT_TAG-windows-x64.exe
+          link_type: package

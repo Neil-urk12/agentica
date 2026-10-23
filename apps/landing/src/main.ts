@@ -130,8 +130,8 @@ function renderPlatform(platform: PlatformId | null) {
 
   if (downloadHint) {
     downloadHint.textContent = platform
-      ? `GitHub Releases · pre-release · ${PLATFORMS[platform]}`
-      : "GitHub Releases · pre-release";
+      ? `GitLab Releases · pre-release · ${PLATFORMS[platform]}`
+      : "GitLab Releases · pre-release";
   }
 }
 

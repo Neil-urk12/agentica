@@ -1,6 +1,6 @@
 [package]
 name = "agentica-runtime"
-version = "0.0.0"
+version = "0.1.0"
 description = "Shared Agentica runtime and detached local backend"
 edition = "2021"
 license = "MIT"
