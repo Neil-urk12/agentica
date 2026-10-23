@@ -12,6 +12,13 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Fix non-Linux build warnings in session process supervisor (2026-10-23)
+
+- Gate `Duration` and `Instant` imports behind `#[cfg(target_os = "linux")]` and
+  consume `(output, pid)` handles in the non-Linux fallback branch in
+  `packages/agent-runtime/src/sessions/process.rs`, preventing `-D warnings` build
+  failures on Windows CI where the Linux-specific process polling loop is omitted.
+
 ### Fix Linux native dependencies in CI (2026-10-23)
 
 - Install `libglib2.0-dev` and `build-essential` via `apt-get` directly in CI

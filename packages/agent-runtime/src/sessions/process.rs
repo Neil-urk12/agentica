@@ -1,5 +1,7 @@
 use super::*;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+#[cfg(target_os = "linux")]
+use std::time::{Duration, Instant};
 use std::{
     io::{Read, Write},
     sync::{
@@ -7,7 +9,6 @@ use std::{
         mpsc::{self, SyncSender},
     },
     thread,
-    time::{Duration, Instant},
 };
 
 pub(super) struct Process {
@@ -211,6 +212,7 @@ fn spawn(
     }
     #[cfg(not(target_os = "linux"))]
     {
+        let _ = (output, pid);
         child.kill()?;
         child.wait()?;
         Err("Native sessions require Linux".into())
