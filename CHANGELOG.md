@@ -12,6 +12,24 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### CI cost and speed
+
+- Cut CI time and GitLab compute minutes. GitHub Actions now runs on pull
+  requests and pushes to `main` and `develop` only, so a PR branch no longer gets
+  a duplicate push run, and a newer push to a PR cancels its older run. Branch
+  pushes are not cancelled, since the path filter only sees each push's own
+  commits and back-to-back merges to `main` would otherwise go unchecked. The native job
+  is skipped unless Rust code, Cargo files, `tests/fixtures` (embedded by Rust
+  tests with `include_str!`), `package.json`, `pnpm-lock.yaml`, or the workflow
+  changed (always run on `main`), and runs Windows only for `main`
+  and PRs into `main`. Rust builds are cached with `Swatinem/rust-cache`
+  (written only from `main` and `develop`), the WebKitGTK apt packages are
+  cached, and jobs have timeouts after an apt step hung for over 8 minutes.
+  Outside `main`, the desktop build is `--debug`, reusing the debug artifacts
+  from `pnpm build` instead of a full release compile. GitLab CI keeps only the
+  tag-triggered package and release jobs: GitHub Actions is free for this public
+  repo, while every GitLab check run spent metered minutes, Windows included.
+
 ### Box selection, grouping, and bulk delete
 
 - Dragging across empty canvas with the Select tool now draws a selection box

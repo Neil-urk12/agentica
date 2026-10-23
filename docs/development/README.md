@@ -46,11 +46,18 @@ node --test --test-name-pattern "<regex>" tests/<file>.test.mjs
 
 ### CI
 
-[GitHub Actions](../../.github/workflows/ci.yml) and its
-[GitLab mirror](../../.gitlab-ci.yml) run the same jobs on every push:
-formatting, lint, type checks, frontend build, and Node unit tests on Linux; Rust
-format, Clippy, unit tests, and a desktop build on Linux and Windows. On GitLab,
-a `vX.Y.Z` tag also builds installers and publishes a release
+[GitHub Actions](../../.github/workflows/ci.yml) runs the checks on pull requests
+and on pushes to `main` and `develop`: formatting, lint, type checks, frontend
+build, and Node unit tests on Linux, then Rust format, Clippy, unit tests, and a
+desktop build. The native job runs only when Rust code, Cargo files, the shared
+`tests/fixtures` (Rust tests embed them), `package.json`, the pnpm lockfile, or
+the workflow change, and always on `main`. It runs on Linux, plus
+Windows for `main` and pull requests into `main`. The desktop build is a debug
+build except on `main`, which does a release build. A newer push to a pull request
+cancels its running workflow; branch pushes are never cancelled. Tag pushes run
+no checks, so tag only commits that passed CI on `main`. The
+[GitLab mirror](../../.gitlab-ci.yml) runs only on `vX.Y.Z` tags, where it builds
+installers and publishes a release
 ([how to cut one](../running.md#cutting-a-release)).
 
 ## Protocol

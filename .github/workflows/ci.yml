@@ -2,15 +2,24 @@ name: CI
 
 on:
   push:
+    branches: [main, develop]
   pull_request:
 
 permissions:
   contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Only PR runs are cancelled: a PR's path filter covers its whole diff, while a
+  # cancelled push run would leave that push's commits unchecked.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   javascript:
     name: TypeScript and frontend
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -25,13 +34,40 @@ jobs:
       - run: pnpm -r build
       - run: pnpm test:unit
 
+  changes:
+    name: Detect native changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      native: ${{ steps.filter.outputs.native }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v4.0.3
+        id: filter
+        with:
+          filters: |
+            native:
+              - 'packages/agent-runtime/**'
+              - 'apps/desktop/src-tauri/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'tests/fixtures/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - '.github/workflows/ci.yml'
+
   native:
     name: Native check (${{ matrix.os }})
+    needs: changes
+    # Pushes to main always run; elsewhere only when Rust or native build inputs changed.
+    if: needs.changes.outputs.native == 'true' || github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # Windows runs only for main and pull requests into main.
+        os: ${{ fromJSON(((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -42,11 +78,24 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2.9.3
+        with:
+          # Only main and develop write the cache; PR runs read it without evicting it.
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
       - name: Install Linux native libraries
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: libwebkit2gtk-4.1-dev libssl-dev librsvg2-dev
+          version: 1
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm check:rust
       - run: pnpm test:rust:unit
-      - run: pnpm build:desktop
+      # A release build only on main; elsewhere a debug build reuses the artifacts above.
+      - name: Desktop build (release)
+        if: github.ref == 'refs/heads/main'
+        run: pnpm build:desktop
+      - name: Desktop build (debug)
+        if: github.ref != 'refs/heads/main'
+        run: pnpm build:desktop --debug
