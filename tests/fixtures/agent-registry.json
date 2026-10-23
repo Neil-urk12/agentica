@@ -1,0 +1,36 @@
+{
+  "builtinIds": [
+    "codex",
+    "claude",
+    "opencode",
+    "crush",
+    "pi",
+    "gemini",
+    "copilot",
+    "cursor-agent",
+    "amp",
+    "qwen",
+    "droid",
+    "kimi"
+  ],
+  "builtinLabels": {
+    "codex": "Codex",
+    "claude": "Claude Code",
+    "opencode": "OpenCode",
+    "crush": "Crush",
+    "pi": "pi",
+    "gemini": "Gemini CLI",
+    "copilot": "GitHub Copilot CLI",
+    "cursor-agent": "Cursor Agent",
+    "amp": "Amp",
+    "qwen": "Qwen Code",
+    "droid": "Droid",
+    "kimi": "Kimi Code"
+  },
+  "limits": {
+    "customAgents": 32,
+    "executableBytes": 4096,
+    "argv": 64,
+    "argvBytes": 8192
+  }
+}

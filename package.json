@@ -1,6 +1,6 @@
 {
   "name": "agentica",
-  "version": "0.0.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -10,22 +10,33 @@
     "pnpm": ">=11 <12"
   },
   "scripts": {
-    "dev": "pnpm --filter @agentica/desktop tauri dev",
-    "dev:web": "pnpm --filter @agentica/desktop dev",
-    "build": "pnpm -r build",
-    "build:desktop": "pnpm --filter @agentica/desktop tauri build --no-bundle",
+    "prepare": "git config core.hooksPath .githooks || true",
+    "dev": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop tauri dev",
+    "dev:backend": "cargo run --locked -p agentica-runtime --bin agentica-backend",
+    "dev:web": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop dev",
+    "dev:landing": "pnpm --filter @agentica/landing dev",
+    "build": "pnpm -r build && cargo build --locked -p agentica-runtime",
+    "build:desktop": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop tauri build --no-bundle",
+    "package:desktop": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop tauri build",
+    "build:landing": "pnpm --filter @agentica/landing build",
     "check": "pnpm --filter @agentica/protocol build && pnpm -r check",
-    "check:rust": "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check && cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml",
-    "test": "pnpm --filter @agentica/agent-runtime... build && node --test",
-    "runtime": "pnpm --filter @agentica/agent-runtime start",
-    "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "check:rust": "cargo fmt --all --check && cargo clippy --locked --workspace --all-targets --all-features -- -D warnings",
+    "test:rust": "cargo test --locked --workspace",
+    "test:rust:unit": "cargo test --locked --workspace --lib --bins",
+    "test:unit": "pnpm --filter @agentica/protocol build && node --test tests/canvas-agent.test.mjs tests/canvas-view.test.mjs tests/changes.test.mjs tests/contracts.test.mjs tests/editor.test.mjs tests/landing-camera.test.mjs tests/markdown.test.mjs tests/openrouter.test.mjs tests/provider.test.mjs tests/sessions.test.mjs tests/tasks.test.mjs tests/voice-input.test.mjs",
+    "test:unit:coverage": "pnpm --filter @agentica/protocol build && mkdir -p coverage && node --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=coverage/js.lcov tests/canvas-agent.test.mjs tests/canvas-view.test.mjs tests/changes.test.mjs tests/contracts.test.mjs tests/editor.test.mjs tests/landing-camera.test.mjs tests/markdown.test.mjs tests/openrouter.test.mjs tests/provider.test.mjs tests/sessions.test.mjs tests/tasks.test.mjs tests/voice-input.test.mjs",
+    "test": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop build && cargo test --locked -p agentica-runtime --features bundled-frontend && cargo build --locked -p agentica-runtime --features bundled-frontend && node --test",
+    "build:backend": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop build && cargo build --locked --release -p agentica-runtime --bin agentica-backend --features bundled-frontend",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "lint": "oxlint"
   },
   "devDependencies": {
     "@agentica/protocol": "workspace:*",
     "@types/node": "^24.19.2",
-    "prettier": "^3.9.10",
-    "prettier-plugin-svelte": "^4.1.1",
+    "oxfmt": "^0.72.0",
+    "oxlint": "^1.87.0",
+    "svelte": "^5.57.2",
     "typescript": "~6.0.3"
   }
 }

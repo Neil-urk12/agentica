@@ -1,0 +1,646 @@
+[
+  {
+    "name": "complete",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 2,
+        "event": {
+          "type": "textDelta",
+          "text": "hello"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 3,
+        "event": {
+          "type": "completed"
+        }
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "cancel",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 2,
+        "event": {
+          "type": "textDelta",
+          "text": "hello"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 3,
+        "event": {
+          "type": "cancelRequested"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 4,
+        "event": {
+          "type": "cancelled"
+        }
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "failure",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 2,
+        "event": {
+          "type": "failed",
+          "code": "BACKPRESSURE",
+          "message": "Drain events, then retry."
+        }
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "late delta",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 2,
+        "event": {
+          "type": "textDelta",
+          "text": "hello"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 3,
+        "event": {
+          "type": "cancelRequested"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 4,
+        "event": {
+          "type": "textDelta",
+          "text": "late"
+        }
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "cancel without request",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 2,
+        "event": {
+          "type": "cancelled"
+        }
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "complete after cancel",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 2,
+        "event": {
+          "type": "textDelta",
+          "text": "hello"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 3,
+        "event": {
+          "type": "cancelRequested"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 4,
+        "event": {
+          "type": "completed"
+        }
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "event after terminal",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 2,
+        "event": {
+          "type": "textDelta",
+          "text": "hello"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 3,
+        "event": {
+          "type": "completed"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 4,
+        "event": {
+          "type": "textDelta",
+          "text": "late"
+        }
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "gap",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 3,
+        "event": {
+          "type": "completed"
+        }
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "duplicate sequence",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "missing start",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 2,
+        "event": {
+          "type": "textDelta",
+          "text": "hello"
+        }
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "repeat cancel",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 2,
+        "event": {
+          "type": "cancelRequested"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 3,
+        "event": {
+          "type": "cancelRequested"
+        }
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "wrong run",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000003",
+        "sequence": 2,
+        "event": {
+          "type": "completed"
+        }
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "wrong request",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "other",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 2,
+        "event": {
+          "type": "completed"
+        }
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "unbounded delta",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 2,
+        "event": {
+          "type": "textDelta",
+          "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "unknown event",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 2,
+        "event": {
+          "type": "shell"
+        }
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "wrong version",
+    "events": [
+      {
+        "protocolVersion": 2,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "unknown error",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 2,
+        "event": {
+          "type": "failed",
+          "code": "OOPS",
+          "message": "retry"
+        }
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "committed before cancel",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 2,
+        "event": {
+          "type": "batchApplied",
+          "revisions": [
+            {
+              "artifactId": "00000000-0000-4000-8000-000000000001",
+              "revision": 2
+            }
+          ]
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 3,
+        "event": {
+          "type": "cancelRequested"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 4,
+        "event": {
+          "type": "cancelled"
+        }
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "mutation after cancel",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 2,
+        "event": {
+          "type": "cancelRequested"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 3,
+        "event": {
+          "type": "batchApplied",
+          "revisions": [
+            {
+              "artifactId": "00000000-0000-4000-8000-000000000001",
+              "revision": 2
+            }
+          ]
+        }
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "duplicate committed artifact",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 2,
+        "event": {
+          "type": "batchApplied",
+          "revisions": [
+            {
+              "artifactId": "00000000-0000-4000-8000-000000000001",
+              "revision": 2
+            },
+            {
+              "artifactId": "00000000-0000-4000-8000-000000000001",
+              "revision": 2
+            }
+          ]
+        }
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid committed revision",
+    "events": [
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 1,
+        "event": {
+          "type": "started"
+        }
+      },
+      {
+        "protocolVersion": 1,
+        "requestId": "start-1",
+        "runId": "00000000-0000-4000-8000-000000000006",
+        "sequence": 2,
+        "event": {
+          "type": "batchApplied",
+          "revisions": [
+            {
+              "artifactId": "00000000-0000-4000-8000-000000000001",
+              "revision": 0
+            }
+          ]
+        }
+      }
+    ],
+    "valid": false
+  }
+]

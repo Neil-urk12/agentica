@@ -1,0 +1,953 @@
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import {
+  BUILTIN_AGENT_LABELS,
+  SESSION_LIMITS,
+  type AgentCapability,
+  type SessionEvent,
+  type SessionOwner,
+  type SessionResult,
+  type SessionStatus,
+  type SessionTile,
+} from "@agentica/protocol";
+import {
+  createSessionClient,
+  type SessionAttachment,
+  type SessionClient,
+} from "./session-client";
+import { desktopMode } from "./runtime";
+import type { CanvasDocument } from "./editor";
+
+const live = (status: SessionStatus | null) =>
+  !!status && ["starting", "running", "stopping"].includes(status.state);
+const key = (owner: SessionOwner) =>
+  `${owner.workspaceId}/${owner.canvasId}/${owner.tileId}`;
+const message = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+
+/** A tile's program name: `Terminal`, the agent's label, or `Agent` for a
+ * custom agent this machine does not define. Render as text, never HTML. */
+export function tileName(
+  tile: Pick<SessionTile, "kind" | "preset">,
+  agents: readonly AgentCapability[] = [],
+) {
+  if (tile.kind !== "cli-agent") return "Terminal";
+  return (
+    (tile.preset !== null && Object.hasOwn(BUILTIN_AGENT_LABELS, tile.preset)
+      ? BUILTIN_AGENT_LABELS[tile.preset as keyof typeof BUILTIN_AGENT_LABELS]
+      : undefined) ??
+    agents.find((agent) => agent.id === tile.preset)?.label ??
+    "Agent"
+  );
+}
+interface Entry {
+  owner: SessionOwner;
+  tile: SessionTile;
+  status: SessionStatus | null;
+  attachment?: SessionAttachment;
+  attaching?: Promise<void>;
+  drained?: Promise<void>;
+  drainedResolve?: () => void;
+  detaching?: Promise<void>;
+  replayed: boolean;
+  terminal?: Terminal;
+  fit?: FitAddon;
+  element?: HTMLDivElement;
+  opened: boolean;
+  host?: HTMLElement;
+  leave?: () => void;
+  width: number;
+  height: number;
+  cursor: number;
+  generation: number;
+  connected: boolean;
+  busy: boolean;
+  error: string;
+  historyGap: boolean;
+  render: Promise<void>;
+  input: Promise<void>;
+  pendingInput: number;
+  focused?: boolean;
+  focusReport?: Promise<void>;
+}
+export class SessionManager {
+  capabilities: SessionResult<"capabilities"> | null = null;
+  connected = false;
+  private entries = new Map<string, Entry>();
+  private client: SessionClient;
+  private signature = "";
+  private disposed = false;
+  private reconciling?: Promise<void>;
+  private subscribing = Promise.resolve();
+  constructor(
+    key: () => string,
+    private changed: () => void,
+  ) {
+    this.client = createSessionClient(key);
+  }
+
+  view(owner: SessionOwner) {
+    const entry = this.entries.get(key(owner));
+    return {
+      status: entry?.status ?? null,
+      connected: entry?.connected ?? false,
+      busy: entry?.busy ?? false,
+      error: entry?.error ?? "",
+      historyGap: entry?.historyGap ?? false,
+    };
+  }
+  summary(workspaceId: string, canvasId: string, projectId: string) {
+    return [...this.entries.values()]
+      .filter(
+        (entry) =>
+          entry.owner.workspaceId === workspaceId &&
+          entry.owner.canvasId === canvasId &&
+          entry.tile.projectId === projectId &&
+          live(entry.status),
+      )
+      .map((entry) => entry.status!);
+  }
+  attention(workspaceId: string, canvasId: string) {
+    return [...this.entries.values()]
+      .filter(
+        (entry) =>
+          entry.owner.workspaceId === workspaceId &&
+          entry.owner.canvasId === canvasId &&
+          entry.status?.attention.raised,
+      )
+      .map((entry) => ({
+        owner: entry.owner,
+        tile: entry.tile,
+        status: entry.status!,
+      }));
+  }
+
+  async dismiss(owner: SessionOwner) {
+    const entry = this.entries.get(key(owner));
+    if (!entry?.status) return;
+    const { sessionId, attention } = entry.status;
+    try {
+      await this.client.request({
+        op: "clearAttention",
+        owner,
+        sessionId,
+        sequence: attention.sequence,
+      });
+      const { status } = await this.client.request({ op: "status", owner });
+      if (
+        entry.status?.sessionId === sessionId &&
+        status?.sessionId === sessionId &&
+        status.attention.sequence >= entry.status.attention.sequence
+      )
+        entry.status = status;
+    } catch (error) {
+      entry.error = message(error);
+    }
+    this.changed();
+  }
+
+  private reportFocus(entry: Entry, forceUnfocused = false) {
+    const attachment = entry.attachment;
+    const sessionId = entry.status?.sessionId;
+    if (!sessionId) return;
+    const focused =
+      !forceUnfocused &&
+      !!entry.host &&
+      !!entry.terminal?.textarea &&
+      document.activeElement === entry.terminal.textarea &&
+      document.hasFocus();
+    if (!attachment) {
+      if (focused && entry.status?.attention.raised)
+        void this.dismiss(entry.owner);
+      return;
+    }
+    if (entry.focused === focused) return;
+    entry.focused = focused;
+    entry.focusReport = (entry.focusReport ?? Promise.resolve())
+      .then(async () => {
+        if (entry.attachment !== attachment) return;
+        await this.client.request({
+          op: "focus",
+          owner: entry.owner,
+          sessionId,
+          attachmentId: attachment.id,
+          focused,
+        });
+      })
+      .catch((error) => {
+        if (entry.attachment !== attachment) return;
+        entry.focused = undefined;
+        entry.error = message(error);
+        this.changed();
+      });
+  }
+  async connect() {
+    this.capabilities = await this.client.request({ op: "capabilities" });
+    this.connected = true;
+    this.changed();
+  }
+
+  /** Re-detect agents, e.g. after custom agents change in Settings. */
+  async refreshCapabilities() {
+    if (!this.connected) return;
+    this.capabilities = await this.client.request({ op: "capabilities" });
+    this.changed();
+  }
+
+  get agents(): readonly AgentCapability[] {
+    return this.capabilities?.capabilities.agents ?? [];
+  }
+
+  name(tile: Pick<SessionTile, "kind" | "preset">) {
+    return tileName(tile, this.agents);
+  }
+
+  /** Number each preset independently within its project, in tile order. */
+  agentLabels(tiles: readonly SessionTile[]) {
+    const projects = new Map<string, Map<string | null, number>>();
+    const labels = new Map<string, string>();
+    for (const tile of tiles) {
+      if (tile.kind !== "cli-agent") continue;
+      let counts = projects.get(tile.projectId);
+      if (!counts) projects.set(tile.projectId, (counts = new Map()));
+      const number = (counts.get(tile.preset) ?? 0) + 1;
+      counts.set(tile.preset, number);
+      labels.set(tile.id, `${this.name(tile)} ${number}`);
+    }
+    return labels;
+  }
+
+  async reconcile(
+    workspaceId: string,
+    document: CanvasDocument,
+    force = false,
+  ) {
+    // Changes tiles share the tile layout but never own a native process.
+    const tiles = (document.sessionTiles ?? []).filter(
+      (tile) => tile.kind !== "changes",
+    );
+    for (const tile of tiles) {
+      const owner = {
+        workspaceId,
+        canvasId: document.canvas.id,
+        tileId: tile.id,
+      };
+      const id = key(owner);
+      const existing = this.entries.get(id);
+      if (existing) existing.tile = tile;
+      else
+        this.entries.set(id, {
+          owner,
+          tile,
+          status: null,
+          opened: false,
+          width: 0,
+          height: 0,
+          cursor: 0,
+          generation: 0,
+          connected: false,
+          busy: false,
+          error: "",
+          historyGap: false,
+          render: Promise.resolve(),
+          input: Promise.resolve(),
+          pendingInput: 0,
+          replayed: false,
+        });
+    }
+    const signature = `${workspaceId}/${document.canvas.id}/${tiles.map((tile) => tile.id).join(",")}`;
+    if (!force && this.signature === signature && this.connected) return;
+    while (this.reconciling) await this.reconciling;
+    // A reconciliation that finished while this call waited may have already
+    // covered an equivalent document; force remains an explicit refresh.
+    if (!force && this.signature === signature && this.connected) return;
+    this.signature = signature;
+    const reconciling = (async () => {
+      try {
+        await this.connect();
+        if (!this.capabilities?.capabilities.supported) return;
+        const { sessions } = await this.client.request({
+          op: "list",
+          workspaceId,
+          canvasId: document.canvas.id,
+        });
+        for (const entry of this.entries.values()) {
+          if (
+            entry.owner.workspaceId !== workspaceId ||
+            entry.owner.canvasId !== document.canvas.id
+          )
+            continue;
+          await this.acceptStatus(
+            entry,
+            sessions.find(
+              (status) => status.owner.tileId === entry.owner.tileId,
+            ) ?? null,
+          );
+        }
+        // Inactive stopped renderers can be recreated from bounded backend replay.
+        for (const [id, entry] of this.entries)
+          if (
+            !entry.host &&
+            !live(entry.status) &&
+            (entry.owner.workspaceId !== workspaceId ||
+              entry.owner.canvasId !== document.canvas.id ||
+              !tiles.some((tile) => tile.id === entry.owner.tileId))
+          ) {
+            if (entry.status?.state === "exited") await entry.drained;
+            await this.detach(entry);
+            entry.terminal?.dispose();
+            this.entries.delete(id);
+          }
+        for (const entry of this.entries.values())
+          if (
+            entry.owner.workspaceId === workspaceId &&
+            entry.owner.canvasId === document.canvas.id &&
+            entry.status &&
+            entry.status.state !== "failed"
+          )
+            await this.attach(entry);
+      } catch (error) {
+        this.connected = false;
+        for (const entry of this.entries.values())
+          if (
+            entry.owner.workspaceId === workspaceId &&
+            entry.owner.canvasId === document.canvas.id
+          )
+            entry.error = message(error);
+      } finally {
+        this.changed();
+      }
+    })();
+    this.reconciling = reconciling;
+    try {
+      await reconciling;
+    } finally {
+      if (this.reconciling === reconciling) this.reconciling = undefined;
+    }
+  }
+
+  private async detach(entry: Entry) {
+    if (entry.detaching) return entry.detaching;
+    const attachment = entry.attachment;
+    const resolve = entry.drainedResolve;
+    entry.drainedResolve = undefined;
+    entry.attachment = undefined;
+    entry.connected = false;
+    entry.focused = undefined;
+    entry.generation++;
+    if (entry.terminal) entry.terminal.options.disableStdin = true;
+    entry.detaching = (async () => {
+      try {
+        await attachment?.detach();
+      } finally {
+        resolve?.();
+      }
+    })();
+    try {
+      await entry.detaching;
+    } finally {
+      entry.detaching = undefined;
+    }
+  }
+
+  private async acceptStatus(entry: Entry, status: SessionStatus | null) {
+    if (
+      entry.status?.sessionId !== status?.sessionId ||
+      entry.status?.backendId !== status?.backendId
+    ) {
+      await this.detach(entry).catch(() => {});
+      entry.cursor = 0;
+      entry.historyGap = false;
+      entry.error = "";
+      entry.replayed = false;
+      entry.terminal?.reset();
+    }
+    entry.status = status;
+    if (entry.terminal)
+      entry.terminal.options.disableStdin =
+        status?.state !== "running" || !entry.connected;
+  }
+
+  private terminal(entry: Entry) {
+    if (entry.terminal) return entry.terminal;
+    const terminal = (entry.terminal = new Terminal({
+      scrollback: SESSION_LIMITS.scrollback,
+      fontSize: 14,
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+      cursorBlink: true,
+      disableStdin: true,
+      allowProposedApi: true,
+      theme: {
+        background: "#0d1117",
+        foreground: "#e6edf3",
+        cursor: "#f5c46b",
+        selectionBackground: "#365a82",
+      },
+      linkHandler: {
+        activate: (event, uri) => {
+          try {
+            const url = new URL(uri);
+            if (
+              !["https:", "http:"].includes(url.protocol) ||
+              url.username ||
+              url.password
+            )
+              throw new Error(
+                "Only HTTP(S) links without embedded credentials can be opened.",
+              );
+            if (desktopMode)
+              throw new Error(
+                "Select and copy this link to open it in your browser.",
+              );
+            if (!event.ctrlKey && !event.metaKey)
+              throw new Error(
+                "Hold Ctrl or Command and click to open a web link.",
+              );
+            window.open(url.href, "_blank", "noopener,noreferrer");
+          } catch (error) {
+            entry.error = message(error);
+            this.changed();
+          }
+        },
+      },
+    }));
+    entry.fit = new FitAddon();
+    terminal.loadAddon(entry.fit);
+    terminal.parser.registerOscHandler(52, () => true);
+    terminal.onData((data) =>
+      this.sendInput(entry, new TextEncoder().encode(data)),
+    );
+    terminal.onBinary((data) =>
+      this.sendInput(
+        entry,
+        Uint8Array.from(data, (character) => character.charCodeAt(0)),
+      ),
+    );
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (
+        event.type === "keydown" &&
+        event.ctrlKey &&
+        event.shiftKey &&
+        event.key === "Escape"
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        entry.leave?.();
+        return false;
+      }
+      if (
+        event.type === "keydown" &&
+        (event.ctrlKey || event.metaKey) &&
+        event.shiftKey &&
+        event.key.toLowerCase() === "c"
+      ) {
+        event.preventDefault();
+        void navigator.clipboard
+          .writeText(terminal.getSelection())
+          .catch((error) => {
+            entry.error = message(error);
+            this.changed();
+          });
+        return false;
+      }
+      return true;
+    });
+    return terminal;
+  }
+
+  mount(owner: SessionOwner, host: HTMLElement, leave: () => void) {
+    const entry = this.entries.get(key(owner));
+    if (!entry) return () => {};
+    const terminal = this.terminal(entry);
+    entry.host = host;
+    entry.leave = leave;
+    entry.element ??= document.createElement("div");
+    entry.element.style.cssText = "width:100%;height:100%;overflow:hidden";
+    host.append(entry.element);
+    if (!entry.opened) {
+      terminal.open(entry.element);
+      entry.opened = true;
+      if (terminal.textarea) terminal.textarea.tabIndex = -1;
+    }
+    const focusChanged = () => this.reportFocus(entry);
+    host.addEventListener("focusin", focusChanged);
+    host.addEventListener("focusout", focusChanged);
+    window.addEventListener("focus", focusChanged);
+    window.addEventListener("blur", focusChanged);
+    this.reportFocus(entry);
+    const stop = (event: Event) => event.stopPropagation();
+    const paste = (event: ClipboardEvent) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const text = event.clipboardData?.getData("text/plain");
+      if (text == null || !entry.connected || entry.status?.state !== "running")
+        return;
+      if (
+        new TextEncoder().encode(text).length >
+        SESSION_LIMITS.unacknowledgedBytes
+      ) {
+        entry.error =
+          "Paste is larger than 256 KiB. Paste a smaller selection.";
+        this.changed();
+        return;
+      }
+      if (
+        /[\r\n]/.test(text) &&
+        !window.confirm(
+          "Paste multiple lines into this terminal? They may run commands.",
+        )
+      )
+        return;
+      terminal.paste(text);
+    };
+    for (const event of [
+      "pointerdown",
+      "pointerup",
+      "click",
+      "dblclick",
+      "wheel",
+      "keydown",
+    ])
+      host.addEventListener(event, stop);
+    host.addEventListener("paste", paste, true);
+    const observer = new ResizeObserver(() => this.fit(entry));
+    observer.observe(host);
+    const frame = requestAnimationFrame(() => this.fit(entry));
+    return () => {
+      this.reportFocus(entry, true);
+      host.removeEventListener("focusin", focusChanged);
+      host.removeEventListener("focusout", focusChanged);
+      window.removeEventListener("focus", focusChanged);
+      window.removeEventListener("blur", focusChanged);
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+      for (const event of [
+        "pointerdown",
+        "pointerup",
+        "click",
+        "dblclick",
+        "wheel",
+        "keydown",
+      ])
+        host.removeEventListener(event, stop);
+      host.removeEventListener("paste", paste, true);
+      entry.element?.remove();
+      entry.host = undefined;
+      entry.leave = undefined;
+    };
+  }
+
+  private fit(entry: Entry) {
+    const host = entry.host;
+    if (
+      !host?.clientWidth ||
+      !host.clientHeight ||
+      (entry.width === host.clientWidth && entry.height === host.clientHeight)
+    )
+      return;
+    const dimensions = entry.fit?.proposeDimensions();
+    if (!dimensions || !entry.terminal) return;
+    entry.width = host.clientWidth;
+    entry.height = host.clientHeight;
+    entry.terminal.resize(
+      Math.max(2, Math.min(400, dimensions.cols)),
+      Math.max(2, Math.min(200, dimensions.rows)),
+    );
+    if (
+      entry.terminal &&
+      entry.connected &&
+      entry.status?.state === "running"
+    ) {
+      const { rows, cols } = entry.terminal;
+      void entry.attachment
+        ?.resize(
+          Math.max(2, Math.min(200, rows)),
+          Math.max(2, Math.min(400, cols)),
+        )
+        .catch((error) => {
+          entry.error = message(error);
+          this.changed();
+        });
+    }
+  }
+  focus(owner: SessionOwner) {
+    const entry = this.entries.get(key(owner));
+    if (entry?.connected) entry.terminal?.focus();
+  }
+
+  /** Running, attached CLI-agent sessions in one project, in tile order. */
+  pasteTargets(workspaceId: string, canvasId: string, projectId: string) {
+    const entries = [...this.entries.values()].filter(
+      (entry) =>
+        entry.owner.workspaceId === workspaceId &&
+        entry.owner.canvasId === canvasId &&
+        entry.tile.projectId === projectId &&
+        entry.tile.kind === "cli-agent",
+    );
+    const labels = this.agentLabels(entries.map((entry) => entry.tile));
+    return entries
+      .map((entry) => ({
+        owner: entry.owner,
+        label: labels.get(entry.tile.id)!,
+        ready:
+          !!entry.attachment &&
+          entry.connected &&
+          entry.status?.state === "running",
+      }))
+      .filter((target) => target.ready);
+  }
+
+  /** Paste text into a running session through its existing attachment.
+   * `refuseIfAttention` makes the backend refuse with `ATTENTION_RAISED`. */
+  async paste(
+    owner: SessionOwner,
+    text: string,
+    options: { refuseIfAttention?: boolean } = {},
+  ) {
+    const entry = this.entries.get(key(owner));
+    const attachment = entry?.attachment;
+    if (
+      !entry ||
+      !attachment ||
+      !entry.connected ||
+      entry.status?.state !== "running"
+    )
+      throw new Error(
+        `This ${entry ? this.name(entry.tile) : "agent"} session is not running. Start it, then retry.`,
+      );
+    // Queue behind typed input so the paste never interleaves with it.
+    const run = entry.input.then(() =>
+      attachment.paste(text, options.refuseIfAttention),
+    );
+    entry.input = run.catch(() => {});
+    await run;
+  }
+
+  private sendInput(entry: Entry, bytes: Uint8Array) {
+    const attachment = entry.attachment;
+    if (!attachment || !entry.connected || entry.status?.state !== "running")
+      return;
+    if (
+      entry.pendingInput + bytes.length >
+      SESSION_LIMITS.unacknowledgedBytes
+    ) {
+      entry.error = "Terminal input is backpressured. Input was not queued.";
+      this.changed();
+      return;
+    }
+    entry.pendingInput += bytes.length;
+    const generation = entry.generation;
+    entry.input = entry.input
+      .then(async () => {
+        if (
+          entry.generation !== generation ||
+          entry.attachment?.id !== attachment.id ||
+          !entry.connected
+        )
+          return;
+        for (
+          let offset = 0;
+          offset < bytes.length;
+          offset += SESSION_LIMITS.frameBytes
+        )
+          await attachment.input(
+            bytes.slice(offset, offset + SESSION_LIMITS.frameBytes),
+          );
+      })
+      .catch((error) => {
+        if (entry.generation === generation) {
+          void this.detach(entry).catch(() => {});
+        }
+        entry.error = message(error);
+        this.changed();
+      })
+      .finally(() => {
+        entry.pendingInput -= bytes.length;
+      });
+  }
+
+  private async attach(entry: Entry) {
+    if (entry.attaching) return entry.attaching;
+    if (entry.attachment || !entry.status || entry.replayed) return;
+    const identity = entry.status.sessionId;
+    const generation = entry.generation;
+    entry.attaching = this.subscribing.then(async () => {
+      try {
+        await Promise.all(
+          [...this.entries.values()].map(
+            (other) =>
+              other.detaching ??
+              (other.status?.state === "exited" ? other.drained : undefined),
+          ),
+        );
+        if (entry.generation !== generation || this.disposed) return;
+        if (
+          [...this.entries.values()].filter((other) => other.attachment)
+            .length >= SESSION_LIMITS.liveSessions
+        )
+          throw new Error(
+            "Too many terminal subscriptions. Wait for a session to finish.",
+          );
+        entry.drained = new Promise((resolve) => {
+          entry.drainedResolve = resolve;
+        });
+        const attachment = await this.client.subscribe(
+          entry.owner,
+          identity,
+          entry.cursor,
+          (event) => this.event(entry, event, generation),
+          (error) => {
+            if (entry.generation !== generation || this.disposed) return;
+            entry.connected = false;
+            entry.attachment = undefined;
+            entry.generation++;
+            entry.drainedResolve?.();
+            entry.drainedResolve = undefined;
+            if (entry.terminal) entry.terminal.options.disableStdin = true;
+            entry.error = error.message;
+            this.connected = false;
+            this.changed();
+          },
+        );
+        if (entry.generation !== generation || this.disposed) {
+          await attachment.detach().catch(() => {});
+          entry.drainedResolve?.();
+          entry.drainedResolve = undefined;
+          return;
+        }
+        entry.attachment = attachment;
+        entry.connected = true;
+        entry.focused = undefined;
+        this.reportFocus(entry);
+        entry.error = "";
+        this.terminal(entry).options.disableStdin =
+          entry.status?.state !== "running";
+        entry.width = 0;
+        this.fit(entry);
+        this.changed();
+      } catch (error) {
+        entry.drainedResolve?.();
+        entry.drainedResolve = undefined;
+        entry.error = message(error);
+        entry.connected = false;
+        this.changed();
+      }
+    });
+    this.subscribing = entry.attaching;
+    try {
+      await entry.attaching;
+    } finally {
+      entry.attaching = undefined;
+    }
+  }
+
+  private event(entry: Entry, event: SessionEvent, generation: number) {
+    if (entry.generation !== generation || this.disposed) return;
+    if (JSON.stringify(entry.status) !== JSON.stringify(event.status)) {
+      entry.status = event.status;
+      this.changed();
+    }
+    entry.render = entry.render
+      .then(async () => {
+        if (entry.generation !== generation || this.disposed) return;
+        const terminal = this.terminal(entry);
+        if (event.output.historyGap) {
+          terminal.reset();
+          entry.historyGap = true;
+          this.changed();
+        }
+        terminal.options.disableStdin =
+          event.status.state !== "running" || !entry.connected;
+        // A hidden renderer consumes bytes at the backend's last actual size.
+        if (!entry.host) terminal.resize(event.status.cols, event.status.rows);
+        const frames = event.output.frames;
+        if (
+          !frames.length &&
+          !event.output.historyGap &&
+          event.status.state !== "exited"
+        )
+          return;
+        const bytes = new Uint8Array(
+          frames.reduce((total, frame) => total + frame.bytes.length, 0),
+        );
+        let offset = 0;
+        for (const frame of frames) {
+          bytes.set(frame.bytes, offset);
+          offset += frame.bytes.length;
+        }
+        if (bytes.length)
+          await new Promise<void>((resolve) => terminal.write(bytes, resolve));
+        if (entry.generation !== generation) return;
+        entry.cursor = event.output.nextSequence;
+        await this.client.request({
+          op: "acknowledge",
+          owner: entry.owner,
+          sessionId: event.sessionId,
+          attachmentId: event.attachmentId,
+          sequence: entry.cursor,
+        });
+        if (
+          entry.generation === generation &&
+          event.status.state === "exited" &&
+          entry.cursor === event.output.lastSequence
+        ) {
+          entry.replayed = true;
+          await this.detach(entry);
+          this.changed();
+        }
+      })
+      .catch(async (error) => {
+        if (entry.generation === generation) {
+          entry.error = message(error);
+          await this.detach(entry).catch(() => {});
+          this.changed();
+        }
+      });
+  }
+
+  async start(owner: SessionOwner, restart = false) {
+    const entry = this.entries.get(key(owner));
+    if (!entry || entry.busy) return;
+    entry.busy = true;
+    entry.error = "";
+    this.changed();
+    try {
+      const current = (await this.client.request({ op: "status", owner }))
+        .status;
+      if (!restart && live(current)) {
+        await this.acceptStatus(entry, current);
+        await this.attach(entry);
+        return;
+      }
+      const terminal = this.terminal(entry);
+      const dimensions = {
+        rows: Math.max(2, Math.min(200, terminal.rows)),
+        cols: Math.max(2, Math.min(400, terminal.cols)),
+      };
+      const result =
+        restart && current
+          ? await this.client.request({
+              op: "restart",
+              owner,
+              sessionId: current.sessionId,
+              requestId: crypto.randomUUID(),
+              ...dimensions,
+            })
+          : await this.client.request({
+              op: "start",
+              owner,
+              requestId: crypto.randomUUID(),
+              ...dimensions,
+            });
+      await this.acceptStatus(entry, result.status);
+      await this.attach(entry);
+    } catch (error) {
+      entry.error = message(error);
+    } finally {
+      entry.busy = false;
+      this.changed();
+    }
+  }
+  async stop(owner: SessionOwner) {
+    const entry = this.entries.get(key(owner));
+    if (!entry?.status) return;
+    try {
+      await this.acceptStatus(
+        entry,
+        (
+          await this.client.request({
+            op: "stop",
+            owner,
+            sessionId: entry.status.sessionId,
+          })
+        ).status,
+      );
+    } catch (error) {
+      entry.error = message(error);
+    } finally {
+      this.changed();
+    }
+  }
+  async redraw(owner: SessionOwner) {
+    const entry = this.entries.get(key(owner));
+    if (!entry?.attachment || !entry.terminal) return;
+    try {
+      await entry.render;
+      entry.terminal.reset();
+      await entry.attachment.resize(
+        entry.terminal.rows,
+        entry.terminal.cols,
+        true,
+      );
+    } catch (error) {
+      entry.error = message(error);
+      this.changed();
+    }
+  }
+  async list(workspaceId: string, canvasId?: string) {
+    const { sessions } = await this.client.request({
+      op: "list",
+      workspaceId,
+      ...(canvasId ? { canvasId } : {}),
+    });
+    return sessions.filter((status) => live(status));
+  }
+  async drainScope(
+    workspaceId: string,
+    canvasId?: string,
+    match: (status: SessionStatus) => boolean = () => true,
+  ) {
+    for (const entry of this.entries.values()) {
+      if (
+        entry.owner.workspaceId !== workspaceId ||
+        (canvasId !== undefined && entry.owner.canvasId !== canvasId) ||
+        (entry.status && !match(entry.status))
+      )
+        continue;
+      await entry.attaching;
+      await entry.drained;
+    }
+  }
+  async stopSessions(sessions: SessionStatus[]) {
+    for (const status of sessions) {
+      const result = await this.client.request({
+        op: "stop",
+        owner: status.owner,
+        sessionId: status.sessionId,
+      });
+      const entry = this.entries.get(key(status.owner));
+      if (entry) await this.acceptStatus(entry, result.status);
+    }
+    const deadline = Date.now() + 6000;
+    for (;;) {
+      let remaining = false;
+      for (const confirmed of sessions) {
+        const { status } = await this.client.request({
+          op: "status",
+          owner: confirmed.owner,
+        });
+        const entry = this.entries.get(key(confirmed.owner));
+        if (entry) await this.acceptStatus(entry, status);
+        if (status && status.sessionId !== confirmed.sessionId && live(status))
+          throw new Error(
+            "A replacement session started. Review removal again.",
+          );
+        remaining ||= live(status);
+      }
+      this.changed();
+      if (!remaining) return;
+      if (Date.now() > deadline)
+        throw new Error(
+          "Cleanup is still pending. Records and controls were retained.",
+        );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  async dispose() {
+    this.disposed = true;
+    await this.client.close();
+    for (const entry of this.entries.values()) entry.drainedResolve?.();
+    for (const entry of this.entries.values()) entry.terminal?.dispose();
+    this.entries.clear();
+  }
+}
