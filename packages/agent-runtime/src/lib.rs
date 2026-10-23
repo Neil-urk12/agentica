@@ -18,6 +18,42 @@ pub use store::{default_data_root, RuntimeError, STORAGE_VERSION};
 
 pub const MAX_FRAME_BYTES: usize = 16 * 1024;
 
+/// Where a host sends one request; the HTTP and Tauri hosts must agree.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Route {
+    /// Read-only Git, outside the runtime lock and metadata gate.
+    Changes,
+    /// Tool calls, which lock the runtime only per storage step.
+    Mcp,
+    Runtime,
+}
+
+pub fn route(bytes: &[u8]) -> Route {
+    if changes::is_changes_request(bytes) {
+        Route::Changes
+    } else if mcp::is_mcp_request(bytes) {
+        Route::Mcp
+    } else {
+        Route::Runtime
+    }
+}
+
+/// Cleanup after a successful `Route::Runtime` request. Call it after releasing the
+/// runtime lock: a queued tool call holds a server's client lock while it waits for it.
+pub fn after_runtime_success(
+    method: &str,
+    params: &Value,
+    sessions: &sessions::SessionService,
+    mcp: &mcp::McpService,
+) -> Result<(), RuntimeError> {
+    if method == "workspace.delete" {
+        if let Some(workspace_id) = params["workspaceId"].as_str() {
+            mcp.stop_workspace(workspace_id);
+        }
+    }
+    sessions.forget_removed(method, params)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Request {
@@ -160,6 +196,34 @@ mod tests {
 
     fn ping(id: &str) -> Value {
         json!({ "protocolVersion": 1, "id": id, "method": "runtime.ping" })
+    }
+
+    #[test]
+    fn routes_match_each_handler_method_list() {
+        let route_of = |method: &str| {
+            route(
+                &serde_json::to_vec(
+                    &json!({ "protocolVersion": 1, "id": "r", "method": method, "params": {} }),
+                )
+                .unwrap(),
+            )
+        };
+        for method in changes::METHODS {
+            assert_eq!(route_of(method), Route::Changes, "{method}");
+        }
+        for method in mcp::METHODS {
+            assert_eq!(route_of(method), Route::Mcp, "{method}");
+        }
+        // Review persistence lives in the runtime despite its `changes.` prefix.
+        for method in [
+            "changes.review.load",
+            "changes.review.save",
+            "mcp.internal.launch",
+            "runtime.ping",
+        ] {
+            assert_eq!(route_of(method), Route::Runtime, "{method}");
+        }
+        assert_eq!(route(b"{"), Route::Runtime);
     }
 
     #[test]

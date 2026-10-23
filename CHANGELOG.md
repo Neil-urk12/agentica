@@ -54,6 +54,15 @@ installers and publishes the release. Keep validation evidence in the
   and the drop path, checks previews, drop-point placement, and stored bytes, and
   confirms extracted text reaches the next prompt context.
 
+### Route review drafts through the runtime on desktop
+
+- Fixed review drafts never loading or saving in the desktop app. The Tauri host
+  sent every `changes.*` method to the read-only Git handler, which rejects
+  `changes.review.load` and `changes.review.save`. Both hosts now route through
+  one runtime classifier, `agentica_runtime::route`, and share the post-success
+  cleanup (`after_runtime_success`), so the two launch modes cannot drift again.
+  A unit test pins each method list to its route.
+
 ## 0.1.0 — 2026-10-23
 
 First tagged pre-release. Everything below was developed before versioning began.

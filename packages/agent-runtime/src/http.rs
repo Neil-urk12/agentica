@@ -199,8 +199,9 @@ async fn dispatch_local(state: Arc<HttpState>, request: Request) -> Response {
             Ok(Err(_)) => return reject(StatusCode::BAD_REQUEST, "Cannot read request body."),
             Err(_) => return reject(StatusCode::REQUEST_TIMEOUT, "Request timed out."),
         };
+    let route = crate::route(&bytes);
     // Read-only Git never waits for, or blocks, the workspace writer.
-    if crate::changes::is_changes_request(&bytes) {
+    if route == crate::Route::Changes {
         let data_root = state.data_root.clone();
         return match tokio::task::spawn_blocking(move || {
             crate::changes::handle_request(data_root.as_deref(), &bytes)
@@ -212,7 +213,7 @@ async fn dispatch_local(state: Arc<HttpState>, request: Request) -> Response {
         };
     }
     // A tool call can wait on a child process for 30 s; it locks the runtime only per step.
-    if crate::mcp::is_mcp_request(&bytes) {
+    if route == crate::Route::Mcp {
         let (runtime, mcp) = (state.runtime.clone(), state.mcp.clone());
         return match tokio::task::spawn_blocking(move || {
             crate::mcp::handle_request(&mcp, &bytes, &mut |method, params| {
@@ -245,16 +246,9 @@ async fn dispatch_local(state: Arc<HttpState>, request: Request) -> Response {
         match sessions.guard_metadata(method, params) {
             Ok(_guard) => {
                 let response = runtime.handle_request(&bytes);
-                // Release the runtime before stopping MCP servers: a queued tool call holds a
-                // server's client lock while it waits for this lock to re-authorize.
                 drop(runtime);
                 if response.get("error").is_none() {
-                    let _ = sessions.forget_removed(method, params);
-                    if method == "workspace.delete" {
-                        if let Some(workspace_id) = params["workspaceId"].as_str() {
-                            mcp.stop_workspace(workspace_id);
-                        }
-                    }
+                    let _ = crate::after_runtime_success(method, params, &sessions, &mcp);
                 }
                 response
             }

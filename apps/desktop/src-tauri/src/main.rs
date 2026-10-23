@@ -7,7 +7,7 @@ use agentica_runtime::{
         wire::{SessionCommand, SessionEvent, SessionRequest, MAX_CONNECTION_SUBSCRIPTIONS},
         SessionOwner, SessionService, StreamLease,
     },
-    DesktopBackend, Runtime, RuntimeError, MAX_FRAME_BYTES,
+    DesktopBackend, Route, Runtime, RuntimeError, MAX_FRAME_BYTES,
 };
 use std::{
     collections::HashMap,
@@ -51,15 +51,12 @@ async fn runtime_request(
     connect: bool,
     state: tauri::State<'_, BackendState>,
 ) -> Result<serde_json::Value, String> {
-    // Read-only Git runs outside the runtime lock and metadata gate.
-    if request["method"]
-        .as_str()
-        .is_some_and(|method| method.starts_with("changes."))
-    {
-        let bytes = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
-        if bytes.len() > MAX_FRAME_BYTES {
-            return Err("Requests must fit in 16 KiB.".into());
-        }
+    let bytes = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
+    if bytes.len() > MAX_FRAME_BYTES {
+        return Err("Requests must fit in 16 KiB.".into());
+    }
+    let route = agentica_runtime::route(&bytes);
+    if route == Route::Changes {
         if connect {
             state.connected.store(true, Ordering::SeqCst);
         }
@@ -73,15 +70,7 @@ async fn runtime_request(
         .await
         .map_err(|error| format!("Backend task failed: {error}"))?;
     }
-    // A tool call can wait on a child process for 30 s; it locks the runtime only per step.
-    if request["method"]
-        .as_str()
-        .is_some_and(|method| method.starts_with("mcp."))
-    {
-        let bytes = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
-        if bytes.len() > MAX_FRAME_BYTES {
-            return Err("Requests must fit in 16 KiB.".into());
-        }
+    if route == Route::Mcp {
         if connect {
             state.connected.store(true, Ordering::SeqCst);
         }
@@ -114,14 +103,8 @@ async fn runtime_request(
             .map_err(|_| "Backend state is unavailable.".to_owned())?
             .request(&request, connect)?;
         if response.get("error").is_none() {
-            sessions
-                .forget_removed(method, params)
+            agentica_runtime::after_runtime_success(method, params, &sessions, &mcp)
                 .map_err(|error| error.to_string())?;
-            if method == "workspace.delete" {
-                if let Some(workspace_id) = params["workspaceId"].as_str() {
-                    mcp.stop_workspace(workspace_id);
-                }
-            }
         }
         Ok(response)
     })
