@@ -24,6 +24,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("schema_v7.sql"),
     include_str!("schema_v8.sql"),
     include_str!("schema_v9.sql"),
+    include_str!("schema_v10.sql"),
 ];
 pub const STORAGE_VERSION: i64 = MIGRATIONS.len() as i64;
 
@@ -792,7 +793,10 @@ mod tests {
         tx.commit().unwrap();
         drop(conn);
         let upgraded = Workspace::open(Some(temp.path()), &id).unwrap();
-        assert_eq!(header(&upgraded.conn).unwrap(), (APPLICATION_ID, 9));
+        assert_eq!(
+            header(&upgraded.conn).unwrap(),
+            (APPLICATION_ID, STORAGE_VERSION)
+        );
         let kept: (String, i64) = upgraded
             .conn
             .query_row(

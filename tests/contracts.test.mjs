@@ -15,6 +15,7 @@ import {
   ReviewRecordSchema,
   MAX_FRAME_BYTES,
   CONVERSATION_READ,
+  MCP_LIMITS,
 } from "@agentica/protocol";
 
 test("review records and method contracts are bounded within RPC frames", () => {
@@ -403,6 +404,64 @@ test("conversation read limits match the runtime's", () => {
       ),
     ),
     CONVERSATION_READ,
+  );
+});
+
+test("mcp limits match the runtime's", () => {
+  assert.deepEqual(
+    JSON.parse(
+      readFileSync(
+        new URL("./fixtures/mcp-limits.json", import.meta.url),
+        "utf8",
+      ),
+    ),
+    MCP_LIMITS,
+  );
+});
+
+test("mcp configuration is bounded and its results never carry env values", () => {
+  const base = {
+    workspaceId: "00000000-0000-4000-8000-000000000001",
+    name: "docs",
+    command: "npx",
+    args: ["-y", "server"],
+    env: { TOKEN: "x" },
+  };
+  const create = (patch) =>
+    RuntimeRequestSchema.safeParse({
+      protocolVersion: 1,
+      id: "mcp",
+      method: "mcp.server.create",
+      params: { ...base, ...patch },
+    }).success;
+  assert.equal(create({}), true);
+  assert.equal(create({ name: "Has Space" }), false);
+  assert.equal(create({ command: "  " }), false);
+  assert.equal(create({ args: Array(33).fill("a") }), false);
+  assert.equal(create({ env: { "1BAD": "x" } }), false);
+  assert.equal(create({ env: { OK: "x".repeat(4097) } }), false);
+  assert.equal(create({ extra: true }), false);
+  const server = {
+    id: base.workspaceId,
+    name: "docs",
+    transport: "stdio",
+    command: "npx",
+    args: [],
+    envKeys: ["TOKEN"],
+    enabled: false,
+    status: "stopped",
+    error: "",
+    tools: [],
+  };
+  assert.equal(
+    ResultSchemas["mcp.server.create"].safeParse({ server }).success,
+    true,
+  );
+  assert.equal(
+    ResultSchemas["mcp.server.create"].safeParse({
+      server: { ...server, env: { TOKEN: "x" } },
+    }).success,
+    false,
   );
 });
 

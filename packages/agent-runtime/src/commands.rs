@@ -12,6 +12,8 @@ use crate::store::{delete_workspace, is_id, list_workspaces, new_id, RuntimeErro
 
 #[path = "conversation.rs"]
 mod conversation;
+#[path = "mcp_store.rs"]
+pub(crate) mod mcp_store;
 #[path = "projects.rs"]
 mod projects;
 #[path = "review.rs"]
@@ -434,6 +436,14 @@ impl Runtime {
         self.data_root.as_deref()
     }
 
+    /// Storage side of the MCP dispatcher. Not reachable over RPC: `METHODS` omits `mcp.*`.
+    pub fn mcp_internal(&mut self, method: &str, params: Value) -> Result<Value, RuntimeError> {
+        if !method.starts_with("mcp.") {
+            return Err(invalid("Not an MCP method."));
+        }
+        self.call(method, params)
+    }
+
     pub(crate) fn call(&mut self, method: &str, params: Value) -> Result<Value, RuntimeError> {
         match method {
             "changes.review.load" | "changes.review.save" => {
@@ -452,6 +462,15 @@ impl Runtime {
                     .ok_or_else(|| invalid("workspaceId is required."))?
                     .to_owned();
                 self.transact(&workspace_id, |tx| projects::call(tx, method, params))
+            }
+            // Not in METHODS: only `mcp_internal` (the MCP dispatcher) reaches these.
+            method if method.starts_with("mcp.") => {
+                let workspace_id = params
+                    .get("workspaceId")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| invalid("workspaceId is required."))?
+                    .to_owned();
+                self.transact(&workspace_id, |tx| mcp_store::call(tx, method, params))
             }
             "task.set" | "task.update" | "task.recordSent" => {
                 let workspace_id = params

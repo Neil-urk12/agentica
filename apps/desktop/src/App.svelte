@@ -755,6 +755,15 @@
         );
       turnId = start.turn.id;
       controller.signal.throwIfAborted();
+      // Optional tools: a backend that cannot list them still runs the canvas agent.
+      const mcpTools = tools
+        ? (
+            await editor
+              .listMcpTools(origin.workspaceId)
+              .catch(() => ({ tools: [] }))
+          ).tools
+        : [];
+      controller.signal.throwIfAborted();
       const { reply, operations } = await runCanvasAgent(start, {
         signal: controller.signal,
         tools,
@@ -765,6 +774,19 @@
             turnId: start.turn.id,
             nodeIds,
           }),
+        mcp: mcpTools.length
+          ? {
+              tools: mcpTools,
+              call: (server, tool, args) =>
+                editor.callMcp({
+                  ...origin,
+                  turnId: start.turn.id,
+                  server,
+                  tool,
+                  arguments: args,
+                }),
+            }
+          : undefined,
       });
       controller.signal.throwIfAborted();
       pendingReply = {
@@ -2994,6 +3016,7 @@
       {theme}
       {connectionKey}
       {connected}
+      workspaceId={editorState.workspace?.workspace.id}
       section={settingsOpen === true ? undefined : settingsOpen}
       onChange={(next) => (theme = next)}
       onClose={() => (settingsOpen = false)}

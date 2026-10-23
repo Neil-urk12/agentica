@@ -2,6 +2,7 @@ pub mod changes;
 mod commands;
 pub mod contracts;
 pub mod http;
+pub mod mcp;
 pub mod sessions;
 mod store;
 
@@ -120,6 +121,17 @@ impl DesktopBackend {
             return Err("Backend disconnected. Reconnect to start it.".to_owned());
         }
         Ok(self.runtime.handle_request(&bytes))
+    }
+
+    /// Storage step of an `mcp.*` request; the caller holds the backend lock only for this call.
+    pub fn mcp_internal(&mut self, method: &str, params: Value) -> Result<Value, RuntimeError> {
+        if !self.connected.load(Ordering::SeqCst) {
+            return Err(RuntimeError::new(
+                "WORKSPACE_NOT_OPEN",
+                "Backend disconnected. Reconnect to start it.",
+            ));
+        }
+        self.runtime.mcp_internal(method, params)
     }
 }
 

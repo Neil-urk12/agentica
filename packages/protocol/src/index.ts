@@ -262,6 +262,83 @@ export const CONVERSATION_READ = {
   outline: 200,
   title: 80,
 } as const;
+
+// MCP tool limits shared with packages/agent-runtime/src/{mcp,mcp_store}.rs.
+export const MCP_LIMITS = {
+  servers: 32,
+  name: 32,
+  command: 512,
+  args: 32,
+  arg: 1024,
+  env: 32,
+  envKey: 128,
+  envValue: 4096,
+  tools: 128,
+  toolName: 128,
+  description: 512,
+  resultBytes: 32 * 1024,
+} as const;
+export const McpServerName = z
+  .string()
+  .min(1)
+  .max(MCP_LIMITS.name)
+  .regex(/^[a-z0-9][a-z0-9-]*$/);
+const McpToolName = z.string().min(1).max(MCP_LIMITS.toolName);
+const McpLaunch = {
+  command: z
+    .string()
+    .max(MCP_LIMITS.command)
+    .refine(
+      (value) => value.trim().length > 0 && !value.includes("\0"),
+      "Must not be blank",
+    ),
+  args: z
+    .array(
+      z
+        .string()
+        .max(MCP_LIMITS.arg)
+        .refine((value) => !value.includes("\0")),
+    )
+    .max(MCP_LIMITS.args),
+  env: z
+    .record(
+      z
+        .string()
+        .max(MCP_LIMITS.envKey)
+        .regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+      z
+        .string()
+        .max(MCP_LIMITS.envValue)
+        .refine((value) => !value.includes("\0")),
+    )
+    .refine((env) => Object.keys(env).length <= MCP_LIMITS.env),
+};
+export const McpServerSchema = z.strictObject({
+  id: IdSchema,
+  name: McpServerName,
+  transport: z.literal("stdio"),
+  command: z.string(),
+  args: z.array(z.string()),
+  // Values are secrets; the runtime never returns them.
+  envKeys: z.array(z.string()),
+  enabled: z.boolean(),
+  // "idle": enabled, but not spawned yet in this process.
+  status: z.enum(["stopped", "idle", "running", "error"]),
+  error: z.string(),
+  tools: z
+    .array(
+      z.strictObject({
+        name: McpToolName,
+        description: z.string().max(MCP_LIMITS.description),
+        // Self-reported by the server; only read-only tools can be enabled.
+        readOnly: z.boolean(),
+        enabled: z.boolean(),
+      }),
+    )
+    .max(MCP_LIMITS.tools),
+});
+export type McpServer = z.infer<typeof McpServerSchema>;
+const McpServerResult = z.strictObject({ server: McpServerSchema });
 const OutlineSchema = z.strictObject({
   items: z
     .array(
@@ -601,6 +678,41 @@ const ParamSchemas = {
     tileId: IdSchema,
     textRevision: Revision,
   }),
+  "mcp.server.list": z.strictObject({ ...WorkspaceRef }),
+  "mcp.server.create": z.strictObject({
+    ...WorkspaceRef,
+    name: McpServerName,
+    ...McpLaunch,
+  }),
+  "mcp.server.update": z.strictObject({
+    ...WorkspaceRef,
+    serverId: IdSchema,
+    name: McpServerName.optional(),
+    command: McpLaunch.command.optional(),
+    args: McpLaunch.args.optional(),
+    // Replaces every variable; omit to keep them.
+    env: McpLaunch.env.optional(),
+  }),
+  "mcp.server.delete": z.strictObject({ ...WorkspaceRef, serverId: IdSchema }),
+  "mcp.server.set_enabled": z.strictObject({
+    ...WorkspaceRef,
+    serverId: IdSchema,
+    enabled: z.boolean(),
+  }),
+  "mcp.tool.set_enabled": z.strictObject({
+    ...WorkspaceRef,
+    serverId: IdSchema,
+    tool: McpToolName,
+    enabled: z.boolean(),
+  }),
+  "mcp.tools.list": z.strictObject({ ...WorkspaceRef }),
+  "mcp.tools.refresh": z.strictObject({ ...WorkspaceRef, serverId: IdSchema }),
+  "mcp.call": z.strictObject({
+    ...TurnRef,
+    server: McpServerName,
+    tool: McpToolName,
+    arguments: z.record(z.string(), z.unknown()),
+  }),
 } as const;
 
 export type RuntimeMethod = "runtime.ping" | keyof typeof ParamSchemas;
@@ -826,6 +938,29 @@ export const ResultSchemas = {
   "task.set": z.strictObject({ task: TaskSchema.nullable() }),
   "task.update": z.strictObject({ task: TaskSchema }),
   "task.recordSent": z.strictObject({ task: TaskSchema }),
+  "mcp.server.list": z.strictObject({
+    servers: z.array(McpServerSchema).max(MCP_LIMITS.servers),
+  }),
+  "mcp.server.create": McpServerResult,
+  "mcp.server.update": McpServerResult,
+  "mcp.server.delete": z.strictObject({}),
+  "mcp.server.set_enabled": McpServerResult,
+  "mcp.tool.set_enabled": McpServerResult,
+  "mcp.tools.list": z.strictObject({
+    tools: z.array(
+      z.strictObject({
+        server: McpServerName,
+        name: McpToolName,
+        description: z.string().max(MCP_LIMITS.description),
+        inputSchema: z.record(z.string(), z.unknown()),
+      }),
+    ),
+  }),
+  "mcp.tools.refresh": McpServerResult,
+  "mcp.call": z.strictObject({
+    status: z.enum(["ok", "error", "timeout"]),
+    text: z.string(),
+  }),
 } as const satisfies Record<RuntimeMethod, z.ZodType>;
 
 export type RuntimeResult<M extends RuntimeMethod> = z.infer<

@@ -51,10 +51,36 @@ or unresolved proposal can be active on a canvas. Cancel stops generation, and
 interrupted requests require an explicit retry.
 
 The first tool set supports text, labeled rectangles and ellipses, placement,
-and connectors. It does not generate images or execute code. Context and changes
+and connectors. These built-in tools do not generate images or execute code;
+tool servers you add are separate programs (see below). Context and changes
 must fit the existing size limits; oversized requests fail visibly without
 truncation. If saving a generated response fails, keep the canvas open to retry
 or copy the response for recovery. Basic manual editing needs no AI account.
+
+## Tools from MCP servers
+
+Settings › **Tools** lists the built-in canvas tools and lets you add local
+programs that offer more tools over the Model Context Protocol (stdio only).
+Each server is a command, one argument per line, and optional `NAME=value`
+variables. It is saved with the open workspace, spawned without a shell, and runs
+with your user permissions, so add only programs you trust.
+
+- A server starts only when you turn it on, and its tools are listed then. Every
+  tool starts off. Only tools the server marks read-only (`readOnlyHint`) can be
+  turned on; that label is the server's own claim, and your per-tool choice is the
+  gate, rechecked on every call.
+- Enabled tools reach tool-capable models as `server__tool`. A call has a 30 s
+  limit and a 32 KiB result cap; results are treated as untrusted data. Cancel
+  ends the turn without waiting for a pending call.
+- Variable values are stored in plain text in the workspace database, like other
+  local data. They are never shown again or sent to the model, and are redacted
+  from the errors shown in Settings. The model sees only a generic failure.
+- Turning a server off, deleting it or its workspace, or stopping the app or
+  backend stops the server and the processes it started.
+
+Verified with test servers in browser mode on Linux; the desktop host shares the
+code but has not been run against a real server. Remote (HTTP) servers, tools that
+change data, and per-project servers are planned, not implemented.
 
 ## Project groups and native sessions
 

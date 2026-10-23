@@ -11,6 +11,23 @@ import {
   stageOperations,
   systemPrompt,
 } from "./canvas-agent.ts";
+import { mcpToolSpecs, offeredMcpTools, type McpTool } from "./agent-tools.ts";
+
+/** Room left in a 16 KiB runtime frame for the request envelope around MCP arguments. */
+const MCP_ARG_BYTES = 12 * 1024;
+
+/** Settle with `work`, or reject as soon as `signal` aborts; the work itself is not stopped. */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  let onAbort = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  return Promise.race([work, aborted]).finally(() =>
+    signal.removeEventListener("abort", onAbort),
+  );
+}
 
 /** Limits the harness owns; reads are budgeted by the runtime instead. */
 export const BUDGET = Object.freeze({
@@ -62,6 +79,15 @@ export type HarnessDeps = {
   label: string;
   post(body: string, signal: AbortSignal): Promise<ChatReply>;
   read(nodeIds: string[]): Promise<RuntimeResult<"conversation.read">>;
+  /** Enabled read-only MCP tools for this turn, and the runtime call that runs them. */
+  mcp?: {
+    tools: McpTool[];
+    call(
+      server: string,
+      tool: string,
+      args: Record<string, unknown>,
+    ): Promise<RuntimeResult<"mcp.call">>;
+  };
   budget?: Budget;
 };
 
@@ -121,8 +147,11 @@ export async function runCanvasTurn(
   }, budget.ms);
   const signal = turn.signal;
 
+  const external = deps.tools
+    ? offeredMcpTools(deps.mcp?.tools ?? [])
+    : new Map<string, McpTool>();
   const messages: Message[] = [
-    { role: "system", content: systemPrompt(deps.tools) },
+    { role: "system", content: systemPrompt(deps.tools, external.size > 0) },
   ];
   for (const previous of start.history) {
     messages.push({ role: "user", content: previous.prompt });
@@ -152,7 +181,9 @@ export async function runCanvasTurn(
       const body = JSON.stringify({
         ...deps.request,
         messages,
-        ...(deps.tools ? { tools: canvasTools() } : {}),
+        ...(deps.tools
+          ? { tools: [...canvasTools(), ...mcpToolSpecs(external)] }
+          : {}),
       });
       if (new TextEncoder().encode(body).length > budget.requestBytes)
         throw new Exhausted(
@@ -242,12 +273,62 @@ export async function runCanvasTurn(
     );
   }
 
-  async function runTool(call: ToolCall["function"]): Promise<unknown> {
-    if (call.name !== "canvas_edit" && call.name !== "canvas_read")
+  async function runExternal(tool: McpTool, raw: string): Promise<unknown> {
+    let args: unknown;
+    try {
+      args = JSON.parse(raw);
+    } catch {
       return {
         status: "rejected",
-        error: `Unknown tool ${call.name.slice(0, 64)}. Only canvas_read and canvas_edit exist.`,
+        error: "Tool arguments must be valid JSON matching the tool's schema.",
       };
+    }
+    if (
+      !args ||
+      typeof args !== "object" ||
+      Array.isArray(args) ||
+      new TextEncoder().encode(raw).length > MCP_ARG_BYTES
+    )
+      return {
+        status: "rejected",
+        error: `Tool arguments must be a JSON object of at most ${MCP_ARG_BYTES / 1024} KiB.`,
+      };
+    try {
+      // Cancel and the turn deadline must not wait up to 30 s for the runtime's answer.
+      const result = await untilAborted(
+        deps.mcp!.call(tool.server, tool.name, args as Record<string, unknown>),
+        signal,
+      );
+      signal.throwIfAborted();
+      return result.status === "ok"
+        ? { status: "ok", content: result.text }
+        : {
+            status: "rejected",
+            error:
+              result.text ||
+              (result.status === "timeout"
+                ? "The tool timed out."
+                : "The tool failed."),
+          };
+    } catch (error) {
+      // The user turned the tool off mid-turn, or the call was malformed: tell the model.
+      const code = (error as { code?: string } | null)?.code;
+      if (code && MODEL_READ_ERRORS.has(code))
+        return { status: "rejected", error: (error as Error).message };
+      throw error;
+    }
+  }
+
+  async function runTool(call: ToolCall["function"]): Promise<unknown> {
+    const offeredTool = external.get(call.name);
+    if (offeredTool) return runExternal(offeredTool, call.arguments);
+    if (call.name !== "canvas_edit" && call.name !== "canvas_read") {
+      const names = ["canvas_read", "canvas_edit", ...external.keys()];
+      return {
+        status: "rejected",
+        error: `Unknown tool ${call.name.slice(0, 64)}. Only ${names.slice(0, -1).join(", ")} and ${names.at(-1)} exist.`,
+      };
+    }
     let args: unknown;
     try {
       args = JSON.parse(call.arguments);
