@@ -1,16 +1,33 @@
 # Changelog
 
-Meaningful changes and development progress for Agentica. All entries below are
-unreleased; this initial record includes committed history and current
-working-tree changes. Dates identify development updates, not published releases.
+Meaningful changes and development progress for Agentica. Versions follow
+[Semantic Versioning](https://semver.org/); before 1.0, minor versions may break
+compatibility. Dated subsections record development updates within a version.
 
-Add completed changes under `Unreleased`; at release time, move them under the
-released version and date. Keep validation evidence in the
+Add completed changes under `Unreleased`. To release, move them under a new
+version heading, set that version in every `package.json`, `Cargo.toml`, and
+`tauri.conf.json`, merge, and push a `vX.Y.Z` tag; GitLab CI builds the
+installers and publishes the release. Keep validation evidence in the
 [development docs](docs/development/README.md).
 
 ## Unreleased
 
+## 0.1.0 — 2026-10-23
+
+First tagged pre-release. Everything below was developed before versioning began.
+
 ### 2026-10-23
+
+- Added release packaging. Tauri bundling is on (`pnpm package:desktop`), and a
+  `vX.Y.Z` tag runs GitLab CI jobs that check the tag matches the app version,
+  build a Linux AppImage, `.deb`, and `.rpm`, a Windows NSIS installer, and the
+  browser-mode backend for both platforms, upload them to the GitLab package
+  registry under stable names, and publish a GitLab Release linking them.
+  GitHub Actions is billing-locked, so releases live on GitLab for now and the
+  landing page's download button points there. NSIS is used on Windows because
+  it builds without WiX. `pnpm build:desktop` still skips bundling for fast
+  local builds.
+- Set every package and crate to version 0.1.0.
 
 - Saving a custom agent no longer closes a different agent's form opened while
   the save was running, and the form fields are locked during the save so

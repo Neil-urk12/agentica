@@ -1,6 +1,6 @@
 {
   "name": "agentica",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -17,6 +17,7 @@
     "dev:landing": "pnpm --filter @agentica/landing dev",
     "build": "pnpm -r build && cargo build --locked -p agentica-runtime",
     "build:desktop": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop tauri build --no-bundle",
+    "package:desktop": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop tauri build",
     "build:landing": "pnpm --filter @agentica/landing build",
     "check": "pnpm --filter @agentica/protocol build && pnpm -r check",
     "check:rust": "cargo fmt --all --check && cargo clippy --locked --workspace --all-targets --all-features -- -D warnings",
