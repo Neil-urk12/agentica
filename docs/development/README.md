@@ -1,108 +1,71 @@
 # Development
 
-## Prerequisites
+Reference for working on Agentica's code. To run the app, see
+[Running Agentica](../running.md); for the workflow, see
+[CONTRIBUTING.md](../../CONTRIBUTING.md); for the big picture, see
+[ARCHITECTURE.md](../../ARCHITECTURE.md).
 
-- Node.js 24 and pnpm 11.6.0 for frontend development and integration tests.
-- Stable Rust with rustfmt and Clippy for either backend mode.
-- The
-  [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/), for
-  native desktop development. Linux requires GTK and WebKitGTK development
-  libraries; Windows requires the applicable build tools and WebView2.
+## Checks
 
-Run commands from the repository root.
+| Command              | What it checks                                                                                                                           |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm check`         | Svelte and strict TypeScript                                                                                                             |
+| `pnpm lint`          | Oxlint on JavaScript, TypeScript, and Svelte                                                                                             |
+| `pnpm format:check`  | Oxfmt formatting of source and Markdown (`pnpm format` fixes it)                                                                         |
+| `pnpm check:rust`    | `cargo fmt --check` and Clippy with `-D warnings`, all targets and features                                                              |
+| `pnpm test:unit`     | Node unit tests (what CI runs)                                                                                                           |
+| `pnpm test:rust`     | Rust workspace tests                                                                                                                     |
+| `pnpm test`          | Everything: builds protocol and frontend, Rust tests with the embedded UI, then all Node tests including the real HTTP and browser tests |
+| `pnpm build`         | Protocol, frontend, and an RPC-only debug backend                                                                                        |
+| `pnpm build:desktop` | Release desktop binary (no installer)                                                                                                    |
+| `pnpm build:backend` | Release backend with the embedded UI                                                                                                     |
+
+Notes:
+
+- On a fresh checkout, run `pnpm -r build` before `pnpm check:rust`; the
+  all-features build embeds frontend assets.
+- `tests/*.test.mjs` import `@agentica/protocol` from its built `dist/`. Rebuild
+  it after changing the protocol package.
+- `tests/http.test.mjs` starts the real backend on port 1421 and drives Chrome
+  (`CHROME_PATH` overrides the browser). Stop any dev backend first.
+- Tests use temporary data directories and never call real agents or paid
+  providers.
+
+Run a single test:
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm dev
+cargo test --locked -p agentica-runtime <name_filter>
+node --test --test-name-pattern "<regex>" tests/<file>.test.mjs
 ```
 
-`pnpm dev` builds the frontend protocol package, starts Vite, and opens the Tauri
-desktop app. The shared Rust runtime is compiled into the app. The window calls
-it through a scoped Tauri command and shows **Ready** on the workspace screen after
-a validated ping. Closing the app ends its backend; there is no separate child process.
+### Git hooks
 
-For browser mode, Rust is needed to build the backend, but GTK, WebKitGTK, and
-other desktop prerequisites are not needed. In two terminals:
+`pnpm install` sets `core.hooksPath` to `.githooks`. The pre-commit hook runs
+`pnpm format:check`, `pnpm lint`, and `cargo fmt --all --check`.
 
-```sh
-pnpm dev:backend
-pnpm dev:web
-```
+### CI
 
-Open `http://127.0.0.1:1420` or `http://localhost:1420`, paste the backend
-terminal's connection key, and select **Connect**. The backend listens only on
-`127.0.0.1:1421`; it accepts those two exact development origins because
-origin/host checks are strict. The key
-stays in memory and is never placed in URLs or browser storage. Closing the tab
-leaves the backend running; Ctrl+C in its terminal stops it. After restarting
-the backend, paste its new key and reconnect.
+[GitHub Actions](../../.github/workflows/ci.yml) and its
+[GitLab mirror](../../.gitlab-ci.yml) run the same jobs on every push:
+formatting, lint, type checks, frontend build, and Node unit tests on Linux; Rust
+format, Clippy, unit tests, and a desktop build on Linux and Windows.
 
-Both modes check health every five seconds and wait for explicit reconnect on
-failure. Browser health checks have a three-second response deadline. Persistence
-calls await their outcome; only request reading and runtime admission time out.
-After a lost connection, reconnect explicitly and use **Retry save** to reconcile
-persisted state while retaining drafts. Copy unsaved edits before a forced reload
-or termination. The desktop health command directly calls the Rust handler. The canvas
-remains usable. Development frontends use port 1420; run one development frontend at a time.
-Neither mode requires Codex or an AI account. The UI implements health checks,
-manual text/placement editing, autosave, and reopen through the runtime protocol below.
+## Protocol
 
-## Verification
-
-| Command              | Checks                                                                  |
-| -------------------- | ----------------------------------------------------------------------- |
-| `pnpm check`         | Strict TypeScript and Svelte checks                                     |
-| `pnpm lint`          | Oxlint linter on JavaScript, TypeScript, and Svelte scripts             |
-| `pnpm test`          | Rust unit/contract tests and real HTTP protocol, persistence, lifecycle |
-| `pnpm build`         | Frontend, TypeScript protocol, and Rust backend builds                  |
-| `pnpm format:check`  | Source and documentation formatting with Oxfmt                          |
-| `pnpm check:rust`    | Rust formatting and Clippy on all targets/features                      |
-| `pnpm test:rust`     | Rust workspace tests, including desktop connection state                |
-| `pnpm build:desktop` | Native release binary with embedded frontend; no installer              |
-| `pnpm build:backend` | Detached Rust release executable with embedded production frontend      |
-
-The integration tests build the protocol package and Rust executable first.
-They also build/embed the frontend and check asset delivery and same-origin RPC.
-Build frontend assets with `pnpm -r build` before the all-features `pnpm check:rust`
-on a fresh checkout. Plain `cargo test --locked --workspace` does not need Node or assets.
-They use port 1421; stop a development backend before running them. Tests use
-temporary data directories and never touch your workspaces. No real agent
-execution or paid provider calls happen in tests. CI runs frontend checks and
-Rust integration/static checks on Linux and Windows; that is not installer or
-security acceptance validation.
-
-`pnpm build:desktop` links the Rust runtime into the release app and omits installers.
-
-## Runtime health check
-
-Start `pnpm dev:backend`, then use its terminal key to send this JSON body to
-`http://127.0.0.1:1421/rpc` with POST, `Content-Type: application/json`,
-`Origin: http://127.0.0.1:1420`, and `Authorization: Bearer <connection key>`:
+Every request is a JSON envelope. The schemas are in
+[`packages/protocol/src/index.ts`](../../packages/protocol/src/index.ts) and
+mirrored in [`contracts.rs`](../../packages/agent-runtime/src/contracts.rs);
+[`tests/fixtures`](../../tests/fixtures) holds shared round-trip examples.
 
 ```json
 { "protocolVersion": 1, "id": "health-1", "method": "runtime.ping" }
 ```
 
-The backend returns:
-
 ```json
 { "protocolVersion": 1, "id": "health-1", "result": { "status": "ok" } }
 ```
 
-## Workspace storage
-
-Both modes store workspaces under `AGENTICA_DATA_DIR`, or the OS data directory
-joined with `agentica`. Each workspace directory holds `writer.lock` and
-`workspace.sqlite3`; only the Rust runtime writes them. Opening a workspace that
-another desktop window or detached backend holds fails with `WORKSPACE_LOCKED`;
-close it there and retry. Newer or foreign storage fails with
-`UNSUPPORTED_STORAGE` and is left unmodified. The
-[changelog](../../CHANGELOG.md) records the storage rationale.
-
-Commands besides `runtime.ping` take `params`; the
-[protocol package](../../packages/protocol/src/index.ts) defines them, and
-[the shared fixture](../../tests/fixtures/workspace-roundtrip.json) shows a full
-create/edit/reopen sequence. For example:
+Other methods take `params`:
 
 ```json
 {
@@ -113,51 +76,49 @@ create/edit/reopen sequence. For example:
 }
 ```
 
-Mutations name an `expectedRevision` and fail with `CONFLICT` on stale state.
-Errors for a valid envelope carry the request id.
+- Requests are limited to 16 KiB.
+- Mutations name an `expectedRevision` and fail with `CONFLICT` if state moved on.
+- Errors for a valid envelope carry the request `id` and a stable code. Invalid
+  JSON or an unknown envelope returns an error with a `null` id.
 
-Changes review feedback is stored per Changes tile (schema v7) and is read and
-written one record at a time with `changes.review.load` and
-`changes.review.save`. Validated on Linux (Fedora 44) in browser mode with the
-bundled backend and headless Chrome by `tests/http.test.mjs` ("review feedback
-survives browser reload and backend restart…"). The test covers hunk and file
-comments plus unfinished composer text across a reload, then a backend restart
-with a changed hunk (marked Outdated, original range kept, and labelled in the
-preview), and Sent restoration in both layouts. Sent is seeded
-through RPC because that test has no Codex. Unverified anchors, save failures,
-conflicts, and close/removal guards are covered by state tests in
-`tests/changes.test.mjs`. Desktop restart and close-time flush in the Tauri app
-are not yet validated.
+To call the browser-mode backend by hand, start `pnpm dev:backend` and `POST` to
+`http://127.0.0.1:1421/rpc` with `Content-Type: application/json`,
+`Origin: http://127.0.0.1:1420`, and `Authorization: Bearer <connection key>`.
 
-To build the detached distribution, run `pnpm build:backend`, equivalent to:
+## Storage
 
-```sh
-pnpm --filter @agentica/protocol build
-pnpm --filter @agentica/desktop build
-cargo build --locked --release -p agentica-runtime --bin agentica-backend --features bundled-frontend
-./target/release/agentica-backend
-```
+Each workspace is a directory under the data root holding `writer.lock` and
+`workspace.sqlite3`. Only the Rust runtime writes them.
 
-Windows uses `target\release\agentica-backend.exe`. Copy the executable to any
-directory and open its printed `http://127.0.0.1:1421` frontend URL. Node/pnpm/Vite
-are build tools only; the distributed executable needs no assets directory or
-Rust toolchain. Linux requires compatible glibc/libgcc/libm and a local browser,
-but no GTK/WebKitGTK. Only embedded HTML/JS/CSS are public; no workspace files or
-keys are served. RPC requires an exact accepted Origin, exact Host, and the current
-Bearer key, including same-origin browser calls. Keys are generated after startup,
-never injected into frontend builds, URLs, or browser storage. The public shell
-has a restrictive CSP and no-store/nosniff headers.
+- Opening a workspace another process holds fails with `WORKSPACE_LOCKED`.
+- A database from a newer or unknown schema fails with `UNSUPPORTED_STORAGE` and
+  is left untouched.
+- Migrations are `packages/agent-runtime/src/schema_vN.sql`. Bumping the schema
+  makes older builds refuse the workspace, so note it in the changelog.
 
-Omitting `--features bundled-frontend` makes an RPC-only development build with
-no frontend build requirement. Its terminal points to the Vite development URL.
-Ctrl+C stops either build; SIGTERM is also handled on Unix.
+[ADR 0003](../architecture/0003-workspace-storage.md) explains the design.
 
-## Next slice
+## Validation records
 
-Shared UI editing, autosave, visible save failures, and reopen are implemented.
-Interactive Linux lifecycle checks, detached delivery, and an RPM prefix
-install/run prototype pass. Windows lifecycle validation and packaging, normal
-system installation, and wider package compatibility remain unvalidated.
-Then implement the manual mind-map workflow before connecting mock and real agents. Installer
-packaging and enforceable Codex scopes need early validation on both target
-platforms.
+Manual and end-to-end validation, with dates and evidence:
+
+| Record                                   | Covers                                         |
+| ---------------------------------------- | ---------------------------------------------- |
+| [Verification index](verification.md)    | Summary of every validation run                |
+| [M0-09 Linux](m0-09-linux.md)            | Desktop and browser launch lifecycle on Linux  |
+| [M0-11 Linux](m0-11-linux.md)            | Detached delivery and an RPM package prototype |
+| [M1 validation](m1-validation.md)        | Typed operations and the execution boundary    |
+| [Windows handoff](windows-validation.md) | Steps still to run on Windows                  |
+
+Changes review feedback persistence is validated on Linux (Fedora 44) in browser
+mode by the `tests/http.test.mjs` case "review feedback survives browser reload
+and backend restart". Desktop restart and close-time flush are not yet validated.
+
+Not yet validated anywhere: Windows lifecycle, installers, and system-wide
+package installation.
+
+## Licenses
+
+[rust-backend-notices.md](rust-backend-notices.md) lists the licenses of the
+Rust dependencies compiled into the backend. Bundled frontend code is in
+[THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md).
