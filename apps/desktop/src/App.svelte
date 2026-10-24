@@ -44,6 +44,7 @@
   import { clock } from "./lib/clock.svelte";
   import { Editor, type DrawingSegment } from "./lib/editor";
   import { applyTheme, readTheme, type Theme } from "./lib/theme";
+  import { applyHeaderLabels, readHeaderLabels } from "./lib/preferences";
   import Composer from "./lib/components/Composer.svelte";
   import Reader from "./lib/components/Reader.svelte";
   import ReviewBar from "./lib/components/ReviewBar.svelte";
@@ -272,6 +273,7 @@
   // true opens settings without a section (narrow windows show the category list).
   let settingsOpen = $state<boolean | SettingsSection>(false);
   let theme = $state<Theme>(readTheme());
+  let headerLabels = $state(readHeaderLabels());
   let recoveryCopy = $state("");
   let closeNotice = $state("");
   let tool = $state<Tool>("select");
@@ -1795,6 +1797,10 @@
   });
 
   $effect(() => {
+    applyHeaderLabels(headerLabels);
+  });
+
+  $effect(() => {
     void selectedId;
     fitNotice = "";
   });
@@ -2748,17 +2754,25 @@
         <button
           class="btn btn--soft"
           type="button"
+          title="Open project"
+          aria-label="Open project"
           disabled={!canEdit || pickingProject}
           onclick={() => void openProject()}
-          ><Icon name="folder_open" size={18} />Open project</button
+          ><Icon name="folder_open" size={18} /><span class="btn__label"
+            >Open project</span
+          ></button
         >
         <span
           class="pill"
           class:pill--ok={!editorState.dirty && !editorState.error}
           class:pill--warn={editorState.dirty && !editorState.error}
           class:pill--bad={!!editorState.error}
+          title={saveLabel}
+          aria-label={saveLabel}
         >
-          <span class="pill__dot"></span>{saveLabel}
+          <span class="pill__dot"></span><span class="btn__label"
+            >{saveLabel}</span
+          >
         </span>
         <span class="topbar__divider"></span>
         <button
@@ -2788,7 +2802,7 @@
           onclick={() => void editor.save()}
         >
           <Icon name="save" size={18} />
-          Save
+          <span class="btn__label">Save</span>
         </button>
       </div>
     </header>
@@ -3498,12 +3512,14 @@
   {#if settingsOpen}
     <Settings
       {theme}
+      {headerLabels}
       {connectionKey}
       {connected}
       workspaceId={editorState.workspace?.workspace.id}
       {sessions}
       section={settingsOpen === true ? undefined : settingsOpen}
       onChange={(next) => (theme = next)}
+      onHeaderLabelsChange={(next) => (headerLabels = next)}
       onClose={() => (settingsOpen = false)}
     />
   {/if}

@@ -38,16 +38,21 @@
     /** Agent detection; custom agent changes refresh it. */
     sessions: SessionManager;
     theme: Theme;
+    /** Whether header controls show their text labels. */
+    headerLabels: boolean;
     /** Section to open at; without one, narrow windows start at the category list. */
     section?: SettingsSection;
     onChange: (theme: Theme) => void;
+    onHeaderLabelsChange: (visible: boolean) => void;
     onClose: () => void;
   }
 
   let {
     theme,
+    headerLabels,
     section,
     onChange,
+    onHeaderLabelsChange,
     onClose,
     connectionKey,
     connected,
@@ -434,6 +439,31 @@
               ><span class="switch__thumb"></span></span
             >
             <span class="switch__label">{dark ? "Dark" : "Light"}</span>
+          </button>
+        </section>
+        <section class="setting">
+          <span class="setting__icon"><Icon name="label_off" size={20} /></span>
+          <div class="setting__text">
+            <h3>Hide header labels</h3>
+            <p>
+              Show only icons in the header buttons and pills. Remembered on
+              this device.
+            </p>
+          </div>
+          <button
+            class="switch"
+            type="button"
+            role="switch"
+            aria-checked={!headerLabels}
+            aria-label="Hide header labels"
+            onclick={() => onHeaderLabelsChange(!headerLabels)}
+          >
+            <span class="switch__track"
+              ><span class="switch__thumb"></span></span
+            >
+            <span class="switch__label"
+              >{headerLabels ? "Labels" : "Icons"}</span
+            >
           </button>
         </section>
       </section>

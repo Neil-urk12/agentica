@@ -1295,6 +1295,20 @@ label {
   border-color: var(--bad-line);
 }
 
+/* Appearance: compact header controls keep only the icon. */
+:root[data-header-labels="hide"] .btn__label {
+  display: none;
+}
+
+:root[data-header-labels="hide"] .topbar__actions > .btn,
+:root[data-header-labels="hide"] .home__tools .btn,
+:root[data-header-labels="hide"] .home__ready {
+  width: 2.75rem;
+  min-width: 2.75rem;
+  padding-inline: 0;
+  gap: 0;
+}
+
 /* ------------------------------------------------------------------ stage */
 
 .stage {

@@ -171,8 +171,11 @@
     title={`Waiting for you (${queueShortcutLabel(apple)})`}
     onclick={() => (open ? close() : (open = true))}
   >
-    {#if count}<span class="dot" aria-hidden="true"></span>{count} waiting{:else}Nothing
-      waiting{/if}
+    {#if count}<span class="dot" aria-hidden="true"></span>{count}<span
+        class="btn__label">waiting</span
+      >{:else}<Icon name="notifications" size={18} /><span class="btn__label"
+        >Nothing waiting</span
+      >{/if}
   </button>
   <span class="sr-only" role="status" aria-live="polite" aria-atomic="true"
     >{sentence}</span

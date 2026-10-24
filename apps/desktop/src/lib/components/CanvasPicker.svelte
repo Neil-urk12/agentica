@@ -107,24 +107,34 @@
           title={showConnection
             ? "Hide connection settings"
             : "Show connection settings"}
+          aria-label={showConnection
+            ? "Hide connection settings"
+            : "Show connection settings"}
           onclick={() => (showConnection = !showConnection)}
         >
-          <span class="home__dot"></span>Ready
+          <span class="home__dot"></span><span class="btn__label">Ready</span>
         </button>
       {/if}
       <button
         class="btn btn--ghost"
         type="button"
         title="Switch workspace"
+        aria-label="Switch workspace"
         disabled={busy}
         onclick={onBack}
       >
         <Icon name="arrow_back" size={18} />
-        Workspace
+        <span class="btn__label">Workspace</span>
       </button>
-      <button class="btn btn--ghost" type="button" onclick={onOpenSettings}>
+      <button
+        class="btn btn--ghost"
+        type="button"
+        title="Settings"
+        aria-label="Settings"
+        onclick={onOpenSettings}
+      >
         <Icon name="settings" size={18} />
-        Settings
+        <span class="btn__label">Settings</span>
       </button>
     </span>
   </header>
