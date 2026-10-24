@@ -753,7 +753,8 @@ Allow cargo test? <span class="y">(y/n)</span></pre>
                   </p>
                   <a
                     class="btn btn--primary btn--hero"
-                    href="https://gitlab.com/Neil-urk12/agentica/-/releases"
+                    href="https://github.com/Neil-urk12/agentica/releases/latest"
+                    data-download-link
                   >
                     <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
                       <path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M4 20h16" />
@@ -761,8 +762,23 @@ Allow cargo test? <span class="y">(y/n)</span></pre>
                     <span data-download-label>Download for desktop</span>
                   </a>
                   <p class="download__hint" data-download-hint>
-                    GitLab Releases · pre-release
+                    GitHub Releases · pre-release
                   </p>
+                  <div class="source__block" data-install hidden>
+                    <code data-install-code></code>
+                    <button
+                      class="copy-btn"
+                      type="button"
+                      data-copy=""
+                      data-install-copy
+                      aria-label="Copy download command"
+                    >
+                      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="9" y="9" width="11" height="11" rx="2" />
+                        <path d="M5 15V5h10" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
 
                 <div class="download__panel">
@@ -788,7 +804,7 @@ Allow cargo test? <span class="y">(y/n)</span></pre>
                         />
                       </svg>
                       <span class="platform__name">Windows</span>
-                      <span class="platform__meta">x64 · .exe</span>
+                      <span class="platform__meta">x64 · installer</span>
                     </button>
                     <button
                       class="platform"
@@ -806,7 +822,7 @@ Allow cargo test? <span class="y">(y/n)</span></pre>
                         />
                       </svg>
                       <span class="platform__name">macOS</span>
-                      <span class="platform__meta">Apple silicon</span>
+                      <span class="platform__meta">build from source</span>
                     </button>
                     <button
                       class="platform"
@@ -824,13 +840,13 @@ Allow cargo test? <span class="y">(y/n)</span></pre>
                         />
                       </svg>
                       <span class="platform__name">Linux</span>
-                      <span class="platform__meta">x64 · binary</span>
+                      <span class="platform__meta">x64 · AppImage</span>
                     </button>
                   </div>
 
                   <div class="source">
                     <p class="source__head">
-                      Or build it from source <span>recommended for now</span>
+                      Or build it from source <span>needed on macOS</span>
                     </p>
                     <div class="source__block">
                       <code>pnpm install --frozen-lockfile</code>
@@ -868,7 +884,6 @@ Allow cargo test? <span class="y">(y/n)</span></pre>
                         rel="noreferrer"
                         >Tauri platform prerequisites</a
                       >. The executable lands in <code>target/release/</code>.
-                      Installers are still pending.
                     </p>
                   </div>
                 </div>

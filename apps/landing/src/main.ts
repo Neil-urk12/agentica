@@ -1,4 +1,5 @@
 import "./style.css";
+import { version } from "../package.json";
 import {
   atStop,
   boardProgress,
@@ -20,6 +21,25 @@ const PLATFORMS: Record<PlatformId, string> = {
   windows: "Windows",
   macos: "macOS",
   linux: "Linux",
+};
+
+// The release process bumps every package.json, so this tracks the latest tag.
+const TAG = `v${version}`;
+const RELEASES = "https://github.com/Neil-urk12/agentica/releases";
+const asset = (name: string) => `${RELEASES}/download/${TAG}/${name}`;
+
+// No macOS build yet: macOS falls back to the releases page and building from source.
+const INSTALLERS: Partial<
+  Record<PlatformId, { url: string; command: string }>
+> = {
+  windows: {
+    url: asset(`agentica-${TAG}-windows-x64-setup.exe`),
+    command: `curl.exe -Lo agentica-setup.exe ${asset(`agentica-${TAG}-windows-x64-setup.exe`)}; .\\agentica-setup.exe`,
+  },
+  linux: {
+    url: asset(`agentica-${TAG}-linux-x86_64.AppImage`),
+    command: `curl -Lo agentica.AppImage ${asset(`agentica-${TAG}-linux-x86_64.AppImage`)} && chmod +x agentica.AppImage && ./agentica.AppImage`,
+  },
 };
 
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -106,6 +126,12 @@ const downloadLabels = Array.from(
 const downloadHint = document.querySelector<HTMLElement>(
   "[data-download-hint]",
 );
+const downloadLink = document.querySelector<HTMLAnchorElement>(
+  "[data-download-link]",
+);
+const install = document.querySelector<HTMLElement>("[data-install]");
+const installCode = document.querySelector<HTMLElement>("[data-install-code]");
+const installCopy = document.querySelector<HTMLElement>("[data-install-copy]");
 
 function selectedPlatform(): PlatformId | null {
   const active = platformButtons.find(
@@ -122,16 +148,26 @@ function renderPlatform(platform: PlatformId | null) {
     );
   }
 
-  const label = platform
-    ? `Download for ${PLATFORMS[platform]}`
-    : "Download for desktop";
+  const installer = platform ? INSTALLERS[platform] : undefined;
+  const label = !platform
+    ? "Download for desktop"
+    : installer
+      ? `Download for ${PLATFORMS[platform]}`
+      : "See all releases";
 
   for (const element of downloadLabels) element.textContent = label;
+  if (downloadLink) downloadLink.href = installer?.url ?? `${RELEASES}/latest`;
+
+  if (install && installCode && installCopy) {
+    install.hidden = !installer;
+    installCode.textContent = installer?.command ?? "";
+    installCopy.dataset.copy = installer?.command ?? "";
+  }
 
   if (downloadHint) {
     downloadHint.textContent = platform
-      ? `GitLab Releases · pre-release · ${PLATFORMS[platform]}`
-      : "GitLab Releases · pre-release";
+      ? `GitHub Releases · ${TAG} pre-release · ${PLATFORMS[platform]}`
+      : `GitHub Releases · ${TAG} pre-release`;
   }
 }
 

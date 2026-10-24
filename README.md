@@ -35,7 +35,7 @@ provider.
 ## Quick start
 
 Prebuilt installers are on the
-[releases page](https://gitlab.com/Neil-urk12/agentica/-/releases). To build from
+[releases page](https://github.com/Neil-urk12/agentica/releases). To build from
 source you need Node.js 24, pnpm 11.6.0, stable Rust, and the
 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
 
