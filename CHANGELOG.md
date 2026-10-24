@@ -12,6 +12,15 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Windows terminal tiles (2026-10-24)
+
+- Enable native sessions on Windows. Terminal tiles launch Windows PowerShell,
+  falling back to `%ComSpec%` (`cmd.exe`), with no `-i` argument.
+- Each Windows session runs in a kill-on-close Job Object, so stopping it ends
+  every process the shell started, mirroring Linux session cleanup.
+- Strip the verbatim `\\?\` prefix from canonical project paths before using them
+  as the working directory, since `cmd.exe` rejects it.
+
 ### Fix non-Linux build warnings in session process supervisor (2026-10-23)
 
 - Gate `Duration` and `Instant` imports behind `#[cfg(target_os = "linux")]` and

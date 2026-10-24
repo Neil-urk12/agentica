@@ -37,8 +37,13 @@ pub(super) fn executable(path: &Path) -> bool {
             .is_ok_and(|path| unsafe { libc::access(path.as_ptr(), libc::X_OK) } == 0)
 }
 
-/// Native sessions are verified only on Linux, so nothing else is launchable.
-#[cfg(not(target_os = "linux"))]
+#[cfg(windows)]
+pub(super) fn executable(path: &Path) -> bool {
+    path.is_absolute() && path.is_file()
+}
+
+/// Native sessions are verified only on Linux and Windows, so nothing else is launchable.
+#[cfg(not(any(target_os = "linux", windows)))]
 pub(super) fn executable(_: &Path) -> bool {
     false
 }
@@ -96,19 +101,42 @@ fn shell_capability() -> ExecutableCapability {
     {
         resolve_shell(account_shell())
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        // Windows PowerShell ships with every supported Windows; cmd.exe is the fallback.
+        let powershell = std::env::var_os("SystemRoot").map(|root| {
+            PathBuf::from(root).join(r"System32\WindowsPowerShell\v1.0\powershell.exe")
+        });
+        if let Some(path) = powershell.filter(|path| executable(path)) {
+            return ExecutableCapability {
+                path: Some(path),
+                fallback: false,
+                reason: None,
+            };
+        }
+        let path = std::env::var_os("ComSpec").map(PathBuf::from);
+        ExecutableCapability {
+            path: path.filter(|path| executable(path)),
+            fallback: true,
+            reason: Some("Windows PowerShell is unavailable; using cmd.exe if executable.".into()),
+        }
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         ExecutableCapability {
             path: None,
             fallback: false,
-            reason: Some("Native sessions are verified only on Linux.".into()),
+            reason: Some(UNSUPPORTED.into()),
         }
     }
 }
 
+#[cfg(not(any(target_os = "linux", windows)))]
+const UNSUPPORTED: &str = "Native sessions are verified only on Linux and Windows.";
+
 pub fn capabilities(data_root: Option<&Path>) -> SessionCapabilities {
     let agents = agents::list(data_root);
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     {
         SessionCapabilities {
             platform: std::env::consts::OS,
@@ -117,9 +145,9 @@ pub fn capabilities(data_root: Option<&Path>) -> SessionCapabilities {
             agents,
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
-        let reason = "Native sessions are verified only on Linux.";
+        let reason = UNSUPPORTED;
         SessionCapabilities {
             platform: std::env::consts::OS,
             supported: false,
@@ -155,14 +183,20 @@ impl LaunchSpec {
         if !directory.is_absolute() || canonical != directory || !canonical.is_dir() {
             return Err(RuntimeError::new("INVALID_PARAMS", "The saved project no longer identifies its canonical directory. Use Locate folder."));
         }
-        if !cfg!(target_os = "linux") {
+        if !cfg!(any(target_os = "linux", windows)) {
             return Err(RuntimeError::new(
                 "UNSUPPORTED_CAPABILITY",
-                "Native sessions are verified only on Linux.",
+                "Native sessions are verified only on Linux and Windows.",
             ));
         }
+        // PowerShell and cmd.exe are interactive by default and reject `-i`.
+        let shell_argv = if cfg!(windows) {
+            vec![]
+        } else {
+            vec!["-i".into()]
+        };
         let (capability, argv) = match (kind, preset) {
-            ("shell", None) => (shell_capability(), vec!["-i".into()]),
+            ("shell", None) => (shell_capability(), shell_argv),
             ("cli-agent", Some(preset)) => agents::resolve(preset, data_root)?,
             _ => {
                 return Err(RuntimeError::new(

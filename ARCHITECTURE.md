@@ -53,7 +53,7 @@ An interactive diagram of the launch modes and connection lifecycle is in
 | Detached backend | `packages/agent-runtime/src/{main,http,session_ws}.rs` | Axum, Tokio                                                 | Serves the same runtime on `127.0.0.1:1421`: `POST /rpc`, `/sessions` WebSocket, and optionally the embedded UI (`bundled-frontend`).     |
 | Runtime          | `packages/agent-runtime`                               | Rust                                                        | Request validation, command dispatch, and every domain rule. Shared by both hosts.                                                        |
 | Storage          | `store.rs`, `schema_v*.sql`                            | SQLite (`rusqlite`, bundled)                                | Workspaces, canvases, nodes, conversations, projects, tasks, review feedback, MCP config. Versioned migrations; one writer per workspace. |
-| Sessions         | `sessions/`, `sessions.rs`                             | `portable-pty`, pidfds (Linux)                              | Terminal and CLI agent tiles: launch, output paging, bracketed paste, attention signals (BEL, OSC 9, exit), cleanup on shutdown.          |
+| Sessions         | `sessions/`, `sessions.rs`                             | `portable-pty`, pidfds (Linux), Job Objects (Windows)       | Terminal and CLI agent tiles: launch, output paging, bracketed paste, attention signals (BEL, OSC 9, exit), cleanup on shutdown.          |
 | Changes          | `changes.rs`, `review.rs`                              | `git` CLI                                                   | Read-only Git status and diffs for a project, plus stored review feedback.                                                                |
 | MCP client       | `mcp.rs`, `mcp_store.rs`                               | Model Context Protocol over stdio                           | Starts user-configured tool servers and forwards read-only tool calls from the canvas agent.                                              |
 | Protocol         | `packages/protocol`                                    | TypeScript, Zod                                             | Request/response schemas and limits. Mirrors `contracts.rs`; fixtures in `tests/fixtures` check both sides agree.                         |
@@ -72,7 +72,7 @@ An interactive diagram of the launch modes and connection lifecycle is in
 | `changes.rs`      | Git status and diffs, run outside the workspace lock                   |
 | `review.rs`       | Changes review feedback records                                        |
 | `mcp.rs`          | Stdio MCP processes, kept outside the runtime lock                     |
-| `sessions/`       | PTY launch, output pages, paste, attention, Linux process cleanup      |
+| `sessions/`       | PTY launch, output pages, paste, attention, Linux/Windows cleanup      |
 
 ## Request flow
 
@@ -146,7 +146,7 @@ because any code in the webview can call `/rpc` directly.
 ## Scaling limits
 
 Agentica is single-user and local. One process writes a workspace at a time;
-another process opening it gets `WORKSPACE_LOCKED`. Native sessions are Linux
-only for now. Request frames are capped at 16 KiB, and long output is paged
+another process opening it gets `WORKSPACE_LOCKED`. Native sessions run on Linux
+and Windows; other systems refuse to start them. Request frames are capped at 16 KiB, and long output is paged
 rather than sent whole. Adding a feature usually means a protocol schema, a
 runtime module, and a schema migration, each tested on its own.

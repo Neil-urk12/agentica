@@ -248,10 +248,11 @@ the working directory, not a sandbox.
 Project paths, session settings, and terminal output are never added to
 conversation context.
 
-**Status:** Linux only, validated with zsh 5.9 and `codex-cli 0.163.0` in both
+**Status:** Validated on Linux with zsh 5.9 and `codex-cli 0.163.0` in both
 launch modes. Other built-in agents and custom agents are implemented but not
-yet validated. On other systems project groups are visible and **Start**
-explains why it is unavailable.
+yet validated. On Windows, terminal tiles open Windows PowerShell (or `cmd.exe`
+if PowerShell is missing) but are not yet validated. On other systems project
+groups are visible and **Start** explains why it is unavailable.
 
 ## Session attention
 

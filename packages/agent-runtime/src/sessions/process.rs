@@ -1,6 +1,6 @@
 use super::*;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 use std::time::{Duration, Instant};
 use std::{
     io::{Read, Write},
@@ -68,7 +68,8 @@ fn spawn(
     let mut writer = pair.master.take_writer()?;
     let mut command = CommandBuilder::new(&spec.executable);
     command.args(&spec.argv);
-    command.cwd(&spec.directory);
+    // Windows shells reject the verbatim `\\?\` form that canonical paths use.
+    command.cwd(dunce::simplified(&spec.directory));
     command.env("TERM", "xterm-256color");
     let (send, receive) = mpsc::sync_channel::<Vec<u8>>(16);
     let detached = Arc::new(AtomicBool::new(false));
@@ -138,6 +139,19 @@ fn spawn(
         child.wait()?;
         return Err("The PTY did not report a process identity".into());
     };
+    #[cfg(windows)]
+    let job = match child
+        .as_raw_handle()
+        .ok_or_else(|| std::io::Error::other("The PTY did not report a process handle"))
+        .and_then(windows::Job::assign)
+    {
+        Ok(job) => job,
+        Err(error) => {
+            child.kill()?;
+            child.wait()?;
+            return Err(error.into());
+        }
+    };
     let process = Process {
         master: Arc::new(Mutex::new(pair.master)),
         input: send,
@@ -179,24 +193,9 @@ fn spawn(
         });
         match linux::cleanup(pid as i32, child.as_mut()) {
             Ok((code, signal)) => {
-                // A process that escaped the session (setsid) can hold the
-                // terminal open indefinitely, so final output gets a bounded wait.
-                let deadline = Instant::now() + Duration::from_millis(500);
-                while !output.is_finished() && Instant::now() < deadline {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                // shortcut: the output thread is not joined after the deadline.
-                // It stays blocked in read() and keeps the terminal handle open
-                // until the escaped process writes or closes the terminal,
-                // upgrade to an explicit reader shutdown if escaped sessions pile up.
-                // Exit makes the final output cursor safe for renderer
-                // detachment, so later output from an escaped process is dropped.
-                detached.store(true, Ordering::SeqCst);
-                let _ = supervisor.with_session(&spec.owner, session_id, |session| {
-                    let result = session.transition(ProcessState::Exited, code, signal, None);
-                    session.process = None;
-                    result
-                });
+                finish(
+                    supervisor, &spec, session_id, &output, &detached, code, signal,
+                );
                 return Ok(());
             }
             Err(error) => {
@@ -210,11 +209,71 @@ fn spawn(
             }
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        let _ = pid;
+        let status = loop {
+            if let Some(status) = child.try_wait()? {
+                break status;
+            }
+            if stop.load(Ordering::SeqCst) {
+                job.terminate()?;
+                break child.wait()?;
+            }
+            thread::sleep(Duration::from_millis(20));
+        };
+        let _ = supervisor.with_session(&spec.owner, session_id, |session| {
+            session.transition(ProcessState::Stopping, None, None, None)
+        });
+        // Closing the job ends processes the shell left behind.
+        drop(job);
+        finish(
+            supervisor,
+            &spec,
+            session_id,
+            &output,
+            &detached,
+            Some(status.exit_code()),
+            None,
+        );
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = (output, pid);
         child.kill()?;
         child.wait()?;
-        Err("Native sessions require Linux".into())
+        Err("Native sessions require Linux or Windows".into())
     }
+}
+
+/// Records the exit once owned jobs are gone.
+#[cfg(any(target_os = "linux", windows))]
+fn finish(
+    supervisor: &SessionSupervisor,
+    spec: &LaunchSpec,
+    session_id: &str,
+    output: &thread::JoinHandle<()>,
+    detached: &AtomicBool,
+    code: Option<u32>,
+    signal: Option<String>,
+) {
+    // A process that escaped the session (setsid) can hold the
+    // terminal open indefinitely, so final output gets a bounded wait.
+    let deadline = Instant::now() + Duration::from_millis(500);
+    while !output.is_finished() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    // shortcut: the output thread is not joined after the deadline.
+    // It stays blocked in read() and keeps the terminal handle open
+    // until the escaped process writes or closes the terminal,
+    // upgrade to an explicit reader shutdown if escaped sessions pile up.
+    // Exit makes the final output cursor safe for renderer
+    // detachment, so later output from an escaped process is dropped.
+    detached.store(true, Ordering::SeqCst);
+    let _ = supervisor.with_session(&spec.owner, session_id, |session| {
+        let result = session.transition(ProcessState::Exited, code, signal, None);
+        session.process = None;
+        result
+    });
 }

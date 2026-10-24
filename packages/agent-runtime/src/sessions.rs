@@ -17,6 +17,8 @@ mod attention;
 mod linux;
 pub mod paste;
 mod process;
+#[cfg(windows)]
+mod windows;
 pub use attention::{Attention, Kind as AttentionKind};
 mod service;
 pub mod wire;
@@ -308,10 +310,10 @@ impl SessionSupervisor {
         rows: u16,
         cols: u16,
     ) -> Result<SessionStatus, RuntimeError> {
-        if !cfg!(target_os = "linux") {
+        if !cfg!(any(target_os = "linux", windows)) {
             return Err(RuntimeError::new(
                 "UNSUPPORTED_CAPABILITY",
-                "Native sessions require Linux.",
+                "Native sessions require Linux or Windows.",
             ));
         }
         let size = process::dimensions(rows, cols)?;
