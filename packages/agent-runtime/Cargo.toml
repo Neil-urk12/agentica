@@ -1,6 +1,6 @@
 [package]
 name = "agentica-runtime"
-version = "0.1.0"
+version = "0.1.1"
 description = "Shared Agentica runtime and detached local backend"
 edition = "2021"
 license = "MIT"
@@ -28,6 +28,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 subtle = "2"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tempfile = "3"

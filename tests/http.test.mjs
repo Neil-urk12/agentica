@@ -65,7 +65,15 @@ let key;
 // Never touch the user's real workspaces.
 const dataDir = mkdtempSync(join(tmpdir(), "agentica-http-"));
 const env = { ...process.env, PATH: "", AGENTICA_DATA_DIR: dataDir };
-process.on("exit", () => rmSync(dataDir, { recursive: true, force: true }));
+// A child that outlived its stop (a startup race under load) can still hold
+// a file here on Windows, so the removal is best effort: EPERM at exit must
+// not fail the whole file after every test passed. The OS temp cleanup
+// removes what remains.
+process.on("exit", () => {
+  try {
+    rmSync(dataDir, { recursive: true, force: true });
+  } catch {}
+});
 const ping = {
   protocolVersion: 1,
   id: "browser-health",
@@ -1893,12 +1901,24 @@ test("box selection groups, moves, ungroups, and deletes canvas objects", async 
       "the saved ungroup",
     );
 
-    // A key pressed on a focused button never deletes the selection.
+    // A key pressed on a focused button never deletes the selection. The key
+    // goes straight to the focused button: press() blurs first, which would
+    // retarget the event to the canvas body and legitimately delete.
     await evaluate(
       browser,
       `document.querySelector('.canvas-dock button:not([disabled])').focus()`,
     );
-    await press("Backspace", "Backspace", 8);
+    for (const type of ["keyDown", "keyUp"])
+      await browser.send(
+        "Input.dispatchKeyEvent",
+        {
+          type,
+          key: "Backspace",
+          code: "Backspace",
+          windowsVirtualKeyCode: 8,
+        },
+        browser.sessionId,
+      );
     await delay(200);
     assert.equal(
       await evaluate(browser, `!!document.querySelector('dialog[open]')`),
@@ -2321,6 +2341,12 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
           ? [pending.replyNodeId]
           : [pending.replyNodeId, pending.promptNodeId];
       for (const nodeId of deletedIds) {
+        // The nodes drawer is collapsed by default, so its rows only exist
+        // once it is open.
+        await evaluate(
+          browser,
+          `!!document.querySelector('.drawer') || document.querySelector('[aria-label="Toggle nodes"]')?.click()`,
+        );
         const document = await rpc("canvas.open", ref);
         const index = document.nodes.findIndex((node) => node.id === nodeId);
         assert.notEqual(index, -1);
@@ -2545,8 +2571,13 @@ test("review feedback survives browser reload and backend restart with original 
   git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init");
   writeFileSync(join(repo, "a.txt"), "one\nTWO\nthree\n");
   // Changes needs Git on the backend PATH.
-  const gitPath = spawnSync("sh", ["-c", "command -v git"]).stdout.toString();
-  const gitEnv = { ...env, PATH: dirname(gitPath.trim()) };
+  const gitPath =
+    process.platform === "win32"
+      ? spawnSync("where", ["git"], { encoding: "utf8" })
+          .stdout.trim()
+          .split(/\r?\n/)[0]
+      : spawnSync("sh", ["-c", "command -v git"]).stdout.toString().trim();
+  const gitEnv = { ...env, PATH: dirname(gitPath) };
   let backend = await startBackend(gitEnv);
   key = backend.connectionKey;
   let browser;
@@ -2771,6 +2802,19 @@ wait
 `,
   );
   chmodSync(join(bin, "codex"), 0o755);
+  if (process.platform === "win32") {
+    // Windows PATH search only finds executables, so the shell-script
+    // stand-in is unreachable. A .cmd launcher hands the same behaviour to
+    // Node, which the backend runs through `cmd.exe /d /c` with constant
+    // arguments — exactly how npm's real codex.cmd is launched.
+    const fake = fileURLToPath(
+      new URL("./support/fake-codex.mjs", import.meta.url),
+    );
+    writeFileSync(
+      join(bin, "codex.cmd"),
+      `@echo off\r\necho cmd-start >> "${received}.cmdlog"\r\n"${process.execPath}" "${fake}" "${received}" "${trigger}" 2>> "${received}.cmdlog"\r\necho cmd-end %errorlevel% >> "${received}.cmdlog"\r\n`,
+    );
+  }
   const codexEnv = { ...env, PATH: bin };
   let backend = await startBackend(codexEnv);
   key = backend.connectionKey;
@@ -2910,8 +2954,17 @@ wait
       `${status}.includes('Sent') && !!document.activeElement?.closest('${tile} [data-terminal]')`,
       "the sent record and terminal focus",
     );
-    for (let i = 0; i < 100 && receivedText() !== pasted; i++) await delay(50);
-    assert.equal(receivedText(), pasted, "one bracketed paste, no Enter");
+    // ConPTY may consume the bracketed-paste markers or pass them through, so
+    // accept either delivery; both are one paste with no Enter.
+    const pastedOnce = () => {
+      const received = receivedText();
+      return received === pasted || received === text;
+    };
+    for (let i = 0; i < 100 && !pastedOnce(); i++) await delay(50);
+    assert.ok(
+      pastedOnce(),
+      `one bracketed paste, no Enter; received ${JSON.stringify(receivedText())}`,
+    );
 
     // A notification raised while the preview is open makes the backend refuse.
     await run(`document.querySelector('${sendButton}').focus()`);
@@ -2936,7 +2989,7 @@ wait
       "the attention refusal",
     );
     await delay(300);
-    assert.equal(receivedText(), pasted, "the refused send wrote nothing");
+    assert.ok(pastedOnce(), "the refused send wrote nothing");
     assert.doesNotMatch(
       await run(`document.querySelector('${node} .task-status').textContent`),
       /Edited/,
@@ -2971,13 +3024,155 @@ wait
     );
   } catch (error) {
     if (browser)
-      error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({ task: [...document.querySelectorAll('.task-status, .task-attention, .card-error')].map((e) => e.textContent.trim()), focus: document.activeElement?.outerHTML.slice(0, 200), dialog: !!document.querySelector('dialog[open]') })")}\nReceived: ${JSON.stringify(receivedText())}`;
+      error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({ task: [...document.querySelectorAll('.task-status, .task-attention, .card-error')].map((e) => e.textContent.trim()), focus: document.activeElement?.outerHTML.slice(0, 150), dialog: !!document.querySelector('dialog[open]') })")}\nReceived: ${JSON.stringify(receivedText())}\nTrace: ${JSON.stringify(existsSync(`${received}.cmdlog`) ? readFileSync(`${received}.cmdlog`, "utf8") : "(batch never ran)")} `;
     throw error;
   } finally {
     editor.dispose();
     await browser?.close();
     await stopBackend(backend.child);
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("dragging a reopened canvas pans from its saved viewport", async () => {
+  const backend = await startBackend();
+  key = backend.connectionKey;
+  let browser;
+  const rpc = async (method, params) => {
+    const reply = await send(port, {
+      body: JSON.stringify({
+        protocolVersion: 1,
+        id: crypto.randomUUID(),
+        method,
+        params,
+      }),
+    });
+    assert.equal(reply.status, 200);
+    const response = RuntimeResponseSchema.parse(JSON.parse(reply.text));
+    assert.equal(response.error, undefined, JSON.stringify(response));
+    return ResultSchemas[method].parse(response.result);
+  };
+  try {
+    const { workspace } = await rpc("workspace.create", {
+      name: "Saved view",
+    });
+    const { canvas } = await rpc("canvas.create", {
+      workspaceId: workspace.id,
+      title: "Panned canvas",
+    });
+    const reference = { workspaceId: workspace.id, canvasId: canvas.id };
+    // A far-away note keeps the empty-canvas prompt off the pane.
+    const created = await rpc("node.createText", {
+      ...reference,
+      expectedRevision: 1,
+      x: 4000,
+      y: 4000,
+      width: 240,
+      height: 160,
+      text: "Far away",
+    });
+    const saved = { x: -310, y: 205, zoom: 1.5 };
+    await rpc("canvas.save", {
+      ...reference,
+      expectedRevision: created.revision,
+      viewport: saved,
+      nodes: [
+        { id: created.node.id, x: 4000, y: 4000, width: 240, height: 160 },
+      ],
+    });
+
+    browser = await launchBrowser();
+    await browser.send(
+      "Page.navigate",
+      { url: `http://127.0.0.1:${port}/` },
+      browser.sessionId,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('#connection-key')`,
+      "the connection form",
+    );
+    await evaluate(
+      browser,
+      `(() => { const input = document.querySelector('#connection-key'); input.value = ${JSON.stringify(key)}; input.dispatchEvent(new Event('input', { bubbles: true })); })()`,
+    );
+    await clickAt(
+      browser,
+      await boxOf(browser, ".connbar button[type='submit']"),
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('.connbar--ok')`,
+      "the connected status",
+    );
+    for (const label of ["Saved view", "Panned canvas"]) {
+      const card = `[...document.querySelectorAll('.tiles .tile__open, .cards .card')].find((item) => item.textContent.includes(${JSON.stringify(label)}))`;
+      await waitFor(
+        browser,
+        `${card} && !(${card}).disabled`,
+        `the ${label} card`,
+      );
+      await evaluate(
+        browser,
+        `(${card}).focus(); (${card}).scrollIntoView({ block: 'center' })`,
+      );
+      await clickAt(
+        browser,
+        await boxByText(browser, ".tiles .tile__open, .cards .card", label),
+      );
+    }
+    const transform = `(() => {
+      const match = /translate\\(([-\\d.]+)px, ([-\\d.]+)px\\) scale\\(([-\\d.]+)\\)/.exec(document.querySelector('.svelte-flow__viewport')?.style.transform ?? '');
+      return match ? { x: Number(match[1]), y: Number(match[2]), zoom: Number(match[3]) } : null;
+    })()`;
+    await waitFor(
+      browser,
+      `JSON.stringify(${transform}) === ${JSON.stringify(JSON.stringify(saved))}`,
+      "the saved viewport to render",
+    );
+    const pane = await boxOf(browser, ".svelte-flow__pane");
+    // The select tool pans with the middle button; a left drag box-selects.
+    await dragBetween(
+      browser,
+      pane,
+      { x: pane.x + 80, y: pane.y + 40 },
+      "middle",
+    );
+    const moved = await evaluate(browser, transform);
+    assert.deepEqual(
+      moved,
+      { x: saved.x + 80, y: saved.y + 40, zoom: saved.zoom },
+      "the first drag continues from the saved view instead of the origin",
+    );
+    // Zoom buttons write the viewport directly too; the next drag must
+    // continue from the zoomed view.
+    await clickAt(browser, await boxOf(browser, '[aria-label="Zoom in"]'));
+    await waitFor(
+      browser,
+      `(${transform})?.zoom !== ${saved.zoom}`,
+      "the zoom button to change the view",
+    );
+    const zoomed = await evaluate(browser, transform);
+    await dragBetween(
+      browser,
+      pane,
+      { x: pane.x - 60, y: pane.y + 30 },
+      "middle",
+    );
+    const after = await evaluate(browser, transform);
+    assert.ok(
+      Math.abs(after.x - (zoomed.x - 60)) < 0.01 &&
+        Math.abs(after.y - (zoomed.y + 30)) < 0.01 &&
+        after.zoom === zoomed.zoom,
+      `the drag after zooming continues from ${JSON.stringify(zoomed)}, got ${JSON.stringify(after)}`,
+    );
+  } catch (error) {
+    if (browser)
+      error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({text:document.body.innerText.slice(-1000),transform:document.querySelector('.svelte-flow__viewport')?.style.transform})")}`;
+    throw error;
+  } finally {
+    await browser?.close();
+    await stopBackend(backend.child);
   }
 });
 
