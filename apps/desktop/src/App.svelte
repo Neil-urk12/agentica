@@ -2233,6 +2233,10 @@
     await tick();
     focusObject(tileId);
     selectedId = tileId;
+    // The viewport write and selection above flush effects that move the
+    // canvas and the tile host; focusing before that flush can be undone by
+    // the DOM move, so hand focus over only once rendering has settled.
+    await tick();
     sessions.focus(agentOwner(tileId));
   }
 
@@ -2278,7 +2282,19 @@
       }
       await recordTaskSend(send.nodeId, send);
       const tile = agentTiles().find((t) => t.id === send.tileId);
-      if (tile) await focusTile(tile.id, tile.projectId);
+      if (tile) {
+        // The send dialog fades out for 180ms and its teardown retakes
+        // focus while it lingers; hand the terminal focus only after the
+        // dialog has left the DOM, or the fade undoes it.
+        const dialog = document.querySelector("dialog.scrim");
+        for (
+          let wait = 0;
+          dialog && document.contains(dialog) && wait < 24;
+          wait += 1
+        )
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        await focusTile(tile.id, tile.projectId);
+      }
     } finally {
       taskBusy = "";
     }
