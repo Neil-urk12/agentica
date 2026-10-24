@@ -36,7 +36,7 @@ const APPIMAGE = `agentica-${TAG}-linux-x86_64.AppImage`;
 type Installer = {
   label: string;
   url: string;
-  /** Other formats, shown as links under the button. */
+  /** Other formats, shown as buttons beside the releases link. */
   alternatives: { name: string; url: string }[];
   /** One-line install commands; index.html has a block for each slot. */
   commands: string[];
@@ -56,8 +56,8 @@ const INSTALLERS: Partial<Record<PlatformId, Installer>> = {
     label: "Download .deb",
     url: asset(DEB),
     alternatives: [
-      { name: ".rpm", url: asset(RPM) },
-      { name: "AppImage", url: asset(APPIMAGE) },
+      { name: ".rpm (Fedora, RHEL)", url: asset(RPM) },
+      { name: "AppImage (portable)", url: asset(APPIMAGE) },
     ],
     commands: [
       `curl -LO ${asset(DEB)} && sudo apt install ./${DEB}`,
@@ -191,17 +191,22 @@ function renderPlatform(platform: PlatformId | null) {
   }
 
   if (downloadAlts) {
-    const alternatives = installer?.alternatives ?? [];
-    downloadAlts.hidden = alternatives.length === 0;
+    // Without an installer the main button already opens the releases page.
+    const links = installer
+      ? [
+          ...installer.alternatives,
+          { name: "All releases on GitHub", url: `${RELEASES}/tag/${TAG}` },
+        ]
+      : [];
+    downloadAlts.hidden = links.length === 0;
     downloadAlts.replaceChildren(
-      "Also: ",
-      ...alternatives.flatMap(({ name, url }, index) => {
-        const link = Object.assign(document.createElement("a"), {
+      ...links.map(({ name, url }) =>
+        Object.assign(document.createElement("a"), {
+          className: "btn btn--line btn--small",
           href: url,
           textContent: name,
-        });
-        return index ? [" · ", link] : [link];
-      }),
+        }),
+      ),
     );
   }
 
