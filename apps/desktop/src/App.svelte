@@ -104,6 +104,7 @@
   import { transcribeSpeech } from "./lib/speech";
   import WorkspacePicker from "./lib/components/WorkspacePicker.svelte";
   import CanvasPicker from "./lib/components/CanvasPicker.svelte";
+  import PaperDoodle from "./lib/components/PaperDoodle.svelte";
   import NodeDrawer from "./lib/components/NodeDrawer.svelte";
   import {
     DEFAULT_STROKE_COLOR,
@@ -2972,7 +2973,7 @@
             }}
             onmove={(_, next) => editor.setViewport(next)}
           >
-            <Background patternColor={dark ? "#2c2c30" : "#d9dbe4"} gap={24} />
+            <Background patternColor="var(--line-strong)" gap={24} size={2} />
             <ViewportPortal target="back">
               {#each nodeGroupBoxes as box (box.groupId)}
                 <div
@@ -3080,7 +3081,7 @@
         {/if}
         {#if editorState.document && editorState.document.nodes.length === 0 && editorState.document.projectGroups.length === 0}
           <div class="canvas__empty">
-            <Icon name="note_add" size={34} />
+            <PaperDoodle />
             <p>This canvas is empty</p>
             <button
               class="btn btn--primary"

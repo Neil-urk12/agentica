@@ -2,6 +2,7 @@
   import { LIMITS } from "@agentica/protocol";
   import { tick, type Snippet } from "svelte";
   import Icon from "./Icon.svelte";
+  import PaperDoodle from "./PaperDoodle.svelte";
 
   interface CanvasInfo {
     id: string;
@@ -182,7 +183,7 @@
 
       {#if canvases.length === 0}
         <div class="home__empty">
-          <span class="home__note" aria-hidden="true"></span>
+          <PaperDoodle />
           <p>
             Nothing here yet. Name your first canvas above and it’ll be waiting
             for you next time.
