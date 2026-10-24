@@ -761,37 +761,59 @@ Allow cargo test? <span class="y">(y/n)</span></pre>
                     </svg>
                     <span data-download-label>Download for desktop</span>
                   </a>
-                  <div class="download__files" data-download-alts hidden></div>
-                  <p class="download__hint" data-download-hint>
-                    GitHub Releases · pre-release
+                  <p class="download__hint">
+                    <span data-download-hint>pre-release</span> ·
+                    <a
+                      href="https://github.com/Neil-urk12/agentica/releases"
+                      data-release-link
+                      >All releases on GitHub ↗</a
+                    >
                   </p>
-                  <div class="source__block" data-install hidden>
-                    <code></code>
-                    <button
-                      class="copy-btn"
-                      type="button"
-                      data-copy=""
-                      aria-label="Copy install command"
-                    >
-                      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-                        <rect x="9" y="9" width="11" height="11" rx="2" />
-                        <path d="M5 15V5h10" />
-                      </svg>
-                    </button>
-                  </div>
-                  <div class="source__block" data-install hidden>
-                    <code></code>
-                    <button
-                      class="copy-btn"
-                      type="button"
-                      data-copy=""
-                      aria-label="Copy alternative install command"
-                    >
-                      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-                        <rect x="9" y="9" width="11" height="11" rx="2" />
-                        <path d="M5 15V5h10" />
-                      </svg>
-                    </button>
+
+                  <div class="source" data-installs hidden>
+                    <p class="source__head">Or install from the terminal</p>
+                    <div class="install" data-install hidden>
+                      <p class="install__label" data-install-label></p>
+                      <div class="source__block">
+                        <code></code>
+                        <button
+                          class="copy-btn"
+                          type="button"
+                          data-copy=""
+                          aria-label="Copy install command"
+                        >
+                          <svg
+                            class="ico"
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                          >
+                            <rect x="9" y="9" width="11" height="11" rx="2" />
+                            <path d="M5 15V5h10" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                    <div class="install" data-install hidden>
+                      <p class="install__label" data-install-label></p>
+                      <div class="source__block">
+                        <code></code>
+                        <button
+                          class="copy-btn"
+                          type="button"
+                          data-copy=""
+                          aria-label="Copy second install command"
+                        >
+                          <svg
+                            class="ico"
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                          >
+                            <rect x="9" y="9" width="11" height="11" rx="2" />
+                            <path d="M5 15V5h10" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -856,6 +878,34 @@ Allow cargo test? <span class="y">(y/n)</span></pre>
                       <span class="platform__name">Linux</span>
                       <span class="platform__meta">x64 · deb, rpm</span>
                     </button>
+                  </div>
+
+                  <div class="source" data-files hidden>
+                    <p class="source__head" data-files-title></p>
+                    <ul class="files" data-files-list></ul>
+                    <p class="source__note" data-files-empty hidden>
+                      No macOS build yet. Build it from source below.
+                    </p>
+                    <template data-file-template>
+                      <li>
+                        <a class="file" href="">
+                          <svg
+                            class="ico file__icon"
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                          >
+                            <path
+                              d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M4 20h16"
+                            />
+                          </svg>
+                          <span class="file__text">
+                            <span class="file__title" data-file-title></span>
+                            <span class="file__format" data-file-format></span>
+                          </span>
+                          <span class="file__action">Download</span>
+                        </a>
+                      </li>
+                    </template>
                   </div>
 
                   <div class="source">
