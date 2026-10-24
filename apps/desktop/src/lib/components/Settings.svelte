@@ -225,14 +225,7 @@
   </button>
 {/snippet}
 
-<Modal
-  icon="settings"
-  title="Settings"
-  subtitle="Personalize Agentica on this device."
-  fullscreen
-  {actions}
-  {onClose}
->
+<Modal icon="settings" title="Settings" fullscreen {actions} {onClose}>
   <div class="settings" class:settings--list={listOpen}>
     <nav class="settings__rail" aria-label="Settings categories">
       {#each sections as item (item.id)}

@@ -427,6 +427,10 @@ label {
   margin-left: 0;
 }
 
+.modal--full .modal__head {
+  padding-block: 1.25rem;
+}
+
 .modal--full .modal__body {
   flex: 1;
   min-height: 0;
