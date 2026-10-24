@@ -20,11 +20,15 @@ build the installers and publish the release. Keep validation evidence in the
   the recommended one. A link opens the GitHub release, and labelled `apt`,
   `dnf`, and PowerShell commands install from the terminal. The `.deb` is the
   Linux default because the AppImage is a portable executable that needs
-  `chmod +x`, not an installer. The tag comes from `apps/landing/package.json`, which the release
-  process already bumps. macOS has no build yet, so it links to the releases page
-  and the build-from-source steps. Links moved from GitLab, whose v0.1.0 pipeline
-  failed, to GitHub. No `winget` command: that needs a manifest accepted into
-  `microsoft/winget-pkgs` first.
+  `chmod +x`, not an installer. The tag comes from `apps/landing/package.json`,
+  which the release process already bumps. macOS has no build yet, so it links
+  to the releases page and the build-from-source steps. Links moved from GitLab,
+  whose v0.1.0 pipeline failed, to GitHub. No `winget` command: that needs a
+  manifest accepted into `microsoft/winget-pkgs` first.
+
+## 0.1.0 — 2026-10-23
+
+First tagged pre-release. Everything below was developed before versioning began.
 
 ### Publish GitHub Releases from version tags (2026-10-24)
 
@@ -53,10 +57,6 @@ build the installers and publish the release. Keep validation evidence in the
 - Ensure the `coverage/` directory exists before running `cargo llvm-cov` in CI.
   `llvm-cov` requires the destination directory to exist when outputting the
   LCOV report, which previously failed before the upload step.
-
-## 0.1.0 — 2026-10-23
-
-First tagged pre-release. Everything below was developed before versioning began.
 
 ### Test coverage badge (2026-10-23)
 
