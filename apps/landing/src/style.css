@@ -1181,6 +1181,11 @@ code {
   color: var(--muted);
 }
 
+/* Lets the long download command scroll instead of widening the column. */
+.download__intro .source__block {
+  min-width: 0;
+}
+
 .download__panel {
   display: grid;
   gap: 16px;
@@ -1263,6 +1268,10 @@ code {
   color: var(--term-ink);
   background: var(--term);
   border-radius: 10px;
+}
+
+.source__block[hidden] {
+  display: none;
 }
 
 .source__block code {
