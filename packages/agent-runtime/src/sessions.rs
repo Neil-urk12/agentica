@@ -17,6 +17,8 @@ mod attention;
 mod linux;
 pub mod paste;
 mod process;
+#[cfg(windows)]
+mod windows;
 pub use attention::{Attention, Kind as AttentionKind};
 mod service;
 pub mod wire;
@@ -308,10 +310,10 @@ impl SessionSupervisor {
         rows: u16,
         cols: u16,
     ) -> Result<SessionStatus, RuntimeError> {
-        if !cfg!(target_os = "linux") {
+        if !cfg!(any(target_os = "linux", windows)) {
             return Err(RuntimeError::new(
                 "UNSUPPORTED_CAPABILITY",
-                "Native sessions require Linux.",
+                "Native sessions require Linux or Windows.",
             ));
         }
         let size = process::dimensions(rows, cols)?;
@@ -956,9 +958,9 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     struct Active(SessionSupervisor);
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     impl Drop for Active {
         fn drop(&mut self) {
             let _ = self.0.shutdown();
@@ -977,7 +979,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     fn running(supervisor: &SessionSupervisor, owner: &SessionOwner) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
@@ -991,7 +993,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     fn receive(
         supervisor: &SessionSupervisor,
         owner: &SessionOwner,
@@ -1448,5 +1450,172 @@ mod tests {
             .0
             .wait_stopped(&spec.owner, &status.session_id)
             .unwrap();
+    }
+
+    #[cfg(windows)]
+    fn system(relative: &str) -> std::path::PathBuf {
+        std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join(relative)
+    }
+
+    #[cfg(windows)]
+    fn windows_spec(root: &std::path::Path, executable: &str, argv: &[&str]) -> LaunchSpec {
+        LaunchSpec {
+            owner: owner(),
+            project_id: new_id().unwrap(),
+            executable: system(executable),
+            argv: argv.iter().map(|arg| (*arg).into()).collect(),
+            // Spawn revalidates the canonical (verbatim) form saved by projects.
+            directory: root.canonicalize().unwrap(),
+            fallback: false,
+        }
+    }
+
+    #[cfg(windows)]
+    fn process_alive(pid: u32) -> bool {
+        use windows_sys::Win32::{
+            Foundation::{CloseHandle, WAIT_TIMEOUT},
+            System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE},
+        };
+        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+        if handle.is_null() {
+            return false;
+        }
+        let waited = unsafe { WaitForSingleObject(handle, 0) };
+        unsafe { CloseHandle(handle) };
+        waited == WAIT_TIMEOUT
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_shell_input_resize_restart_and_job_cleanup() {
+        let root = tempfile::tempdir().unwrap();
+        let supervisor = Active(SessionSupervisor::new().unwrap());
+        let spec = windows_spec(
+            root.path(),
+            r"System32\WindowsPowerShell\v1.0\powershell.exe",
+            &["-NoLogo", "-NoProfile"],
+        );
+        let status = supervisor.0.start(spec.clone(), "start", 24, 80).unwrap();
+        let identity = status.session_id;
+        let attachment = supervisor.0.attach(&spec.owner, &identity, 0).unwrap();
+        running(&supervisor.0, &spec.owner);
+        let send = |text: &str| {
+            supervisor
+                .0
+                .input(
+                    &spec.owner,
+                    &identity,
+                    &attachment,
+                    text.as_bytes().to_vec(),
+                )
+                .unwrap()
+        };
+        // Concatenation keeps each needle out of the echoed command line.
+        send("Write-Output ('O'+'K')\r");
+        receive(&supervisor.0, &spec.owner, &identity, &attachment, b"OK");
+        supervisor
+            .0
+            .resize(&spec.owner, &identity, &attachment, 18, 56, false)
+            .unwrap();
+        send("('SI'+'ZE:') + $Host.UI.RawUI.WindowSize.Width + 'x' + $Host.UI.RawUI.WindowSize.Height\r");
+        receive(
+            &supervisor.0,
+            &spec.owner,
+            &identity,
+            &attachment,
+            b"SIZE:56x18",
+        );
+        // A windowless child has its own console, so only the job can stop it.
+        send("$i = New-Object Diagnostics.ProcessStartInfo 'ping.exe', '-n 60 127.0.0.1'; $i.CreateNoWindow = $true; $i.UseShellExecute = $false; $p = [Diagnostics.Process]::Start($i); ('PI'+'D=') + $p.Id + ';'\r");
+        let mut bytes = receive(&supervisor.0, &spec.owner, &identity, &attachment, b"PID=");
+        let pid = loop {
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            let after = &text[text.find("PID=").unwrap() + 4..];
+            if let Some(end) = after.find(';') {
+                break after[..end].parse::<u32>().unwrap();
+            }
+            bytes.extend(receive(
+                &supervisor.0,
+                &spec.owner,
+                &identity,
+                &attachment,
+                b";",
+            ));
+        };
+        assert!(process_alive(pid));
+        let stopping = std::time::Instant::now();
+        supervisor.0.request_stop(&spec.owner, &identity).unwrap();
+        let stopped = supervisor.0.wait_stopped(&spec.owner, &identity).unwrap();
+        assert_eq!(stopped.state, ProcessState::Exited, "{:?}", stopped.error);
+        assert!(stopping.elapsed() < std::time::Duration::from_secs(4));
+        assert!(!process_alive(pid));
+        let replacement = supervisor
+            .0
+            .restart(spec.clone(), &identity, "restart", 24, 80)
+            .unwrap();
+        running(&supervisor.0, &spec.owner);
+        assert_ne!(replacement.session_id, identity);
+        assert!(supervisor
+            .0
+            .input(&spec.owner, &identity, &attachment, b"stale\r".to_vec())
+            .is_err());
+        let current = supervisor
+            .0
+            .attach(&spec.owner, &replacement.session_id, 0)
+            .unwrap();
+        supervisor
+            .0
+            .resize(&spec.owner, &replacement.session_id, &current, 24, 80, true)
+            .unwrap();
+        supervisor
+            .0
+            .request_stop(&spec.owner, &replacement.session_id)
+            .unwrap();
+        supervisor
+            .0
+            .wait_stopped(&spec.owner, &replacement.session_id)
+            .unwrap();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_exit_code_final_output_and_failed_launch() {
+        let root = tempfile::tempdir().unwrap();
+        let supervisor = Active(SessionSupervisor::new().unwrap());
+        let mut spec = windows_spec(
+            root.path(),
+            r"System32\cmd.exe",
+            &["/d", "/c", "echo FINAL& exit /b 3"],
+        );
+        let status = supervisor.0.start(spec.clone(), "exit", 24, 80).unwrap();
+        let exited = supervisor
+            .0
+            .wait_stopped(&spec.owner, &status.session_id)
+            .unwrap();
+        assert_eq!(exited.state, ProcessState::Exited, "{:?}", exited.error);
+        assert_eq!(exited.exit_code, Some(3));
+        assert_eq!(exited.exit_signal, None);
+        assert_eq!(exited.attention.kind, Some(AttentionKind::Exited));
+        let attachment = supervisor
+            .0
+            .attach(&spec.owner, &status.session_id, 0)
+            .unwrap();
+        receive(
+            &supervisor.0,
+            &spec.owner,
+            &status.session_id,
+            &attachment,
+            b"FINAL",
+        );
+        spec.executable = root.path().join("missing.exe");
+        let failed = supervisor.0.start(spec.clone(), "missing", 24, 80).unwrap();
+        assert_eq!(
+            supervisor
+                .0
+                .wait_stopped(&spec.owner, &failed.session_id)
+                .unwrap()
+                .state,
+            ProcessState::Failed
+        );
     }
 }

@@ -11,6 +11,7 @@
   import { ChangesManager } from "./lib/changes-manager.svelte";
   import { feedbackMessage } from "./lib/changes";
   import Modal from "./lib/components/Modal.svelte";
+  import ViewportSync from "./lib/components/ViewportSync.svelte";
   import SelectionBar from "./lib/components/SelectionBar.svelte";
   import {
     expandToGroups,
@@ -2973,6 +2974,7 @@
             onmove={(_, next) => editor.setViewport(next)}
           >
             <Background patternColor={dark ? "#2c2c30" : "#d9dbe4"} gap={24} />
+            <ViewportSync />
             <ViewportPortal target="back">
               {#each nodeGroupBoxes as box (box.groupId)}
                 <div
