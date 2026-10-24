@@ -12,6 +12,11 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Fix file size rounding at the MB boundary (2026-10-23)
+
+- Display `1.0 MB` when a file's size would round up to `1024 KB`, keeping
+  file nodes and pickers from showing a kilobyte value that reaches the next unit.
+
 ### Fix non-Linux build warnings in session process supervisor (2026-10-23)
 
 - Gate `Duration` and `Instant` imports behind `#[cfg(target_os = "linux")]` and
