@@ -235,6 +235,7 @@ impl LaunchSpec {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+    use std::path::Path;
     #[test]
     fn launch_uses_saved_cwd_and_argv_without_shell_interpolation() {
         let temporary = tempfile::tempdir().unwrap();
@@ -417,11 +418,14 @@ mod win {
     }
 
     /// Batch files need the command interpreter. cmd.exe expands `%` even
-    /// inside quotes, so such paths are refused instead of interpolated.
+    /// inside quotes, so such paths are refused instead of interpolated, and
+    /// it cannot run a batch named with the `\\?\` verbatim prefix that
+    /// `canonicalize` produces, so the plain form is used.
     pub(super) fn command_interpreter(
         script: &Path,
         argv: Vec<String>,
     ) -> Result<(PathBuf, Vec<String>), &'static str> {
+        let script = super::windows::plain_path(script);
         let script = script
             .to_str()
             .filter(|text| !text.contains(['%', '"']))

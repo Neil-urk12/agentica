@@ -2804,7 +2804,7 @@ wait
     );
     writeFileSync(
       join(bin, "codex.cmd"),
-      `@echo off\r\n"${process.execPath}" "${fake}" "${received}" "${trigger}"\r\n`,
+      `@echo off\r\necho cmd-start >> "${received}.cmdlog"\r\n"${process.execPath}" "${fake}" "${received}" "${trigger}" 2>> "${received}.cmdlog"\r\necho cmd-end %errorlevel% >> "${received}.cmdlog"\r\n`,
     );
   }
   const codexEnv = { ...env, PATH: bin };
@@ -2946,8 +2946,12 @@ wait
       `${status}.includes('Sent') && !!document.activeElement?.closest('${tile} [data-terminal]')`,
       "the sent record and terminal focus",
     );
-    for (let i = 0; i < 100 && receivedText() !== pasted; i++) await delay(50);
-    assert.equal(receivedText(), pasted, "one bracketed paste, no Enter");
+    // ConPTY consumes the bracketed-paste markers from the PTY input instead
+    // of delivering them to the client, so Windows receives the bare text.
+    const delivered = process.platform === "win32" ? text : pasted;
+    for (let i = 0; i < 100 && receivedText() !== delivered; i++)
+      await delay(50);
+    assert.equal(receivedText(), delivered, "one bracketed paste, no Enter");
 
     // A notification raised while the preview is open makes the backend refuse.
     await run(`document.querySelector('${sendButton}').focus()`);
@@ -2972,7 +2976,7 @@ wait
       "the attention refusal",
     );
     await delay(300);
-    assert.equal(receivedText(), pasted, "the refused send wrote nothing");
+    assert.equal(receivedText(), delivered, "the refused send wrote nothing");
     assert.doesNotMatch(
       await run(`document.querySelector('${node} .task-status').textContent`),
       /Edited/,
@@ -3007,7 +3011,7 @@ wait
     );
   } catch (error) {
     if (browser)
-      error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({ task: [...document.querySelectorAll('.task-status, .task-attention, .card-error')].map((e) => e.textContent.trim()), sessions: [...document.querySelectorAll('.session-notice, .session-status')].map((e) => e.textContent.trim()), dialog: !!document.querySelector('dialog[open]') })")}\nReceived: ${JSON.stringify(receivedText())}`;
+      error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({ task: [...document.querySelectorAll('.task-status, .task-attention, .card-error')].map((e) => e.textContent.trim()), focus: document.activeElement?.outerHTML.slice(0, 150), dialog: !!document.querySelector('dialog[open]') })")}\nReceived: ${JSON.stringify(receivedText())}\nTrace: ${JSON.stringify(existsSync(`${received}.cmdlog`) ? readFileSync(`${received}.cmdlog`, "utf8") : "(batch never ran)")} `;
     throw error;
   } finally {
     editor.dispose();
