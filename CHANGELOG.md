@@ -15,8 +15,9 @@ build the installers and publish the release. Keep validation evidence in the
 ### Point landing downloads at GitHub Releases (2026-10-24)
 
 - The landing download button now links straight to the Windows installer or
-  the Linux `.deb` for the detected platform. Linux also links the `.rpm` and
-  AppImage and shows copyable `apt` and `dnf` install commands; Windows shows a
+  the Linux `.deb` for the detected platform. Linux also offers `.rpm` and
+  AppImage download buttons, each platform links its GitHub release, and Linux
+  shows copyable `apt` and `dnf` install commands; Windows shows a
   `curl.exe` command. The AppImage is not the default because it is a portable
   executable that needs `chmod +x`, not an installer. The tag comes from `apps/landing/package.json`, which the release
   process already bumps. macOS has no build yet, so it links to the releases page
