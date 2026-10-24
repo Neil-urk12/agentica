@@ -102,10 +102,25 @@ pub fn valid_preset(preset: &str) -> bool {
 
 /// First executable named `name` on `search` (the backend `PATH`). Never runs it.
 fn on_path(name: &str, search: Option<&OsStr>) -> Option<PathBuf> {
-    search
+    // Windows launchers live under their PATHEXT extension (`codex.cmd`), and
+    // `CreateProcess` resolves a bare name only through those extensions.
+    let candidates: Vec<String> = if cfg!(windows) {
+        [".com", ".exe", ".bat", ".cmd"]
+            .into_iter()
+            .map(|extension| format!("{name}{extension}"))
+            .collect()
+    } else {
+        vec![name.to_owned()]
+    };
+    candidates
         .into_iter()
-        .flat_map(|path| std::env::split_paths(path).collect::<Vec<_>>())
-        .filter_map(|directory| directory.join(name).canonicalize().ok())
+        .flat_map(|candidate| {
+            search
+                .into_iter()
+                .flat_map(|path| std::env::split_paths(path).collect::<Vec<_>>())
+                .map(move |directory| directory.join(&candidate))
+        })
+        .filter_map(|path| path.canonicalize().ok())
         .find(|path| executable(path))
 }
 

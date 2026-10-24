@@ -1893,12 +1893,24 @@ test("box selection groups, moves, ungroups, and deletes canvas objects", async 
       "the saved ungroup",
     );
 
-    // A key pressed on a focused button never deletes the selection.
+    // A key pressed on a focused button never deletes the selection. The key
+    // goes straight to the focused button: press() blurs first, which would
+    // retarget the event to the canvas body and legitimately delete.
     await evaluate(
       browser,
       `document.querySelector('.canvas-dock button:not([disabled])').focus()`,
     );
-    await press("Backspace", "Backspace", 8);
+    for (const type of ["keyDown", "keyUp"])
+      await browser.send(
+        "Input.dispatchKeyEvent",
+        {
+          type,
+          key: "Backspace",
+          code: "Backspace",
+          windowsVirtualKeyCode: 8,
+        },
+        browser.sessionId,
+      );
     await delay(200);
     assert.equal(
       await evaluate(browser, `!!document.querySelector('dialog[open]')`),
@@ -2321,6 +2333,12 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
           ? [pending.replyNodeId]
           : [pending.replyNodeId, pending.promptNodeId];
       for (const nodeId of deletedIds) {
+        // The nodes drawer is collapsed by default, so its rows only exist
+        // once it is open.
+        await evaluate(
+          browser,
+          `!!document.querySelector('.drawer') || document.querySelector('[aria-label="Toggle nodes"]')?.click()`,
+        );
         const document = await rpc("canvas.open", ref);
         const index = document.nodes.findIndex((node) => node.id === nodeId);
         assert.notEqual(index, -1);
@@ -2545,8 +2563,13 @@ test("review feedback survives browser reload and backend restart with original 
   git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init");
   writeFileSync(join(repo, "a.txt"), "one\nTWO\nthree\n");
   // Changes needs Git on the backend PATH.
-  const gitPath = spawnSync("sh", ["-c", "command -v git"]).stdout.toString();
-  const gitEnv = { ...env, PATH: dirname(gitPath.trim()) };
+  const gitPath =
+    process.platform === "win32"
+      ? spawnSync("where", ["git"], { encoding: "utf8" })
+          .stdout.trim()
+          .split(/\r?\n/)[0]
+      : spawnSync("sh", ["-c", "command -v git"]).stdout.toString().trim();
+  const gitEnv = { ...env, PATH: dirname(gitPath) };
   let backend = await startBackend(gitEnv);
   key = backend.connectionKey;
   let browser;
@@ -2771,6 +2794,19 @@ wait
 `,
   );
   chmodSync(join(bin, "codex"), 0o755);
+  if (process.platform === "win32") {
+    // Windows PATH search only finds executables, so the shell-script
+    // stand-in is unreachable. A .cmd launcher hands the same behaviour to
+    // Node, which the backend runs through `cmd.exe /d /c` with constant
+    // arguments — exactly how npm's real codex.cmd is launched.
+    const fake = fileURLToPath(
+      new URL("./support/fake-codex.mjs", import.meta.url),
+    );
+    writeFileSync(
+      join(bin, "codex.cmd"),
+      `@echo off\r\n"${process.execPath}" "${fake}" "${received}" "${trigger}"\r\n`,
+    );
+  }
   const codexEnv = { ...env, PATH: bin };
   let backend = await startBackend(codexEnv);
   key = backend.connectionKey;
@@ -2971,7 +3007,7 @@ wait
     );
   } catch (error) {
     if (browser)
-      error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({ task: [...document.querySelectorAll('.task-status, .task-attention, .card-error')].map((e) => e.textContent.trim()), focus: document.activeElement?.outerHTML.slice(0, 200), dialog: !!document.querySelector('dialog[open]') })")}\nReceived: ${JSON.stringify(receivedText())}`;
+      error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({ task: [...document.querySelectorAll('.task-status, .task-attention, .card-error')].map((e) => e.textContent.trim()), sessions: [...document.querySelectorAll('.session-notice, .session-status')].map((e) => e.textContent.trim()), dialog: !!document.querySelector('dialog[open]') })")}\nReceived: ${JSON.stringify(receivedText())}`;
     throw error;
   } finally {
     editor.dispose();
@@ -3053,7 +3089,7 @@ test("dragging a reopened canvas pans from its saved viewport", async () => {
       "the connected status",
     );
     for (const label of ["Saved view", "Panned canvas"]) {
-      const card = `[...document.querySelectorAll('.cards .card')].find((item) => item.textContent.includes(${JSON.stringify(label)}))`;
+      const card = `[...document.querySelectorAll('.tiles .tile__open, .cards .card')].find((item) => item.textContent.includes(${JSON.stringify(label)}))`;
       await waitFor(
         browser,
         `${card} && !(${card}).disabled`,
@@ -3063,7 +3099,10 @@ test("dragging a reopened canvas pans from its saved viewport", async () => {
         browser,
         `(${card}).focus(); (${card}).scrollIntoView({ block: 'center' })`,
       );
-      await clickAt(browser, await boxByText(browser, ".cards .card", label));
+      await clickAt(
+        browser,
+        await boxByText(browser, ".tiles .tile__open, .cards .card", label),
+      );
     }
     const transform = `(() => {
       const match = /translate\\(([-\\d.]+)px, ([-\\d.]+)px\\) scale\\(([-\\d.]+)\\)/.exec(document.querySelector('.svelte-flow__viewport')?.style.transform ?? '');
@@ -3075,7 +3114,8 @@ test("dragging a reopened canvas pans from its saved viewport", async () => {
       "the saved viewport to render",
     );
     const pane = await boxOf(browser, ".svelte-flow__pane");
-    await dragBetween(browser, pane, { x: pane.x + 80, y: pane.y + 40 });
+    // The select tool pans with the middle button; a left drag box-selects.
+    await dragBetween(browser, pane, { x: pane.x + 80, y: pane.y + 40 }, "middle");
     const moved = await evaluate(browser, transform);
     assert.deepEqual(
       moved,
@@ -3091,7 +3131,12 @@ test("dragging a reopened canvas pans from its saved viewport", async () => {
       "the zoom button to change the view",
     );
     const zoomed = await evaluate(browser, transform);
-    await dragBetween(browser, pane, { x: pane.x - 60, y: pane.y + 30 });
+    await dragBetween(
+      browser,
+      pane,
+      { x: pane.x - 60, y: pane.y + 30 },
+      "middle",
+    );
     const after = await evaluate(browser, transform);
     assert.ok(
       Math.abs(after.x - (zoomed.x - 60)) < 0.01 &&
