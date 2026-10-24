@@ -428,7 +428,7 @@ label {
 }
 
 .modal--full .modal__head {
-  padding-block: 1.25rem;
+  padding-block: 0.425rem;
 }
 
 .modal--full .modal__body {
