@@ -213,7 +213,9 @@ notification_condition = "always"`}</code
           : ""}.
     </p>{/if}
   {#if view.status?.shellFallback}<p class="session-notice">
-      Using the /bin/sh fallback.
+      Using the fallback shell{view.status.executable
+        ? ` ${view.status.executable}`
+        : ""}.
     </p>{/if}
   <div
     class="terminal-body nodrag nopan nowheel"

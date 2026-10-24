@@ -2981,6 +2981,134 @@ wait
   }
 });
 
+test("dragging a reopened canvas pans from its saved viewport", async () => {
+  const backend = await startBackend();
+  key = backend.connectionKey;
+  let browser;
+  const rpc = async (method, params) => {
+    const reply = await send(port, {
+      body: JSON.stringify({
+        protocolVersion: 1,
+        id: crypto.randomUUID(),
+        method,
+        params,
+      }),
+    });
+    assert.equal(reply.status, 200);
+    const response = RuntimeResponseSchema.parse(JSON.parse(reply.text));
+    assert.equal(response.error, undefined, JSON.stringify(response));
+    return ResultSchemas[method].parse(response.result);
+  };
+  try {
+    const { workspace } = await rpc("workspace.create", {
+      name: "Saved view",
+    });
+    const { canvas } = await rpc("canvas.create", {
+      workspaceId: workspace.id,
+      title: "Panned canvas",
+    });
+    const reference = { workspaceId: workspace.id, canvasId: canvas.id };
+    // A far-away note keeps the empty-canvas prompt off the pane.
+    const created = await rpc("node.createText", {
+      ...reference,
+      expectedRevision: 1,
+      x: 4000,
+      y: 4000,
+      width: 240,
+      height: 160,
+      text: "Far away",
+    });
+    const saved = { x: -310, y: 205, zoom: 1.5 };
+    await rpc("canvas.save", {
+      ...reference,
+      expectedRevision: created.revision,
+      viewport: saved,
+      nodes: [
+        { id: created.node.id, x: 4000, y: 4000, width: 240, height: 160 },
+      ],
+    });
+
+    browser = await launchBrowser();
+    await browser.send(
+      "Page.navigate",
+      { url: `http://127.0.0.1:${port}/` },
+      browser.sessionId,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('#connection-key')`,
+      "the connection form",
+    );
+    await evaluate(
+      browser,
+      `(() => { const input = document.querySelector('#connection-key'); input.value = ${JSON.stringify(key)}; input.dispatchEvent(new Event('input', { bubbles: true })); })()`,
+    );
+    await clickAt(
+      browser,
+      await boxOf(browser, ".connbar button[type='submit']"),
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('.connbar--ok')`,
+      "the connected status",
+    );
+    for (const label of ["Saved view", "Panned canvas"]) {
+      const card = `[...document.querySelectorAll('.cards .card')].find((item) => item.textContent.includes(${JSON.stringify(label)}))`;
+      await waitFor(
+        browser,
+        `${card} && !(${card}).disabled`,
+        `the ${label} card`,
+      );
+      await evaluate(
+        browser,
+        `(${card}).focus(); (${card}).scrollIntoView({ block: 'center' })`,
+      );
+      await clickAt(browser, await boxByText(browser, ".cards .card", label));
+    }
+    const transform = `(() => {
+      const match = /translate\\(([-\\d.]+)px, ([-\\d.]+)px\\) scale\\(([-\\d.]+)\\)/.exec(document.querySelector('.svelte-flow__viewport')?.style.transform ?? '');
+      return match ? { x: Number(match[1]), y: Number(match[2]), zoom: Number(match[3]) } : null;
+    })()`;
+    await waitFor(
+      browser,
+      `JSON.stringify(${transform}) === ${JSON.stringify(JSON.stringify(saved))}`,
+      "the saved viewport to render",
+    );
+    const pane = await boxOf(browser, ".svelte-flow__pane");
+    await dragBetween(browser, pane, { x: pane.x + 80, y: pane.y + 40 });
+    const moved = await evaluate(browser, transform);
+    assert.deepEqual(
+      moved,
+      { x: saved.x + 80, y: saved.y + 40, zoom: saved.zoom },
+      "the first drag continues from the saved view instead of the origin",
+    );
+    // Zoom buttons write the viewport directly too; the next drag must
+    // continue from the zoomed view.
+    await clickAt(browser, await boxOf(browser, '[aria-label="Zoom in"]'));
+    await waitFor(
+      browser,
+      `(${transform})?.zoom !== ${saved.zoom}`,
+      "the zoom button to change the view",
+    );
+    const zoomed = await evaluate(browser, transform);
+    await dragBetween(browser, pane, { x: pane.x - 60, y: pane.y + 30 });
+    const after = await evaluate(browser, transform);
+    assert.ok(
+      Math.abs(after.x - (zoomed.x - 60)) < 0.01 &&
+        Math.abs(after.y - (zoomed.y + 30)) < 0.01 &&
+        after.zoom === zoomed.zoom,
+      `the drag after zooming continues from ${JSON.stringify(zoomed)}, got ${JSON.stringify(after)}`,
+    );
+  } catch (error) {
+    if (browser)
+      error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({text:document.body.innerText.slice(-1000),transform:document.querySelector('.svelte-flow__viewport')?.style.transform})")}`;
+    throw error;
+  } finally {
+    await browser?.close();
+    await stopBackend(backend.child);
+  }
+});
+
 test("picked files are copied, previewed, and shared with the next prompt", async () => {
   const backend = await startBackend();
   key = backend.connectionKey;
