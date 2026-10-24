@@ -12,6 +12,43 @@ build the installers and publish the release. Keep validation evidence in the
 
 ## Unreleased
 
+## 0.1.1 — 2026-10-24
+
+Adds native shell and Codex sessions on Windows. Windows has passed CI and
+automated tests; manual GUI and installer validation is still pending.
+
+### Panning starts from the current view (2026-10-22)
+
+- Fix the first drag after opening a canvas snapping back to the origin.
+  Svelte Flow seeds its d3-zoom pan state only when the pane mounts, before the
+  saved viewport is restored, and later writes to the bound viewport moved the
+  rendered canvas without updating that state. A `ViewportSync` child now keeps
+  d3-zoom in step with the bound viewport, which also fixes drags after the zoom
+  buttons, fit, and jump-to. A rendered browser test covers both cases.
+
+### Native sessions on Windows (2026-10-22)
+
+- Run shell and Codex tiles on Windows 10 1809 or later through ConPTY. The
+  shell is PowerShell 7 from PATH, then Windows PowerShell, with a visible
+  `cmd.exe` fallback. Codex resolves through PATH and PATHEXT from absolute
+  directories only; an npm `codex.cmd` launcher runs through `cmd.exe /d /c`
+  with constant arguments, and paths containing `%` or `"` are refused rather
+  than interpolated.
+- Assign each launcher to its own kill-on-close Job Object before it can start
+  other programs. Stop closes the pseudoconsole (the console hangup), waits
+  750 ms, then terminates the job, so windowless descendants with their own
+  console are also stopped. An abrupt backend exit closes the job handle and
+  ends the session's processes.
+- Answer ConPTY's startup cursor-position query in the backend, because the
+  pseudoconsole blocks until it is answered and a tile may not be attached.
+- Launch with the plain form of the canonical project path, since many programs
+  mishandle `\\?\` working directories. Windows reports exit codes only; the
+  exit signal is always empty.
+- Automated tests on Windows 11 cover PowerShell input, resize, restart, job
+  cleanup of a detached child, `cmd.exe` exit codes and final output, and failed
+  launches. Interactive Codex use and the WebSocket integration suite remain
+  Linux-only.
+
 ### Point landing downloads at GitHub Releases (2026-10-24)
 
 - The landing download section lists every installer for the selected platform
@@ -388,38 +425,6 @@ First tagged pre-release. Everything below was developed before versioning began
     low-end laptop or in Firefox and Safari.
 
 ### 2026-10-22
-
-#### Panning starts from the current view
-
-- Fix the first drag after opening a canvas snapping back to the origin.
-  Svelte Flow seeds its d3-zoom pan state only when the pane mounts, before the
-  saved viewport is restored, and later writes to the bound viewport moved the
-  rendered canvas without updating that state. A `ViewportSync` child now keeps
-  d3-zoom in step with the bound viewport, which also fixes drags after the zoom
-  buttons, fit, and jump-to. A rendered browser test covers both cases.
-
-#### Native sessions on Windows
-
-- Run shell and Codex tiles on Windows 10 1809 or later through ConPTY. The
-  shell is PowerShell 7 from PATH, then Windows PowerShell, with a visible
-  `cmd.exe` fallback. Codex resolves through PATH and PATHEXT from absolute
-  directories only; an npm `codex.cmd` launcher runs through `cmd.exe /d /c`
-  with constant arguments, and paths containing `%` or `"` are refused rather
-  than interpolated.
-- Assign each launcher to its own kill-on-close Job Object before it can start
-  other programs. Stop closes the pseudoconsole (the console hangup), waits
-  750 ms, then terminates the job, so windowless descendants with their own
-  console are also stopped. An abrupt backend exit closes the job handle and
-  ends the session's processes.
-- Answer ConPTY's startup cursor-position query in the backend, because the
-  pseudoconsole blocks until it is answered and a tile may not be attached.
-- Launch with the plain form of the canonical project path, since many programs
-  mishandle `\\?\` working directories. Windows reports exit codes only; the
-  exit signal is always empty.
-- Automated tests on Windows 11 cover PowerShell input, resize, restart, job
-  cleanup of a detached child, `cmd.exe` exit codes and final output, and failed
-  launches. Interactive Codex use and the WebSocket integration suite remain
-  Linux-only.
 
 #### Repository upkeep
 
