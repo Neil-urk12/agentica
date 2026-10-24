@@ -764,14 +764,28 @@ Allow cargo test? <span class="y">(y/n)</span></pre>
                   <p class="download__hint" data-download-hint>
                     GitHub Releases · pre-release
                   </p>
+                  <p class="download__hint" data-download-alts hidden></p>
                   <div class="source__block" data-install hidden>
-                    <code data-install-code></code>
+                    <code></code>
                     <button
                       class="copy-btn"
                       type="button"
                       data-copy=""
-                      data-install-copy
-                      aria-label="Copy download command"
+                      aria-label="Copy install command"
+                    >
+                      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="9" y="9" width="11" height="11" rx="2" />
+                        <path d="M5 15V5h10" />
+                      </svg>
+                    </button>
+                  </div>
+                  <div class="source__block" data-install hidden>
+                    <code></code>
+                    <button
+                      class="copy-btn"
+                      type="button"
+                      data-copy=""
+                      aria-label="Copy alternative install command"
                     >
                       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
                         <rect x="9" y="9" width="11" height="11" rx="2" />
@@ -840,7 +854,7 @@ Allow cargo test? <span class="y">(y/n)</span></pre>
                         />
                       </svg>
                       <span class="platform__name">Linux</span>
-                      <span class="platform__meta">x64 · AppImage</span>
+                      <span class="platform__meta">x64 · deb, rpm</span>
                     </button>
                   </div>
 

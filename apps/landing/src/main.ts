@@ -28,17 +28,41 @@ const TAG = `v${version}`;
 const RELEASES = "https://github.com/Neil-urk12/agentica/releases";
 const asset = (name: string) => `${RELEASES}/download/${TAG}/${name}`;
 
+const SETUP = `agentica-${TAG}-windows-x64-setup.exe`;
+const DEB = `agentica-${TAG}-linux-amd64.deb`;
+const RPM = `agentica-${TAG}-linux-x86_64.rpm`;
+const APPIMAGE = `agentica-${TAG}-linux-x86_64.AppImage`;
+
+type Installer = {
+  label: string;
+  url: string;
+  /** Other formats, shown as links under the button. */
+  alternatives: { name: string; url: string }[];
+  /** One-line install commands; index.html has a block for each slot. */
+  commands: string[];
+};
+
 // No macOS build yet: macOS falls back to the releases page and building from source.
-const INSTALLERS: Partial<
-  Record<PlatformId, { url: string; command: string }>
-> = {
+const INSTALLERS: Partial<Record<PlatformId, Installer>> = {
   windows: {
-    url: asset(`agentica-${TAG}-windows-x64-setup.exe`),
-    command: `curl.exe -Lo agentica-setup.exe ${asset(`agentica-${TAG}-windows-x64-setup.exe`)}; .\\agentica-setup.exe`,
+    label: "Download installer",
+    url: asset(SETUP),
+    alternatives: [],
+    commands: [
+      `curl.exe -Lo agentica-setup.exe ${asset(SETUP)}; .\\agentica-setup.exe`,
+    ],
   },
   linux: {
-    url: asset(`agentica-${TAG}-linux-x86_64.AppImage`),
-    command: `curl -Lo agentica.AppImage ${asset(`agentica-${TAG}-linux-x86_64.AppImage`)} && chmod +x agentica.AppImage && ./agentica.AppImage`,
+    label: "Download .deb",
+    url: asset(DEB),
+    alternatives: [
+      { name: ".rpm", url: asset(RPM) },
+      { name: "AppImage", url: asset(APPIMAGE) },
+    ],
+    commands: [
+      `curl -LO ${asset(DEB)} && sudo apt install ./${DEB}`,
+      `sudo dnf install ${asset(RPM)}`,
+    ],
   },
 };
 
@@ -129,9 +153,12 @@ const downloadHint = document.querySelector<HTMLElement>(
 const downloadLink = document.querySelector<HTMLAnchorElement>(
   "[data-download-link]",
 );
-const install = document.querySelector<HTMLElement>("[data-install]");
-const installCode = document.querySelector<HTMLElement>("[data-install-code]");
-const installCopy = document.querySelector<HTMLElement>("[data-install-copy]");
+const downloadAlts = document.querySelector<HTMLElement>(
+  "[data-download-alts]",
+);
+const installBlocks = Array.from(
+  document.querySelectorAll<HTMLElement>("[data-install]"),
+);
 
 function selectedPlatform(): PlatformId | null {
   const active = platformButtons.find(
@@ -156,13 +183,34 @@ function renderPlatform(platform: PlatformId | null) {
       : "See all releases";
 
   for (const element of downloadLabels) element.textContent = label;
-  if (downloadLink) downloadLink.href = installer?.url ?? `${RELEASES}/latest`;
-
-  if (install && installCode && installCopy) {
-    install.hidden = !installer;
-    installCode.textContent = installer?.command ?? "";
-    installCopy.dataset.copy = installer?.command ?? "";
+  // The hero button scrolls here; only the download section's button fetches the file.
+  if (downloadLink) {
+    downloadLink.href = installer?.url ?? `${RELEASES}/latest`;
+    const linkLabel = downloadLink.querySelector("[data-download-label]");
+    if (linkLabel && installer) linkLabel.textContent = installer.label;
   }
+
+  if (downloadAlts) {
+    const alternatives = installer?.alternatives ?? [];
+    downloadAlts.hidden = alternatives.length === 0;
+    downloadAlts.replaceChildren(
+      "Also: ",
+      ...alternatives.flatMap(({ name, url }, index) => {
+        const link = Object.assign(document.createElement("a"), {
+          href: url,
+          textContent: name,
+        });
+        return index ? [" · ", link] : [link];
+      }),
+    );
+  }
+
+  installBlocks.forEach((block, index) => {
+    const command = installer?.commands[index] ?? "";
+    block.hidden = !command;
+    block.querySelector("code")!.textContent = command;
+    block.querySelector<HTMLElement>("[data-copy]")!.dataset.copy = command;
+  });
 
   if (downloadHint) {
     downloadHint.textContent = platform
