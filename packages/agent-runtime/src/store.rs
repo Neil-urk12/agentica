@@ -288,13 +288,25 @@ fn needs_rollback(error: &rusqlite::Error) -> bool {
         if failure.extended_code == rusqlite::ffi::SQLITE_READONLY_ROLLBACK)
 }
 
-/// Committed workspaces as `(id, name)`; `name` is `None` when the workspace
-/// cannot be read by this build. Incomplete creations are skipped. Readers
-/// never modify storage, except to roll back a crashed write while no writer
-/// holds the workspace.
+/// Committed workspace summary: id, name (None when unreadable), canvas count,
+/// and the highest canvas revision (0 when there are no canvases). Incomplete
+/// creations are skipped. Readers never modify storage, except to roll back a
+/// crashed write while no writer holds the workspace.
+#[derive(Debug, PartialEq)]
+pub(crate) struct WorkspaceSummary {
+    pub id: String,
+    pub name: Option<String>,
+    pub canvas_count: i64,
+    pub last_modified: i64,
+}
+
+/// Committed workspaces with canvas counts and last-modified timestamps.
+/// `name` is `None` when the workspace cannot be read by this build.
+/// `canvas_count` is the number of canvases; `last_modified` is the highest
+/// canvas revision (a proxy for recency), or 0 when there are no canvases.
 pub(crate) fn list_workspaces(
     data_root: Option<&Path>,
-) -> Result<Vec<(String, Option<String>)>, RuntimeError> {
+) -> Result<Vec<WorkspaceSummary>, RuntimeError> {
     let mut workspaces = Vec::new();
     for entry in fs::read_dir(workspaces_dir(data_root)?)? {
         let entry = entry?;
@@ -309,18 +321,39 @@ pub(crate) fn list_workspaces(
         let database = entry.path().join(DATABASE_FILE);
         if !database.is_file() {
             continue;
-        }
-        let read = |conn: Connection| -> rusqlite::Result<Option<Option<String>>> {
+        };
+        // Read the workspace name plus a canvas count and the highest canvas
+        // revision (used as a last-modified proxy) in a single connection.
+        let read = |conn: Connection| -> rusqlite::Result<Option<WorkspaceSummary>> {
             conn.busy_timeout(Duration::from_secs(1))?;
             match header(&conn)? {
                 (0, 0) => Ok(None),
-                (APPLICATION_ID, 1..=STORAGE_VERSION) => Ok(Some(
-                    conn.query_row("SELECT name FROM workspace WHERE id = ?1", [&id], |row| {
-                        row.get(0)
-                    })
-                    .optional()?,
-                )),
-                _ => Ok(Some(None)),
+                (APPLICATION_ID, 1..=STORAGE_VERSION) => {
+                    let name: Option<String> = conn
+                        .query_row("SELECT name FROM workspace WHERE id = ?1", [&id], |row| {
+                            row.get(0)
+                        })
+                        .optional()?;
+                    let (canvas_count, last_modified): (i64, i64) = conn
+                        .query_row(
+                            "SELECT COUNT(*), COALESCE(MAX(revision), 0) FROM canvas",
+                            [],
+                            |row| Ok((row.get(0)?, row.get(1)?)),
+                        )
+                        .unwrap_or((0, 0));
+                    Ok(Some(WorkspaceSummary {
+                        id: id.clone(),
+                        name,
+                        canvas_count,
+                        last_modified,
+                    }))
+                }
+                _ => Ok(Some(WorkspaceSummary {
+                    id: id.clone(),
+                    name: None,
+                    canvas_count: 0,
+                    last_modified: 0,
+                })),
             }
         };
         let mut result = Connection::open_with_flags(
@@ -335,11 +368,16 @@ pub(crate) fn list_workspaces(
         }
         match result {
             Ok(None) => {}
-            Ok(Some(name)) => workspaces.push((id, name)),
-            Err(_) => workspaces.push((id, None)),
+            Ok(Some(summary)) => workspaces.push(summary),
+            Err(_) => workspaces.push(WorkspaceSummary {
+                id,
+                name: None,
+                canvas_count: 0,
+                last_modified: 0,
+            }),
         }
     }
-    workspaces.sort();
+    workspaces.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(workspaces)
 }
 
@@ -555,7 +593,11 @@ mod tests {
         }
         assert_eq!(fs::read(&path).unwrap(), bytes);
         assert_eq!(
-            list_workspaces(Some(temp.path())).unwrap(),
+            list_workspaces(Some(temp.path()))
+                .unwrap()
+                .iter()
+                .map(|ws| (ws.id.clone(), ws.name.clone()))
+                .collect::<Vec<_>>(),
             [(id.clone(), Some("Research".to_owned()))]
         );
         // The open workspace stays listed; listing never takes the lock.
@@ -584,7 +626,8 @@ mod tests {
             assert_eq!(fs::read(&path).unwrap(), bytes);
             assert!(list_workspaces(Some(temp.path()))
                 .unwrap()
-                .contains(&(id.clone(), None)));
+                .iter()
+                .any(|ws| ws.id == id && ws.name.is_none()));
             // The failed open released its lock.
             drop(lock_workspace(path.parent().unwrap(), &id).unwrap());
         }
@@ -1248,15 +1291,15 @@ mod tests {
         crash_writer(&path);
         // A held writer lock keeps the journal for that writer to roll back.
         let held = lock_workspace(&dir, &id).unwrap();
-        assert_eq!(
-            list_workspaces(Some(temp.path())).unwrap(),
-            [(id.clone(), None)]
-        );
+        let rolled = list_workspaces(Some(temp.path())).unwrap();
+        assert_eq!(rolled.len(), 1);
+        assert_eq!(rolled[0].id, id);
+        assert_eq!(rolled[0].name, None);
         drop(held);
-        assert_eq!(
-            list_workspaces(Some(temp.path())).unwrap(),
-            [(id.clone(), Some("Before".to_owned()))]
-        );
+        let recovered = list_workspaces(Some(temp.path())).unwrap();
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].id, id);
+        assert_eq!(recovered[0].name.as_deref(), Some("Before"));
         crash_writer(&path);
         delete_workspace(Some(temp.path()), &id).unwrap();
         assert!(!dir.exists());

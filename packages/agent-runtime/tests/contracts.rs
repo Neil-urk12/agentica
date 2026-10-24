@@ -192,7 +192,7 @@ fn one_writer_per_workspace_across_launch_modes_and_aliases() {
     let detached = start_detached(temp.path());
     assert_eq!(
         detached.call("workspace.list", json!({}))["result"]["workspaces"],
-        json!([{ "id": workspace_id, "name": "Shared" }])
+        json!([{ "id": workspace_id, "name": "Shared", "canvasCount": 0, "lastModified": 0 }])
     );
     let denied = detached.call("workspace.open", open.clone());
     assert_eq!(code(&denied), "WORKSPACE_LOCKED");

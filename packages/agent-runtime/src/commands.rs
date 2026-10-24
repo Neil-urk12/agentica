@@ -793,7 +793,7 @@ impl Runtime {
                          VALUES (?1, ?2, 1, 0, 0, 1)",
                         (&canvas_id, &params.title),
                     )?;
-                    Ok(json!({ "canvas": { "id": canvas_id, "title": params.title } }))
+                    Ok(json!({ "canvas": { "id": canvas_id, "title": params.title, "revision": 1, "nodeCount": 0 } }))
                 })
             }
             "canvas.open" => {
@@ -1277,11 +1277,19 @@ impl Runtime {
         Ok(result)
     }
 
-    /// Workspaces this runtime can see, in stable order.
+    /// Workspaces this runtime can see, in stable order, with canvas counts
+    /// and last-modified timestamps.
     fn workspaces(&self) -> Result<Vec<Value>, RuntimeError> {
         Ok(list_workspaces(self.data_root())?
             .into_iter()
-            .map(|(id, name)| json!({ "id": id, "name": name }))
+            .map(|ws| {
+                json!({
+                    "id": ws.id,
+                    "name": ws.name,
+                    "canvasCount": ws.canvas_count,
+                    "lastModified": ws.last_modified,
+                })
+            })
             .collect())
     }
 
@@ -1298,11 +1306,21 @@ impl Runtime {
 #[serde(deny_unknown_fields)]
 struct Empty {}
 
-/// Canvas titles in stable order, as the picker lists them.
+/// Canvas summaries in stable row order, as the picker lists them, with node
+/// counts and revision (used as a last-modified proxy).
 fn canvases(conn: &Connection) -> Result<Vec<Value>, RuntimeError> {
-    let mut statement = conn.prepare("SELECT id, title FROM canvas ORDER BY rowid")?;
+    let mut statement = conn.prepare(
+        "SELECT c.id, c.title, c.revision, \
+         (SELECT COUNT(*) FROM canvas_node WHERE canvas_node.canvas_id = c.id) \
+         FROM canvas c ORDER BY c.rowid",
+    )?;
     let rows = statement.query_map([], |row| {
-        Ok(json!({ "id": row.get::<_, String>(0)?, "title": row.get::<_, String>(1)? }))
+        Ok(json!({
+            "id": row.get::<_, String>(0)?,
+            "title": row.get::<_, String>(1)?,
+            "revision": row.get::<_, i64>(2)?,
+            "nodeCount": row.get::<_, i64>(3)?,
+        }))
     })?;
     let canvases = rows.collect::<Result<Vec<_>, _>>()?;
     Ok(canvases)

@@ -61,8 +61,10 @@ async function setup(t, intercept = async () => {}) {
   let sequence = 0;
   const uploads = new Map();
   // The stub owns the lists the runtime would return after a delete.
-  let workspaceList = [{ id: workspaceId, name: "Work" }];
-  let canvasList = [{ id: canvasId, title: "Plan" }];
+  let workspaceList = [
+    { id: workspaceId, name: "Work", canvasCount: 1, lastModified: 1 },
+  ];
+  let canvasList = [{ id: canvasId, title: "Plan", revision: 1, nodeCount: 0 }];
   const call = async (_key, _connect, method, params) => {
     calls.push({ method, params });
     await intercept(method, params);
@@ -1970,7 +1972,7 @@ test("deleting a saved canvas and workspace updates the lists the pickers show",
   const { editor, calls } = await setup(t);
   await editor.listWorkspaces();
   assert.deepEqual(editor.state.workspaces, [
-    { id: workspaceId, name: "Work" },
+    { id: workspaceId, name: "Work", canvasCount: 1, lastModified: 1 },
   ]);
 
   assert.equal(await editor.deleteCanvas(canvasId), true);
@@ -2001,7 +2003,7 @@ test("a refused delete keeps the list and reports the runtime message", async (t
   assert.equal(await editor.deleteCanvas(canvasId), false);
   assert.match(editor.state.error, /Cannot remove the canvas/);
   assert.deepEqual(editor.state.workspace.canvases, [
-    { id: canvasId, title: "Plan" },
+    { id: canvasId, title: "Plan", revision: 1, nodeCount: 0 },
   ]);
   assert.equal(editor.state.busy, false);
 });

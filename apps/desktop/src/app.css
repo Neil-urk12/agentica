@@ -846,6 +846,130 @@ label {
   display: none;
 }
 
+/* Breadcrumb showing the parent context (workspace name) above the canvas list. */
+.home__crumbs {
+  width: 100%;
+  max-width: 65rem;
+  margin: 0 auto;
+  padding: 0 2rem;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.home__crumb {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home__crumb--current {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.home__crumbs-sep {
+  display: flex;
+  align-items: center;
+  opacity: 0.5;
+}
+
+/* Search and sort controls above the tile grid. */
+.home__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.home__search {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  flex: 1 1 16rem;
+  max-width: 24rem;
+  padding: 0 0.6rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink-soft);
+}
+
+.home__search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.875rem;
+  padding: 0.5rem 0;
+  outline: none;
+}
+
+.home__search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+.home__sort {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.home__sort-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  background: var(--surface);
+  cursor: pointer;
+  transition:
+    border-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.home__sort-btn:hover {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.home__sort-btn--active {
+  color: var(--ink);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+/* Differentiated empty-state hint. */
+.home__empty-hint {
+  margin-top: 0.4rem;
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
+/* Content-based preview dots for canvas tiles. */
+.tile__preview {
+  position: absolute;
+  inset: 0;
+}
+
+.tile__preview-dot {
+  position: absolute;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.35;
+}
+
 .home__main {
   width: 100%;
   max-width: 65rem;

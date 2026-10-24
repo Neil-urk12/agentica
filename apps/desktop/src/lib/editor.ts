@@ -846,7 +846,10 @@ export class Editor {
       this.publish({
         workspace,
         document: null,
-        workspaces: [...this.state.workspaces, workspace.workspace],
+        workspaces: [
+          ...this.state.workspaces,
+          { ...workspace.workspace, canvasCount: 0, lastModified: 0 },
+        ],
       });
     });
   }

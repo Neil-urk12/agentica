@@ -896,10 +896,25 @@ export const RuntimeRequestSchema = z.union([
 
 const Workspace = z.strictObject({ id: IdSchema, name: z.string() });
 // `name` is null when this build cannot read the workspace.
+// `canvasCount` and `lastModified` let the picker show metadata and sort by
+// recency. `lastModified` is the highest canvas revision (a recency proxy),
+// or 0 when the workspace has no canvases.
 const WorkspaceSummaries = z.array(
-  z.strictObject({ id: IdSchema, name: z.string().nullable() }),
+  z.strictObject({
+    id: IdSchema,
+    name: z.string().nullable(),
+    canvasCount: z.number().int().min(0),
+    lastModified: z.number().int().min(0),
+  }),
 );
-const CanvasSummary = z.strictObject({ id: IdSchema, title: z.string() });
+// `revision` is the canvas revision (a recency proxy for sorting).
+// `nodeCount` is the number of canvas objects, for preview indicators.
+const CanvasSummary = z.strictObject({
+  id: IdSchema,
+  title: z.string(),
+  revision: z.number().int().min(1),
+  nodeCount: z.number().int().min(0),
+});
 export const TextArtifactSchema = z.strictObject({
   id: IdSchema,
   type: z.literal("text"),
