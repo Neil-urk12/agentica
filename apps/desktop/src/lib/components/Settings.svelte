@@ -638,7 +638,9 @@
     align-items: center;
     justify-content: flex-end;
     min-height: 2rem;
+    width: 100%;
     max-width: 44rem;
+    margin-inline: auto;
     margin-bottom: 0.5rem;
   }
 
@@ -651,7 +653,9 @@
     display: flex;
     flex-direction: column;
     gap: 0.9rem;
+    width: 100%;
     max-width: 44rem;
+    margin-inline: auto;
   }
 
   .settings__section[hidden] {
