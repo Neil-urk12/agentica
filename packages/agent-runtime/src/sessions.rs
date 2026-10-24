@@ -1499,6 +1499,9 @@ mod tests {
         let identity = status.session_id;
         let attachment = supervisor.0.attach(&spec.owner, &identity, 0).unwrap();
         running(&supervisor.0, &spec.owner);
+        // Wait for the PowerShell prompt before sending any input; the shell
+        // needs to finish its startup sequences first.
+        receive(&supervisor.0, &spec.owner, &identity, &attachment, b"> ");
         let send = |text: &str| {
             supervisor
                 .0
