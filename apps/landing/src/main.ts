@@ -34,34 +34,41 @@ const RPM = `agentica-${TAG}-linux-x86_64.rpm`;
 const APPIMAGE = `agentica-${TAG}-linux-x86_64.AppImage`;
 
 type Installer = {
-  label: string;
-  url: string;
-  /** Other formats, shown as buttons beside the releases link. */
-  alternatives: { name: string; url: string }[];
+  /** First file is the recommended one the main button downloads. */
+  files: { title: string; format: string; url: string }[];
   /** One-line install commands; index.html has a block for each slot. */
-  commands: string[];
+  commands: { label: string; command: string }[];
 };
 
 // No macOS build yet: macOS falls back to the releases page and building from source.
 const INSTALLERS: Partial<Record<PlatformId, Installer>> = {
   windows: {
-    label: "Download installer",
-    url: asset(SETUP),
-    alternatives: [],
+    files: [
+      { title: "Windows 10 and 11", format: "setup.exe", url: asset(SETUP) },
+    ],
     commands: [
-      `curl.exe -Lo agentica-setup.exe ${asset(SETUP)}; .\\agentica-setup.exe`,
+      {
+        label: "PowerShell",
+        command: `curl.exe -Lo agentica-setup.exe ${asset(SETUP)}; .\\agentica-setup.exe`,
+      },
     ],
   },
   linux: {
-    label: "Download .deb",
-    url: asset(DEB),
-    alternatives: [
-      { name: ".rpm (Fedora, RHEL)", url: asset(RPM) },
-      { name: "AppImage (portable)", url: asset(APPIMAGE) },
+    files: [
+      { title: "Debian, Ubuntu", format: ".deb", url: asset(DEB) },
+      { title: "Fedora, RHEL, openSUSE", format: ".rpm", url: asset(RPM) },
+      {
+        title: "Any distro, portable",
+        format: "AppImage",
+        url: asset(APPIMAGE),
+      },
     ],
     commands: [
-      `curl -LO ${asset(DEB)} && sudo apt install ./${DEB}`,
-      `sudo dnf install ${asset(RPM)}`,
+      {
+        label: "Debian, Ubuntu",
+        command: `curl -LO ${asset(DEB)} && sudo apt install ./${DEB}`,
+      },
+      { label: "Fedora, RHEL", command: `sudo dnf install ${asset(RPM)}` },
     ],
   },
 };
@@ -153,12 +160,29 @@ const downloadHint = document.querySelector<HTMLElement>(
 const downloadLink = document.querySelector<HTMLAnchorElement>(
   "[data-download-link]",
 );
-const downloadAlts = document.querySelector<HTMLElement>(
-  "[data-download-alts]",
+const filesSection = document.querySelector<HTMLElement>("[data-files]");
+const filesTitle = document.querySelector<HTMLElement>("[data-files-title]");
+const filesList = document.querySelector<HTMLElement>("[data-files-list]");
+const filesEmpty = document.querySelector<HTMLElement>("[data-files-empty]");
+const fileTemplate = document.querySelector<HTMLTemplateElement>(
+  "[data-file-template]",
 );
+const installSection = document.querySelector<HTMLElement>("[data-installs]");
 const installBlocks = Array.from(
   document.querySelectorAll<HTMLElement>("[data-install]"),
 );
+const releaseLink = document.querySelector<HTMLAnchorElement>(
+  "[data-release-link]",
+);
+if (releaseLink) releaseLink.href = `${RELEASES}/tag/${TAG}`;
+
+function fileRow(file: Installer["files"][number]): Node {
+  const row = fileTemplate!.content.cloneNode(true) as DocumentFragment;
+  row.querySelector("a")!.href = file.url;
+  row.querySelector("[data-file-title]")!.textContent = file.title;
+  row.querySelector("[data-file-format]")!.textContent = `${file.format} · x64`;
+  return row;
+}
 
 function selectedPlatform(): PlatformId | null {
   const active = platformButtons.find(
@@ -176,51 +200,45 @@ function renderPlatform(platform: PlatformId | null) {
   }
 
   const installer = platform ? INSTALLERS[platform] : undefined;
+  const primary = installer?.files[0];
   const label = !platform
     ? "Download for desktop"
-    : installer
+    : primary
       ? `Download for ${PLATFORMS[platform]}`
       : "See all releases";
 
   for (const element of downloadLabels) element.textContent = label;
   // The hero button scrolls here; only the download section's button fetches the file.
   if (downloadLink) {
-    downloadLink.href = installer?.url ?? `${RELEASES}/latest`;
+    downloadLink.href = primary?.url ?? `${RELEASES}/latest`;
     const linkLabel = downloadLink.querySelector("[data-download-label]");
-    if (linkLabel && installer) linkLabel.textContent = installer.label;
+    if (linkLabel && platform && primary) {
+      linkLabel.textContent = `Download for ${PLATFORMS[platform]} (${primary.format})`;
+    }
   }
 
-  if (downloadAlts) {
-    // Without an installer the main button already opens the releases page.
-    const links = installer
-      ? [
-          ...installer.alternatives,
-          { name: "All releases on GitHub", url: `${RELEASES}/tag/${TAG}` },
-        ]
-      : [];
-    downloadAlts.hidden = links.length === 0;
-    downloadAlts.replaceChildren(
-      ...links.map(({ name, url }) =>
-        Object.assign(document.createElement("a"), {
-          className: "btn btn--line btn--small",
-          href: url,
-          textContent: name,
-        }),
-      ),
-    );
+  if (filesSection && filesTitle && filesList && filesEmpty) {
+    filesSection.hidden = !platform;
+    filesTitle.textContent = platform
+      ? `Downloads for ${PLATFORMS[platform]}`
+      : "";
+    filesList.replaceChildren(...(installer?.files ?? []).map(fileRow));
+    filesEmpty.hidden = Boolean(installer);
   }
 
+  if (installSection) installSection.hidden = !installer;
   installBlocks.forEach((block, index) => {
-    const command = installer?.commands[index] ?? "";
-    block.hidden = !command;
-    block.querySelector("code")!.textContent = command;
-    block.querySelector<HTMLElement>("[data-copy]")!.dataset.copy = command;
+    const entry = installer?.commands[index];
+    block.hidden = !entry;
+    block.querySelector("[data-install-label]")!.textContent =
+      entry?.label ?? "";
+    block.querySelector("code")!.textContent = entry?.command ?? "";
+    block.querySelector<HTMLElement>("[data-copy]")!.dataset.copy =
+      entry?.command ?? "";
   });
 
   if (downloadHint) {
-    downloadHint.textContent = platform
-      ? `GitHub Releases · ${TAG} pre-release · ${PLATFORMS[platform]}`
-      : `GitHub Releases · ${TAG} pre-release`;
+    downloadHint.textContent = `${TAG} pre-release`;
   }
 }
 

@@ -1186,14 +1186,71 @@ code {
   min-width: 0;
 }
 
-.download__files {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.download__hint a {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
-.download__files[hidden] {
+.source[hidden],
+.install[hidden] {
   display: none;
+}
+
+.install {
+  display: grid;
+  gap: 4px;
+}
+
+.install__label {
+  font: 400 11.5px var(--mono);
+  color: var(--muted);
+}
+
+.files {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  color: var(--ink);
+  text-decoration: none;
+  background: var(--surface-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+}
+
+.file:hover {
+  background: var(--accent-soft);
+  border-color: var(--selection);
+}
+
+.file__text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.file__title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.file__format {
+  font: 400 11.5px var(--mono);
+  color: var(--muted);
+}
+
+.file__action {
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .download__panel {
