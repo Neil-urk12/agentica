@@ -2126,6 +2126,37 @@ label {
   background: var(--card-note-line);
 }
 
+/* A plain text node is a paper note, not a blank white block. */
+.canvas-text--text:not(.canvas-text--framed) {
+  padding: 12px 14px;
+  background-color: var(--card-note);
+  border: 1px solid var(--card-note-line);
+  border-radius: 6px;
+  box-shadow: var(--shadow-sm);
+}
+
+/* A folded corner sells the paper without affecting layout or input. */
+.canvas-text--text:not(.canvas-text--framed)::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 1.1rem;
+  height: 1.1rem;
+  background: linear-gradient(
+    135deg,
+    transparent 50%,
+    color-mix(in srgb, var(--card-note-line) 55%, transparent) 50%
+  );
+  border-bottom-right-radius: 6px;
+  pointer-events: none;
+}
+
+/* Editing happens on the paper itself, so the note does not flash white. */
+.canvas-text--text:not(.canvas-text--framed) textarea.card-body {
+  background: transparent;
+}
+
 .canvas-text.preview,
 .drawing.preview {
   outline: 2px dashed var(--proposal-line);
