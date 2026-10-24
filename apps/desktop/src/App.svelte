@@ -2688,8 +2688,8 @@
       workspaceName={editorState.workspace?.workspace.name ??
         "Unnamed workspace"}
       canvases={editorState.workspace?.canvases ?? []}
+      {connected}
       connection={connectionControls}
-      connectionMessage={message}
       busy={working}
       error={editorState.error}
       onCreate={(title) => void editor.createCanvas(title)}
