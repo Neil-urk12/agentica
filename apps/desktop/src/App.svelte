@@ -1705,8 +1705,16 @@
     }
   });
 
+  // The viewport is restored once per canvas, not on every editorState change.
+  // Panning updates the viewport through `bind:viewport` and `onmove`; re-syncing
+  // from the document on every publish would fight the pan and snap back.
+  let viewportCanvasId = "";
   $effect(() => {
-    viewport = editorState.document?.canvas.viewport ?? { x: 0, y: 0, zoom: 1 };
+    const document = editorState.document;
+    const id = document?.canvas.id ?? "";
+    if (id === viewportCanvasId) return;
+    viewportCanvasId = id;
+    viewport = document?.canvas.viewport ?? { x: 0, y: 0, zoom: 1 };
   });
   $effect(() => {
     const document = editorState.document;
@@ -2932,6 +2940,7 @@
             bind:nodes
             bind:edges
             bind:viewport
+            initialViewport={viewport}
             {nodeTypes}
             minZoom={LIMITS.minZoom}
             maxZoom={LIMITS.maxZoom}
