@@ -92,6 +92,10 @@ impl Fail {
 
 struct Client {
     child: Child,
+    // Kept only to hold the job handle open: closing it ends the server tree.
+    #[cfg(windows)]
+    #[allow(dead_code)]
+    job: Job,
     writes: mpsc::Sender<WriteJob>,
     lines: mpsc::Receiver<Value>,
     next_id: u64,
@@ -102,10 +106,60 @@ struct Client {
 
 type WriteJob = (String, mpsc::Sender<std::io::Result<()>>);
 
+/// On Windows there is no process group: a kill-on-close Job Object bounds the
+/// server and everything it starts to this backend. The handle closes when the
+/// client drops, or when the backend exits however abruptly, and every owned
+/// process ends with it — a lingering server cannot outlive the runtime.
+#[cfg(windows)]
+struct Job(std::os::windows::io::OwnedHandle);
+
+#[cfg(windows)]
+impl Job {
+    fn assign(child: &Child) -> Result<Self, String> {
+        use std::os::windows::io::{AsRawHandle, FromRawHandle};
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+
+        let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if handle.is_null() {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        let job = Self(unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(handle as _) });
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        limits.BasicLimitInformation.LimitFlags =
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
+        if unsafe {
+            SetInformationJobObject(
+                job.handle(),
+                JobObjectExtendedLimitInformation,
+                &limits as *const _ as *const _,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        } == 0
+        {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        if unsafe { AssignProcessToJobObject(job.handle(), child.as_raw_handle() as _) } == 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        Ok(job)
+    }
+
+    fn handle(&self) -> windows_sys::Win32::Foundation::HANDLE {
+        use std::os::windows::io::AsRawHandle;
+        self.0.as_raw_handle() as _
+    }
+}
+
 impl Drop for Client {
     fn drop(&mut self) {
         // The server runs in its own process group (see `spawn`); end launcher children too,
         // such as the node process behind `npx`. The unreaped child keeps the group ID valid.
+        // On Windows the client's job handle closes with this drop (and with any backend
+        // exit), ending the tree the direct kill below cannot reach.
         #[cfg(unix)]
         if let Ok(pid) = libc::pid_t::try_from(self.child.id()) {
             unsafe { libc::kill(-pid, libc::SIGKILL) };
@@ -129,6 +183,15 @@ impl Client {
         let mut child = command
             .spawn()
             .map_err(|error| format!("Cannot start {}: {error}", launch.command))?;
+        #[cfg(windows)]
+        let job = match Job::assign(&child) {
+            Ok(job) => job,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("Cannot bound the server to the backend: {error}"));
+            }
+        };
         let (Some(mut stdin), Some(stdout), Some(mut stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
         else {
@@ -188,6 +251,8 @@ impl Client {
         });
         Ok(Self {
             child,
+            #[cfg(windows)]
+            job,
             writes,
             lines,
             next_id: 0,
