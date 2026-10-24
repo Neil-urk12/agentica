@@ -305,14 +305,15 @@ export async function clickAt(page, { x, y }) {
 }
 
 /** Press on one point, move in steps, release on another — a real user drag. */
-export async function dragBetween(page, from, to) {
+export async function dragBetween(page, from, to, button = "left") {
+  const pressed = { left: 1, middle: 4, right: 2 }[button] ?? 1;
   await focusPage(page);
   await mouse(page, "mouseMoved", { x: from.x, y: from.y });
   await mouse(page, "mousePressed", {
     x: from.x,
     y: from.y,
-    button: "left",
-    buttons: 1,
+    button,
+    buttons: pressed,
     clickCount: 1,
   });
   const steps = 10;
@@ -320,13 +321,13 @@ export async function dragBetween(page, from, to) {
     await mouse(page, "mouseMoved", {
       x: from.x + ((to.x - from.x) * index) / steps,
       y: from.y + ((to.y - from.y) * index) / steps,
-      button: "left",
-      buttons: 1,
+      button,
+      buttons: pressed,
     });
   await mouse(page, "mouseReleased", {
     x: to.x,
     y: to.y,
-    button: "left",
+    button,
     buttons: 0,
     clickCount: 1,
   });
