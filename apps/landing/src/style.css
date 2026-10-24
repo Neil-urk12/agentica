@@ -1186,6 +1186,16 @@ code {
   min-width: 0;
 }
 
+.download__files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.download__files[hidden] {
+  display: none;
+}
+
 .download__panel {
   display: grid;
   gap: 16px;
