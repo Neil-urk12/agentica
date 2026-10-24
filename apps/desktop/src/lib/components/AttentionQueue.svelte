@@ -171,11 +171,14 @@
     title={`Waiting for you (${queueShortcutLabel(apple)})`}
     onclick={() => (open ? close() : (open = true))}
   >
-    {#if count}<span class="dot" aria-hidden="true"></span>{count}<span
-        class="btn__label">waiting</span
-      >{:else}<Icon name="notifications" size={18} /><span class="btn__label"
-        >Nothing waiting</span
-      >{/if}
+    {#if count}
+      <Icon name="notifications" size={18} />
+      <span class="waiting__badge" aria-hidden="true">{count}</span>
+      <span class="btn__label">waiting</span>
+    {:else}
+      <Icon name="notifications" size={18} />
+      <span class="btn__label">Nothing waiting</span>
+    {/if}
   </button>
   <span class="sr-only" role="status" aria-live="polite" aria-atomic="true"
     >{sentence}</span
@@ -289,6 +292,21 @@
   }
   .dot--bad {
     background: var(--bad);
+  }
+  .waiting__badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.1rem;
+    height: 1.1rem;
+    padding: 0 0.3rem;
+    flex: none;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    color: #fff;
+    background: var(--warn);
+    border-radius: 999px;
   }
   .waiting__panel {
     position: absolute;
