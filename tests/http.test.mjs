@@ -65,7 +65,15 @@ let key;
 // Never touch the user's real workspaces.
 const dataDir = mkdtempSync(join(tmpdir(), "agentica-http-"));
 const env = { ...process.env, PATH: "", AGENTICA_DATA_DIR: dataDir };
-process.on("exit", () => rmSync(dataDir, { recursive: true, force: true }));
+// A child that outlived its stop (a startup race under load) can still hold
+// a file here on Windows, so the removal is best effort: EPERM at exit must
+// not fail the whole file after every test passed. The OS temp cleanup
+// removes what remains.
+process.on("exit", () => {
+  try {
+    rmSync(dataDir, { recursive: true, force: true });
+  } catch {}
+});
 const ping = {
   protocolVersion: 1,
   id: "browser-health",
