@@ -3115,7 +3115,12 @@ test("dragging a reopened canvas pans from its saved viewport", async () => {
     );
     const pane = await boxOf(browser, ".svelte-flow__pane");
     // The select tool pans with the middle button; a left drag box-selects.
-    await dragBetween(browser, pane, { x: pane.x + 80, y: pane.y + 40 }, "middle");
+    await dragBetween(
+      browser,
+      pane,
+      { x: pane.x + 80, y: pane.y + 40 },
+      "middle",
+    );
     const moved = await evaluate(browser, transform);
     assert.deepEqual(
       moved,
