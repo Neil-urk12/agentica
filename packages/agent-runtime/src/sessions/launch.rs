@@ -37,8 +37,16 @@ pub(super) fn executable(path: &std::path::Path) -> bool {
             .is_ok_and(|path| unsafe { libc::access(path.as_ptr(), libc::X_OK) } == 0)
 }
 
-/// Native sessions are verified only on Linux, so nothing else is launchable.
-#[cfg(not(target_os = "linux"))]
+/// Windows launchers resolve through `win::executable`; the doc comment there
+/// explains the reparse-point case.
+#[cfg(windows)]
+pub(super) fn executable(path: &std::path::Path) -> bool {
+    win::executable(path)
+}
+
+/// Native sessions are supported only on Linux and Windows, so nothing else is
+/// launchable.
+#[cfg(not(any(target_os = "linux", windows)))]
 pub(super) fn executable(_: &std::path::Path) -> bool {
     false
 }
