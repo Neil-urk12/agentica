@@ -312,7 +312,7 @@
     position: absolute;
     z-index: 1;
     top: calc(100% + 8px);
-    left: 0;
+    right: 0;
     width: min(380px, calc(100vw - 2rem));
     max-height: min(480px, 70vh);
     overflow: auto;
