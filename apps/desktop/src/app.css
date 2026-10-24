@@ -1346,6 +1346,48 @@ label {
   pointer-events: none;
 }
 
+.canvas__empty {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.canvas__intro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  max-width: 24rem;
+  text-align: center;
+  color: var(--text-soft);
+  pointer-events: auto;
+}
+
+.canvas__intro h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.canvas__intro p {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.canvas__actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
 .canvas__nodes,
 .canvas__inspector {
   position: absolute;
@@ -1363,31 +1405,6 @@ label {
 
 .canvas__inspector {
   right: 0.7rem;
-}
-
-.canvas__empty {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  text-align: center;
-  color: var(--muted);
-  pointer-events: none;
-}
-
-.canvas__empty .btn {
-  pointer-events: auto;
-  margin-top: 0.5rem;
-}
-
-.canvas__empty p {
-  margin: 0;
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: var(--ink-soft);
 }
 
 /* ---------------------------------------------------------------- composer */

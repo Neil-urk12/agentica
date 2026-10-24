@@ -3104,26 +3104,34 @@
         {/if}
         {#if editorState.document && editorState.document.nodes.length === 0 && editorState.document.projectGroups.length === 0}
           <div class="canvas__empty">
-            <PaperDoodle />
-            <p>This canvas is empty</p>
-            <button
-              class="btn btn--primary"
-              type="button"
-              disabled={!canEdit}
-              onclick={() => void editor.addText()}
-            >
-              <Icon name="add_box" size={18} />
-              Write on the canvas
-            </button>
-            <button
-              class="btn btn--soft"
-              type="button"
-              disabled={!canEdit || importing}
-              onclick={() => fileInput?.click()}
-            >
-              <Icon name="upload_file" size={18} />
-              Add a file
-            </button>
+            <div class="canvas__intro">
+              <PaperDoodle />
+              <h2>Start something on this canvas</h2>
+              <p>
+                Write a note, drop in a file, or ask the assistant to sketch an
+                idea. Everything stays together on this canvas.
+              </p>
+              <div class="canvas__actions">
+                <button
+                  class="btn btn--primary"
+                  type="button"
+                  disabled={!canEdit}
+                  onclick={() => void editor.addText()}
+                >
+                  <Icon name="add_box" size={18} />
+                  Write on the canvas
+                </button>
+                <button
+                  class="btn btn--ghost"
+                  type="button"
+                  disabled={!canEdit || importing}
+                  onclick={() => fileInput?.click()}
+                >
+                  <Icon name="upload_file" size={18} />
+                  Add a file
+                </button>
+              </div>
+            </div>
           </div>
         {/if}
 
