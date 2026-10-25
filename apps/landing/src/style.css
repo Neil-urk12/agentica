@@ -1176,6 +1176,41 @@ code {
   justify-self: start;
 }
 
+/* Keep activity secondary to the hero actions and outside installation steps. */
+.stats__about {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.stats__about summary {
+  cursor: pointer;
+}
+
+.stats__about p {
+  margin-top: 8px;
+}
+
+.stats__counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  margin: 0 0 8px;
+  color: var(--ink-soft);
+  font: 400 12px var(--mono);
+}
+
+.stats__counts > div {
+  min-width: 22ch;
+}
+
+.stats__counts dd {
+  margin: 4px 0 0;
+  min-height: 1.5em;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+}
+
 .download__hint {
   font: 400 12.5px var(--mono);
   color: var(--muted);

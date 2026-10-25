@@ -1,4 +1,5 @@
 import "./style.css";
+import { loadStats } from "./stats";
 import { version } from "../package.json";
 import {
   atStop,
@@ -12,6 +13,8 @@ import {
   type Box,
   type Camera,
 } from "./camera";
+
+void loadStats();
 
 /* --------------------------------------------------------------- helpers */
 

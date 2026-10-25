@@ -12,6 +12,25 @@ build the installers and publish the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Landing activity placement (2026-10-28)
+
+- Move counts below the hero actions so the download card has room for platform
+  choices and installation instructions. Put metric details in a native disclosure
+  to keep the default view compact while preserving the explanations without JavaScript.
+
+### Public landing activity (2026-10-27)
+
+- Show estimated visits for the last 30 days and file downloads across all public
+  releases beside the download action. Counts fail independently and preserve
+  confirmed zero; static fallback, navigation and download targets remain usable.
+- Query existing Cloudflare analytics and fully paginated GitHub release assets
+  through a server-only Pages Function. Cache complete snapshots for 15 minutes
+  and unavailable ones for one minute to reduce upstream traffic without storage
+  or new tracking. A root Functions export preserves the current Pages build setup.
+- Add endpoint and rendered browser checks. Live source access and aggregation
+  were verified; production deployment and actual edge cache hits remain pending.
+  See [configuration and verification](docs/development/landing-stats.md).
+
 ## 0.1.1 — 2026-10-24
 
 Adds native shell and Codex sessions on Windows. Windows has passed CI and
