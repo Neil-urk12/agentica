@@ -876,6 +876,35 @@ export class Editor {
     return deleted;
   }
 
+  /**
+   * Back up a workspace through the desktop's native save dialog. Resolves
+   * true once the file is written, false when the dialog is cancelled or fails.
+   */
+  async backupWorkspace(backup: () => Promise<boolean>) {
+    let saved = false;
+    await this.operation(async () => {
+      saved = await backup();
+    });
+    return saved;
+  }
+
+  /**
+   * Restore a backup through the desktop's native open dialog. It becomes a new
+   * workspace, so the list is reloaded; a cancelled dialog changes nothing.
+   */
+  async restoreWorkspace(restore: () => Promise<string | null>) {
+    await this.operation(async () => {
+      if ((await restore()) === null) return;
+      const { workspaces } = await this.call(
+        this.key(),
+        false,
+        "workspace.list",
+        {},
+      );
+      this.publish({ workspaces });
+    });
+  }
+
   /** Remove a saved canvas from the open workspace; the picker lists what is left. */
   async deleteCanvas(canvasId: string) {
     let deleted = false;

@@ -2698,6 +2698,20 @@
           editorState.workspaces.find((w) => w.id === id)?.name ?? "Workspace",
           () => deleteScope(id),
         )}
+      backups={desktopMode}
+      onBackup={(id) =>
+        editor.backupWorkspace(() =>
+          invoke<boolean>("backup_workspace", {
+            workspaceId: id,
+            suggestedName:
+              editorState.workspaces.find((w) => w.id === id)?.name ??
+              "workspace",
+          }),
+        )}
+      onRestore={() =>
+        void editor.restoreWorkspace(() =>
+          invoke<string | null>("restore_workspace"),
+        )}
       onOpenSettings={() => (settingsOpen = true)}
     />
   {:else if stage === "canvas"}

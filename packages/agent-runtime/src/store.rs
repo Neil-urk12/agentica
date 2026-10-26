@@ -291,12 +291,14 @@ fn needs_rollback(error: &rusqlite::Error) -> bool {
 /// Committed workspaces as `(id, name)`; `name` is `None` when the workspace
 /// cannot be read by this build. Incomplete creations are skipped. Readers
 /// never modify storage, except to roll back a crashed write while no writer
-/// holds the workspace.
+/// holds the workspace and to remove restores abandoned by a crash.
 pub(crate) fn list_workspaces(
     data_root: Option<&Path>,
 ) -> Result<Vec<(String, Option<String>)>, RuntimeError> {
+    let dir = workspaces_dir(data_root)?;
+    remove_abandoned_restores(&dir, ABANDONED_RESTORE);
     let mut workspaces = Vec::new();
-    for entry in fs::read_dir(workspaces_dir(data_root)?)? {
+    for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let Some(id) = entry
             .file_name()
@@ -343,6 +345,32 @@ pub(crate) fn list_workspaces(
     Ok(workspaces)
 }
 
+/// Age after which a restore staging directory is treated as abandoned. Far
+/// longer than any restore takes, so a restore running in another window is
+/// never removed.
+const ABANDONED_RESTORE: Duration = Duration::from_secs(60 * 60);
+
+/// Best-effort removal of `.restore-*` directories left by a restore that
+/// crashed before it could clean up.
+fn remove_abandoned_restores(dir: &Path, older_than: Duration) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let abandoned = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with(".restore-"))
+            && entry
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age >= older_than));
+        if abandoned {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
 /// Delete a workspace's storage. The writer lock is held across the removal,
 /// so the workspace must be closed in this and every other runtime. A directory
 /// without a committed database is left alone: it is an interrupted creation,
@@ -383,6 +411,180 @@ pub(crate) fn delete_workspace(data_root: Option<&Path>, id: &str) -> Result<(),
     fs::remove_dir_all(&dir)?;
     drop(lock);
     Ok(())
+}
+
+/// Write a consistent copy of a committed workspace to `destination`. A
+/// separate read-only connection reads it, so the workspace may stay open in
+/// any window. The copy is written beside the destination and renamed over it,
+/// so a failure never leaves a partial file there.
+pub fn backup_workspace(
+    data_root: Option<&Path>,
+    id: &str,
+    destination: &Path,
+) -> Result<(), RuntimeError> {
+    let not_found = || RuntimeError::new("NOT_FOUND", "Workspace not found.");
+    if !is_id(id) {
+        return Err(not_found());
+    }
+    let dir = workspaces_dir(data_root)?.join(id);
+    let database = dir.join(DATABASE_FILE);
+    if !database.is_file() {
+        return Err(not_found());
+    }
+    let read_only = || {
+        let conn = Connection::open_with_flags(
+            &database,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        conn.busy_timeout(Duration::from_secs(1))?;
+        header(&conn).map(|header| (conn, header))
+    };
+    let mut opened = read_only();
+    let _lock;
+    if opened.as_ref().is_err_and(needs_rollback) {
+        // Only a writer can roll back a crashed write; an open writer already has.
+        _lock = lock_workspace(&dir, id)?;
+        opened = connect(&database, false).and_then(|conn| header(&conn).map(|h| (conn, h)));
+    }
+    let (conn, (application_id, version)) = opened?;
+    if application_id != APPLICATION_ID || version < 1 {
+        return Err(not_found());
+    }
+    let name = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| RuntimeError::new("INVALID_REQUEST", "Choose a backup file name."))?;
+    let temp = destination.with_file_name(format!(".{name}.{}.partial", new_id()?));
+    let target = temp.to_str().ok_or_else(|| {
+        RuntimeError::new(
+            "INVALID_REQUEST",
+            "The backup location must be a Unicode path. Choose another folder.",
+        )
+    })?;
+    let written = conn
+        .execute("VACUUM INTO ?1", [target])
+        .map_err(RuntimeError::from)
+        .and_then(|_| {
+            drop(conn);
+            fs::rename(&temp, destination).map_err(RuntimeError::from)
+        });
+    if written.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    written
+}
+
+fn refused(message: &str) -> RuntimeError {
+    RuntimeError::new(
+        "UNSUPPORTED_STORAGE",
+        format!("{message} No workspace was added."),
+    )
+}
+
+const NOT_A_BACKUP: &str = "This file is not an Agentica workspace backup.";
+
+/// Reject a staged backup unless it is a committed Agentica workspace that
+/// this build supports, has exactly the schema our migrations create for its
+/// version, and passes integrity checks. Only pragmas and `sqlite_schema` are
+/// read, so no SQL stored in the file runs here, and the schema is compared
+/// first so the integrity checks only evaluate objects Agentica creates.
+fn validate_backup(conn: &Connection) -> Result<i64, RuntimeError> {
+    let damaged = || refused("This backup is damaged and cannot be restored.");
+    conn.pragma_update(None, "trusted_schema", false)?;
+    let (application_id, version) = header(conn).map_err(|_| refused(NOT_A_BACKUP))?;
+    if application_id != APPLICATION_ID || version < 1 {
+        return Err(refused(NOT_A_BACKUP));
+    }
+    if version > STORAGE_VERSION {
+        return Err(refused(&format!(
+            "Backup storage version {version} is newer than this Agentica build supports ({STORAGE_VERSION}). Update Agentica to restore it."
+        )));
+    }
+    let schema = |conn: &Connection| -> rusqlite::Result<Vec<[Option<String>; 4]>> {
+        let mut statement = conn
+            .prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name")?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?])
+            })?
+            .collect();
+        rows
+    };
+    let mut reference = Connection::open_in_memory()?;
+    let tx = reference.transaction()?;
+    migrate(&tx, 0, &MIGRATIONS[..version as usize])?;
+    tx.commit()?;
+    if schema(conn).map_err(|_| damaged())? != schema(&reference)? {
+        return Err(refused(
+            "This backup contains database objects Agentica does not create.",
+        ));
+    }
+    let integrity: Vec<String> = conn
+        .prepare("PRAGMA integrity_check")
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| row.get(0))?
+                .collect::<Result<_, _>>()
+        })
+        .map_err(|_| damaged())?;
+    if integrity != ["ok"] {
+        return Err(damaged());
+    }
+    let violation = conn
+        .prepare("PRAGMA foreign_key_check")
+        .and_then(|mut statement| statement.exists([]))
+        .map_err(|_| damaged())?;
+    if violation {
+        return Err(damaged());
+    }
+    Ok(version)
+}
+
+/// Add a validated copy of a backup as a new workspace and return its ID and
+/// name. The copy is staged in a hidden directory the listing skips, and only
+/// renamed into place once it is valid, migrated, renamed, and has every MCP
+/// server turned off, so restoring never starts a configured command.
+pub fn restore_workspace(
+    data_root: Option<&Path>,
+    source: &Path,
+) -> Result<(String, String), RuntimeError> {
+    let dir = workspaces_dir(data_root)?;
+    let id = new_id()?;
+    let staging = dir.join(format!(".restore-{id}"));
+    fs::create_dir(&staging)?;
+    let restored = (|| -> Result<(String, String), RuntimeError> {
+        fs::copy(source, staging.join(DATABASE_FILE))?;
+        let mut conn =
+            connect(&staging.join(DATABASE_FILE), false).map_err(|_| refused(NOT_A_BACKUP))?;
+        let version = validate_backup(&conn)?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        migrate(&tx, version, MIGRATIONS)?;
+        let original: String = tx
+            .query_row("SELECT name FROM workspace", [], |row| row.get(0))
+            .optional()?
+            .ok_or_else(|| refused("The backup has no workspace record and cannot be restored."))?;
+        const SUFFIX: &str = " (restored)";
+        let mut name = original.trim().to_owned();
+        if name.is_empty() {
+            name = "Workspace".to_owned();
+        }
+        while name.encode_utf16().count() + SUFFIX.encode_utf16().count()
+            > crate::commands::MAX_LABEL
+        {
+            name.pop();
+        }
+        let name = format!("{}{SUFFIX}", name.trim_end());
+        tx.execute("UPDATE workspace SET id = ?1, name = ?2", (&id, &name))?;
+        tx.execute("UPDATE mcp_server SET enabled = 0", [])?;
+        tx.commit()?;
+        drop(conn);
+        fs::rename(&staging, dir.join(&id))?;
+        Ok((id, name))
+    })();
+    if restored.is_err() {
+        let _ = fs::remove_dir_all(&staging);
+    }
+    restored
 }
 
 #[cfg(test)]
@@ -1289,5 +1491,239 @@ mod tests {
             .conn
             .execute("UPDATE workspace SET name = 'After'", [])
             .unwrap();
+    }
+
+    /// A workspace with a text artifact placed on a canvas, an attached file,
+    /// and an enabled MCP server.
+    fn populated(root: &Path, name: &str) -> String {
+        let id = created(root, name);
+        Connection::open(database(root, &id))
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO canvas VALUES ('c', 'Plan', 1, 0, 0, 1);
+                INSERT INTO text_content (id, body) VALUES ('t', 'hello');
+                INSERT INTO artifact VALUES ('a', 'text', 1, 1, 'sqlite', 't');
+                INSERT INTO canvas_node (id, canvas_id, kind, artifact_id, x, y, width, height)
+                    VALUES ('n', 'c', 'artifact', 'a', 1, 2, 3, 4);
+                INSERT INTO file_content (id, body, name, mime, size)
+                    VALUES ('f', x'00ff', 'a.bin', 'application/octet-stream', 2);
+                INSERT INTO mcp_server (id, name, transport, command, args, env, enabled)
+                    VALUES ('m', 'tool', 'stdio', 'run-me', '[]', '{}', 1);",
+            )
+            .unwrap();
+        id
+    }
+
+    fn contents(conn: &Connection) -> (String, String, Vec<u8>) {
+        conn.query_row(
+            "SELECT c.title, t.body, f.body FROM canvas c, text_content t, file_content f",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap()
+    }
+
+    fn rejected(root: &Path, file: &Path) -> RuntimeError {
+        let before = list_workspaces(Some(root)).unwrap();
+        let error = restore_workspace(Some(root), file).unwrap_err();
+        assert_eq!(list_workspaces(Some(root)).unwrap(), before);
+        // Nothing staged is left behind.
+        assert_eq!(
+            fs::read_dir(workspaces_dir(Some(root)).unwrap())
+                .unwrap()
+                .count(),
+            before.len()
+        );
+        error
+    }
+
+    #[test]
+    fn backup_copies_an_open_workspace_without_changing_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let id = populated(temp.path(), "Notes");
+        let open = Workspace::open(Some(temp.path()), &id).unwrap();
+        let file = temp.path().join("notes.agentica");
+        fs::write(&file, "older backup").unwrap();
+        backup_workspace(Some(temp.path()), &id, &file).unwrap();
+        let copy = Connection::open(&file).unwrap();
+        assert_eq!(header(&copy).unwrap(), (APPLICATION_ID, STORAGE_VERSION));
+        assert_eq!(contents(&copy), contents(&open.conn));
+        assert_eq!(name(&open), "Notes");
+        // Only the backup is left beside the workspaces directory.
+        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn backup_of_an_unknown_workspace_writes_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("none.agentica");
+        for id in [new_id().unwrap(), "../escape".to_owned()] {
+            let error = backup_workspace(Some(temp.path()), &id, &file).unwrap_err();
+            assert_eq!(error.code, "NOT_FOUND");
+        }
+        let id = created(temp.path(), "A");
+        let missing = temp.path().join("missing").join("x.agentica");
+        let error = backup_workspace(Some(temp.path()), &id, &missing).unwrap_err();
+        assert_eq!(error.code, "STORAGE_ERROR");
+        assert!(!file.exists());
+        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn restore_adds_a_new_workspace_beside_the_original() {
+        let temp = tempfile::tempdir().unwrap();
+        let id = populated(temp.path(), "Notes");
+        let file = temp.path().join("notes.agentica");
+        backup_workspace(Some(temp.path()), &id, &file).unwrap();
+        let (restored, name) = restore_workspace(Some(temp.path()), &file).unwrap();
+        assert_ne!(restored, id);
+        assert_eq!(name, "Notes (restored)");
+        let listed = list_workspaces(Some(temp.path())).unwrap();
+        assert!(listed.contains(&(id.clone(), Some("Notes".to_owned()))));
+        assert!(listed.contains(&(restored.clone(), Some(name))));
+        let original = Workspace::open(Some(temp.path()), &id).unwrap();
+        let copy = Workspace::open(Some(temp.path()), &restored).unwrap();
+        assert_eq!(contents(&copy.conn), contents(&original.conn));
+        let enabled = |conn: &Connection| -> i64 {
+            conn.query_row("SELECT enabled FROM mcp_server", [], |row| row.get(0))
+                .unwrap()
+        };
+        assert_eq!(enabled(&copy.conn), 0);
+        assert_eq!(enabled(&original.conn), 1);
+    }
+
+    #[test]
+    fn restore_shortens_a_long_name_to_fit() {
+        let temp = tempfile::tempdir().unwrap();
+        let id = created(temp.path(), &"é".repeat(crate::commands::MAX_LABEL));
+        let file = temp.path().join("long.agentica");
+        backup_workspace(Some(temp.path()), &id, &file).unwrap();
+        let (_, name) = restore_workspace(Some(temp.path()), &file).unwrap();
+        assert_eq!(name.encode_utf16().count(), crate::commands::MAX_LABEL);
+        assert!(name.ends_with(" (restored)"));
+    }
+
+    #[test]
+    fn restore_names_a_blank_backup_workspace() {
+        let temp = tempfile::tempdir().unwrap();
+        let id = created(temp.path(), "  ");
+        let file = temp.path().join("blank.agentica");
+        backup_workspace(Some(temp.path()), &id, &file).unwrap();
+        let (_, name) = restore_workspace(Some(temp.path()), &file).unwrap();
+        assert_eq!(name, "Workspace (restored)");
+    }
+
+    #[test]
+    fn abandoned_restores_are_removed_but_running_ones_are_kept() {
+        let temp = tempfile::tempdir().unwrap();
+        let id = created(temp.path(), "Kept");
+        let dir = workspaces_dir(Some(temp.path())).unwrap();
+        let staging = dir.join(format!(".restore-{}", new_id().unwrap()));
+        fs::create_dir(&staging).unwrap();
+        fs::write(staging.join(DATABASE_FILE), "partial").unwrap();
+        list_workspaces(Some(temp.path())).unwrap();
+        assert!(staging.exists());
+        remove_abandoned_restores(&dir, Duration::ZERO);
+        assert!(!staging.exists());
+        assert!(dir.join(&id).exists());
+    }
+
+    #[test]
+    fn restore_migrates_an_older_backup() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("old.agentica");
+        let mut conn = connect(&file, true).unwrap();
+        let tx = conn.transaction().unwrap();
+        migrate(&tx, 0, &MIGRATIONS[..4]).unwrap();
+        tx.execute("INSERT INTO workspace (id, name) VALUES ('w', 'Old')", [])
+            .unwrap();
+        tx.commit().unwrap();
+        drop(conn);
+        let (id, _) = restore_workspace(Some(temp.path()), &file).unwrap();
+        let workspace = Workspace::open(Some(temp.path()), &id).unwrap();
+        assert_eq!(header(&workspace.conn).unwrap().1, STORAGE_VERSION);
+    }
+
+    #[test]
+    fn restore_rejects_files_that_are_not_valid_backups() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("data");
+        let id = populated(temp.path(), "Notes");
+        let good = temp.path().join("good.agentica");
+        backup_workspace(Some(temp.path()), &id, &good).unwrap();
+        let variant = |name: &str, change: &dyn Fn(&Path)| {
+            let path = temp.path().join(name);
+            fs::copy(&good, &path).unwrap();
+            change(&path);
+            path
+        };
+        let text = temp.path().join("notes.txt");
+        fs::write(&text, "not a database at all, just some text").unwrap();
+        let foreign = temp.path().join("foreign.sqlite3");
+        Connection::open(&foreign)
+            .unwrap()
+            .execute_batch("CREATE TABLE t (x)")
+            .unwrap();
+        let newer = variant("newer.agentica", &|path| {
+            Connection::open(path)
+                .unwrap()
+                .pragma_update(None, "user_version", STORAGE_VERSION + 1)
+                .unwrap()
+        });
+        let trigger = variant("trigger.agentica", &|path| {
+            Connection::open(path)
+                .unwrap()
+                .execute_batch(
+                    "CREATE TRIGGER sneaky AFTER UPDATE ON workspace BEGIN DELETE FROM canvas; END",
+                )
+                .unwrap()
+        });
+        // Corrupt, so restore says "damaged" if it checks integrity before the schema.
+        let virtual_table = variant("fts.agentica", &|path| {
+            Connection::open(path)
+                .unwrap()
+                .execute_batch(
+                    "CREATE VIRTUAL TABLE f USING fts5(a);
+                    INSERT INTO f VALUES ('hello');
+                    DELETE FROM f_docsize;",
+                )
+                .unwrap()
+        });
+        let empty = variant("empty.agentica", &|path| {
+            Connection::open(path)
+                .unwrap()
+                .execute_batch("DELETE FROM workspace")
+                .unwrap()
+        });
+        let damaged = variant("damaged.agentica", &|path| {
+            let mut bytes = fs::read(path).unwrap();
+            let page = 4096;
+            for byte in &mut bytes[page + 8..2 * page] {
+                *byte = 0xa5;
+            }
+            fs::write(path, bytes).unwrap();
+        });
+        for (file, expected) in [
+            (&text, "not an Agentica workspace"),
+            (&foreign, "not an Agentica workspace"),
+            (&newer, "Update Agentica"),
+            (&trigger, "does not create"),
+            (&virtual_table, "does not create"),
+            (&empty, "no workspace record"),
+            (&damaged, "damaged"),
+        ] {
+            let error = rejected(&root, file);
+            assert_eq!(
+                error.code, "UNSUPPORTED_STORAGE",
+                "{file:?}: {}",
+                error.message
+            );
+            assert!(
+                error.message.contains(expected),
+                "{file:?}: {}",
+                error.message
+            );
+            assert!(error.message.contains("No workspace was added"));
+        }
     }
 }
