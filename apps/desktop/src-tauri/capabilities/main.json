@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The local main window may exchange validated runtime and native session requests, choose a project folder, send provider Chat Completions requests over HTTPS or localhost HTTP, and protect unsaved edits when closing.",
+  "description": "The local main window may exchange validated runtime and native session requests, choose a project folder, back up a workspace to and restore one from a file chosen in a native dialog, send provider Chat Completions requests over HTTPS or localhost HTTP, and protect unsaved edits when closing.",
   "windows": ["main"],
   "permissions": [
     "allow-runtime-request",
@@ -9,6 +9,8 @@
     "allow-session-subscribe",
     "allow-session-shutdown",
     "allow-open-file",
+    "allow-backup-workspace",
+    "allow-restore-workspace",
     "dialog:allow-open",
     {
       "identifier": "http:default",

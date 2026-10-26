@@ -23,7 +23,7 @@ mod review;
 mod tasks;
 
 // Limits shared with packages/protocol/src/index.ts.
-const MAX_LABEL: usize = 120;
+pub(crate) const MAX_LABEL: usize = 120;
 const MAX_TEXT: usize = 10_000;
 const MAX_COORDINATE: f64 = 1_000_000.0;
 const MIN_SIZE: f64 = 40.0;

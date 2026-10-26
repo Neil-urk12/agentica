@@ -14,7 +14,9 @@ use std::sync::{
 };
 
 pub use commands::Runtime;
-pub use store::{default_data_root, RuntimeError, STORAGE_VERSION};
+pub use store::{
+    backup_workspace, default_data_root, restore_workspace, RuntimeError, STORAGE_VERSION,
+};
 
 pub const MAX_FRAME_BYTES: usize = 16 * 1024;
 

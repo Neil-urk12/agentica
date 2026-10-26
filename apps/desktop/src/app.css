@@ -1048,6 +1048,20 @@ label {
   background: var(--surface);
 }
 
+.tile__backup {
+  position: absolute;
+  top: 0.5rem;
+  right: 3rem;
+  background: var(--surface);
+}
+
+.home__backup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
 /* Covers the tile's preview while asking to confirm a destructive delete. */
 .tile__confirm {
   position: absolute;
