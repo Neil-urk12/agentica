@@ -31,6 +31,34 @@ build the installers and publish the release. Keep validation evidence in the
   were verified; production deployment and actual edge cache hits remain pending.
   See [configuration and verification](docs/development/landing-stats.md).
 
+### Back up and restore workspaces (2026-10-26)
+
+- Back up a workspace from the workspace picker to a `.agentica` file chosen in
+  a native save dialog. The backup is a `VACUUM INTO` copy taken through a
+  separate read-only connection, so it works while the workspace is open in any
+  window, and it is written beside the destination and renamed into place so a
+  failure never leaves a partial file. The picker notes that backups include MCP
+  server settings, which may hold credentials. A suggested file name that is a
+  Windows device name such as `CON` gets a leading underscore.
+- Restore a backup as a new workspace named `<name> (restored)`, with a new ID,
+  so it never overwrites or collides with the original. The file is staged in a
+  hidden directory the listing skips and is refused unless it is an Agentica
+  workspace no newer than this build, passes `integrity_check` and
+  `foreign_key_check`, and has exactly the schema our migrations create for its
+  version. Only pragmas and `sqlite_schema` are read before that, so a crafted
+  file's triggers or views cannot run. The schema is compared before the
+  integrity checks, so they never evaluate constraints, indexes or virtual
+  tables Agentica does not create. Older backups migrate as on open. A
+  backup with a blank name restores as `Workspace (restored)`. Listing
+  workspaces removes staging directories older than an hour, left by a restore
+  that crashed; the age keeps a restore running in another window safe.
+- Restoring turns off every MCP server, so no configured command starts.
+  Session tiles stay stopped until started.
+- Dialogs run in the Tauri commands, so the webview never supplies a file path,
+  and the copy runs outside the runtime lock. Browser mode shows both actions
+  disabled; it would need a streaming transfer, since requests are capped at
+  16 KiB.
+
 ## 0.1.1 — 2026-10-24
 
 Adds native shell and Codex sessions on Windows. Windows has passed CI and

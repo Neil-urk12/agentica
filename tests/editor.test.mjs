@@ -2006,6 +2006,56 @@ test("a refused delete keeps the list and reports the runtime message", async (t
   assert.equal(editor.state.busy, false);
 });
 
+test("restoring a backup reloads the list and a cancelled dialog changes nothing", async (t) => {
+  const restoredId = "00000000-0000-4000-8000-0000000000aa";
+  let listed = [{ id: workspaceId, name: "Work" }];
+  const calls = [];
+  const editor = new Editor(
+    async (_key, _connect, method) => {
+      calls.push(method);
+      if (method === "workspace.list")
+        return { workspaces: structuredClone(listed) };
+      throw new Error(`Unexpected method ${method}`);
+    },
+    () => "",
+    () => {},
+  );
+  t.after(() => editor.dispose());
+  await editor.listWorkspaces();
+
+  await editor.restoreWorkspace(async () => null);
+  assert.deepEqual(calls, ["workspace.list"]);
+  assert.equal(editor.state.workspaces.length, 1);
+
+  await editor.restoreWorkspace(async () => {
+    listed = [...listed, { id: restoredId, name: "Work (restored)" }];
+    return restoredId;
+  });
+  assert.deepEqual(calls, ["workspace.list", "workspace.list"]);
+  assert.deepEqual(editor.state.workspaces.at(-1), {
+    id: restoredId,
+    name: "Work (restored)",
+  });
+  assert.equal(editor.state.busy, false);
+
+  await editor.restoreWorkspace(async () => {
+    throw "This backup is damaged and cannot be restored. No workspace was added.";
+  });
+  assert.match(editor.state.error, /damaged/);
+  assert.equal(editor.state.workspaces.length, 2);
+
+  assert.equal(await editor.backupWorkspace(async () => true), true);
+  assert.equal(editor.state.error, "");
+  assert.equal(await editor.backupWorkspace(async () => false), false);
+  assert.equal(
+    await editor.backupWorkspace(async () => {
+      throw "Cannot access workspace storage: disk full.";
+    }),
+    false,
+  );
+  assert.match(editor.state.error, /disk full/);
+});
+
 test("skipped deletes do not report success", async (t) => {
   const { editor, calls } = await setup(t);
   for (const guard of ["busy", "saving", "dirty"]) {

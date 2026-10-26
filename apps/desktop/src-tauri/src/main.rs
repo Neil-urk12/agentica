@@ -112,6 +112,45 @@ async fn runtime_request(
     .map_err(|error| format!("Backend task failed: {error}"))?
 }
 
+/// Replace characters that are unsafe in file names on any supported OS.
+fn safe_file_name(name: &str) -> String {
+    name.chars()
+        .map(|character| {
+            if character.is_control()
+                || matches!(
+                    character,
+                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+                )
+            {
+                '_'
+            } else {
+                character
+            }
+        })
+        .collect()
+}
+
+/// Suggested backup file name. Windows reserves device names such as `CON`
+/// even with an extension, so those get a leading underscore.
+fn backup_file_name(name: &str) -> String {
+    let safe = safe_file_name(name);
+    let stem = safe
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .trim_end()
+        .to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && matches!(stem.as_bytes()[3], b'1'..=b'9'));
+    if reserved {
+        format!("_{safe}.agentica")
+    } else {
+        format!("{safe}.agentica")
+    }
+}
+
 /// Write a copied canvas file to a temp path and open it with the system app.
 /// The filename is sanitized so artifact names cannot choose a directory.
 #[tauri::command]
@@ -137,27 +176,84 @@ async fn open_file(
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("file");
-        let safe: String = base
-            .chars()
-            .map(|character| {
-                if character.is_control()
-                    || matches!(
-                        character,
-                        '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
-                    )
-                {
-                    '_'
-                } else {
-                    character
-                }
-            })
-            .collect();
-        let path = dir.join(format!("{artifact_id}-{safe}"));
+        let path = dir.join(format!("{artifact_id}-{}", safe_file_name(base)));
         std::fs::write(&path, bytes).map_err(|error| error.to_string())?;
         tauri_plugin_opener::open_path(&path, None::<&str>).map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| format!("File task failed: {error}"))?
+}
+
+/// Back up a workspace to a file the user picks in a native dialog. The path
+/// never comes from the webview. Returns false when the dialog is cancelled.
+#[tauri::command]
+async fn backup_workspace(
+    workspace_id: String,
+    suggested_name: String,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, BackendState>,
+) -> Result<bool, String> {
+    use tauri_plugin_dialog::DialogExt;
+    if window.label() != "main" {
+        return Err("Backups are limited to the local main window.".into());
+    }
+    if !state.connected.load(Ordering::SeqCst) {
+        return Err("Backend disconnected. Reconnect to start it.".into());
+    }
+    let data_root = state.data_root.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(path) = window
+            .dialog()
+            .file()
+            .set_parent(&window)
+            .set_file_name(backup_file_name(&suggested_name))
+            .add_filter("Agentica backup", &["agentica"])
+            .blocking_save_file()
+        else {
+            return Ok(false);
+        };
+        let path = path.into_path().map_err(|error| error.to_string())?;
+        agentica_runtime::backup_workspace(data_root.as_deref(), &workspace_id, &path)
+            .map_err(|error| error.to_string())?;
+        Ok(true)
+    })
+    .await
+    .map_err(|error| format!("Backup task failed: {error}"))?
+}
+
+/// Restore a backup the user picks in a native dialog as a new workspace.
+/// Returns the new workspace ID, or null when the dialog is cancelled.
+#[tauri::command]
+async fn restore_workspace(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, BackendState>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    if window.label() != "main" {
+        return Err("Restoring is limited to the local main window.".into());
+    }
+    if !state.connected.load(Ordering::SeqCst) {
+        return Err("Backend disconnected. Reconnect to start it.".into());
+    }
+    let data_root = state.data_root.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(path) = window
+            .dialog()
+            .file()
+            .set_parent(&window)
+            .add_filter("Agentica backup", &["agentica"])
+            .add_filter("All files", &["*"])
+            .blocking_pick_file()
+        else {
+            return Ok(None);
+        };
+        let path = path.into_path().map_err(|error| error.to_string())?;
+        let (id, _name) = agentica_runtime::restore_workspace(data_root.as_deref(), &path)
+            .map_err(|error| error.to_string())?;
+        Ok(Some(id))
+    })
+    .await
+    .map_err(|error| format!("Restore task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -314,7 +410,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             session_request,
             session_subscribe,
             session_shutdown,
-            open_file
+            open_file,
+            backup_workspace,
+            restore_workspace
         ])
         .build(tauri::generate_context!())?
         .run(move |app, event| {
@@ -406,6 +504,18 @@ mod tests {
             session,
             "00000000-0000-4000-8000-000000000008"
         ));
+    }
+
+    #[test]
+    fn backup_file_names_avoid_windows_device_names() {
+        assert_eq!(backup_file_name("Notes"), "Notes.agentica");
+        assert_eq!(backup_file_name("a/b:c"), "a_b_c.agentica");
+        for name in ["CON", "nul", "Com1", "LPT9", "aux.old", "PRN "] {
+            assert!(backup_file_name(name).starts_with('_'), "{name}");
+        }
+        for name in ["CONSOLE", "COM0", "LPT10", "Nullable"] {
+            assert!(!backup_file_name(name).starts_with('_'), "{name}");
+        }
     }
 
     #[test]

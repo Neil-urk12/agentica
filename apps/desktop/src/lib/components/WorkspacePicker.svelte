@@ -18,6 +18,10 @@
     onCreate: (name: string) => void;
     onOpen: (id: string) => void;
     onDelete: (id: string) => void;
+    /** Desktop only: native dialogs choose the backup file. */
+    backups: boolean;
+    onBackup: (id: string) => Promise<boolean>;
+    onRestore: () => void;
     onOpenSettings: () => void;
   }
 
@@ -31,6 +35,9 @@
     onCreate,
     onOpen,
     onDelete,
+    backups,
+    onBackup,
+    onRestore,
     onOpenSettings,
   }: Props = $props();
 
@@ -41,6 +48,13 @@
   // backend reconnected without leaving this screen.
   let showConnection = $state(false);
   const locked = $derived(busy || !connected);
+  // Announced once a backup file is written; cleared by the next action.
+  let backedUp = $state("");
+
+  async function backup(id: string, label: string) {
+    backedUp = "";
+    if (await onBackup(id)) backedUp = `Backed up “${label}”.`;
+  }
 
   // The confirmation hands focus to its safe choice and returns it to the
   // delete button when it is dismissed.
@@ -158,6 +172,30 @@
         A workspace keeps your boards, notes and AI conversations together. It’s
         saved on this computer.
       </p>
+      <div class="home__backup">
+        <button
+          class="btn btn--ghost"
+          type="button"
+          disabled={locked || !backups}
+          aria-describedby="backup-hint"
+          onclick={() => {
+            backedUp = "";
+            onRestore();
+          }}
+        >
+          <Icon name="settings_backup_restore" size={18} />
+          Restore from backup
+        </button>
+        <p class="home__hint" id="backup-hint">
+          {#if backups}
+            A backup is a full copy of a workspace, including MCP server
+            settings that may hold credentials. Keep backup files private.
+            Restoring adds a new workspace and never starts its tools.
+          {:else}
+            Backing up and restoring workspaces needs the desktop app.
+          {/if}
+        </p>
+      </div>
     </section>
 
     <section class="home__recent">
@@ -207,6 +245,17 @@
                 {#if !workspace.name}
                   <small class="tile__meta">ID {workspace.id}</small>
                 {/if}
+              </button>
+              <button
+                class="icon-btn tile__backup"
+                type="button"
+                title="Back up workspace"
+                aria-label={`Back up ${label}`}
+                aria-describedby="backup-hint"
+                disabled={locked || !backups || !workspace.name}
+                onclick={() => void backup(workspace.id, label)}
+              >
+                <Icon name="save_alt" size={18} />
               </button>
               <button
                 class="icon-btn icon-btn--danger tile__delete"
@@ -259,6 +308,10 @@
       {/if}
     </section>
 
+    <p class="sr-only" role="status">{backedUp}</p>
+    {#if backedUp && !error}
+      <p class="home__hint" aria-hidden="true">{backedUp}</p>
+    {/if}
     {#if error}
       <p class="alert" role="alert">{error}</p>
     {/if}
