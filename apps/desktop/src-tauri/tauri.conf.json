@@ -23,8 +23,8 @@
     ],
     "security": {
       "capabilities": ["main"],
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src ipc: http://ipc.localhost https: http://localhost:* http://127.0.0.1:*",
-      "devCsp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420 https: http://localhost:* http://127.0.0.1:*"
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; frame-src about: http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:*; connect-src ipc: http://ipc.localhost https: http://localhost:* http://127.0.0.1:*",
+      "devCsp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; frame-src about: http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:*; connect-src ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420 https: http://localhost:* http://127.0.0.1:*"
     }
   },
   "bundle": {

@@ -37,6 +37,167 @@ const canvasId = "00000000-0000-4000-8000-000000000002";
 const nodeId = "00000000-0000-4000-8000-000000000003";
 const artifactId = "00000000-0000-4000-8000-000000000004";
 
+test("preview saves use artifact revisions and leave other previews unchanged on conflict", async (t) => {
+  let conflict = false;
+  const { editor, disk } = await setup(t, async (method) => {
+    if (method === "artifact.saveWebPreview" && conflict)
+      throw new Error("CONFLICT: newer preview");
+  });
+  disk.nodes = [];
+  disk.artifacts = [];
+  await editor.openCanvas(canvasId);
+  const first = await editor.addWebPreview("http://localhost:5173");
+  const second = await editor.addWebPreview("http://localhost:6000");
+  assert.ok(first && second);
+  assert.ok(second.node.x >= first.node.x + first.node.width);
+  assert.equal(
+    await editor.saveWebPreview(first.artifact.id, "http://localhost:5173/new"),
+    true,
+  );
+  assert.equal(
+    disk.artifacts.find((a) => a.id === second.artifact.id).url,
+    "http://localhost:6000",
+  );
+  conflict = true;
+  assert.equal(
+    await editor.saveWebPreview(
+      first.artifact.id,
+      "http://localhost:5173/draft",
+    ),
+    false,
+  );
+  assert.equal(
+    disk.artifacts.find((a) => a.id === first.artifact.id).url,
+    "http://localhost:5173/new",
+  );
+  assert.match(editor.state.error, /CONFLICT/);
+});
+
+test("a rejected preview does not block a retry, but a failed save does", async (t) => {
+  let reject = true;
+  let failSave = false;
+  const { editor, calls } = await setup(t, async (method) => {
+    if (method === "node.createWebPreview" && reject)
+      throw new Error("Preview rejected.");
+    if (method === "artifact.saveText" && failSave)
+      throw new Error("lost transport");
+  });
+  const creates = () =>
+    calls.filter((call) => call.method === "node.createWebPreview").length;
+  await editor.openCanvas(canvasId);
+  assert.equal(await editor.addWebPreview("http://localhost:5173"), undefined);
+  assert.match(editor.state.error, /rejected/);
+  reject = false;
+  assert.ok(await editor.addWebPreview("http://localhost:5173"));
+  assert.equal(creates(), 2);
+  failSave = true;
+  editor.editText(artifactId, "unsaved draft");
+  await editor.save();
+  assert.equal(editor.state.dirty, true);
+  assert.match(editor.state.error, /lost transport/);
+  assert.equal(await editor.addWebPreview("http://localhost:6000"), undefined);
+  assert.equal(creates(), 2);
+});
+
+for (const commitBeforeFailure of [false, true]) {
+  for (const retry of ["tile", "banner"]) {
+    test(`preview ${retry} retry recovers a failure ${commitBeforeFailure ? "after" : "before"} commit`, async (t) => {
+      const { editor, disk, call, calls } = await setup(t);
+      const { artifact } = await editor.addWebPreview("http://localhost:5173");
+      let failOnce = true;
+      editor.call = async (...args) => {
+        if (args[2] === "artifact.saveWebPreview" && failOnce) {
+          failOnce = false;
+          if (commitBeforeFailure) await call(...args);
+          throw new Error("Connection lost");
+        }
+        return call(...args);
+      };
+      const url = "http://localhost:5173/recovery";
+      assert.equal(await editor.saveWebPreview(artifact.id, url), false);
+      assert.equal(editor.state.dirty, true);
+      assert.match(editor.recovery(), /5173\/recovery/);
+      assert.equal(editor.savedWebPreviewUrl(artifact.id), artifact.url);
+      await editor.closeCanvas();
+      assert.ok(
+        editor.state.document,
+        "a failed preview save prevents navigation away",
+      );
+
+      if (retry === "tile")
+        assert.equal(await editor.saveWebPreview(artifact.id, url), true);
+      else await editor.retrySave();
+      assert.equal(editor.state.error, "");
+      assert.equal(editor.state.dirty, false);
+      assert.equal(editor.savedWebPreviewUrl(artifact.id), url);
+      assert.equal(disk.artifacts.find((a) => a.id === artifact.id).url, url);
+      assert.equal(
+        disk.artifacts.find((a) => a.id === artifact.id).revision,
+        2,
+      );
+      assert.equal(
+        calls.filter((c) => c.method === "artifact.saveWebPreview").length,
+        1,
+        "an acknowledged or reconciled write is not repeated",
+      );
+    });
+  }
+}
+
+test("preview retry keeps a newer submitted URL after a lost reply", async (t) => {
+  const { editor, disk, call } = await setup(t);
+  const { artifact } = await editor.addWebPreview("http://localhost:5173");
+  let loseReply = true;
+  editor.call = async (...args) => {
+    const result = await call(...args);
+    if (args[2] === "artifact.saveWebPreview" && loseReply) {
+      loseReply = false;
+      throw new Error("Reply lost");
+    }
+    return result;
+  };
+  assert.equal(
+    await editor.saveWebPreview(artifact.id, "http://localhost:5173/first"),
+    false,
+  );
+  assert.equal(
+    await editor.saveWebPreview(artifact.id, "http://localhost:5173/newer"),
+    true,
+  );
+  assert.equal(
+    disk.artifacts.find((a) => a.id === artifact.id).url,
+    "http://localhost:5173/newer",
+  );
+  assert.equal(disk.artifacts.find((a) => a.id === artifact.id).revision, 3);
+  assert.equal(editor.state.dirty, false);
+});
+
+test("preview retry retains its draft and refuses an unrelated remote URL", async (t) => {
+  const { editor, disk, call, calls } = await setup(t);
+  const { artifact } = await editor.addWebPreview("http://localhost:5173");
+  editor.call = async (...args) => {
+    if (args[2] === "artifact.saveWebPreview") throw new Error("CONFLICT");
+    return call(...args);
+  };
+  assert.equal(
+    await editor.saveWebPreview(artifact.id, "http://localhost:5173/mine"),
+    false,
+  );
+  const remote = disk.artifacts.find((a) => a.id === artifact.id);
+  remote.url = "http://localhost:5173/another-editor";
+  remote.revision++;
+  await editor.retrySave();
+  assert.match(editor.state.error, /changed elsewhere/);
+  assert.equal(editor.state.dirty, true);
+  assert.match(editor.recovery(), /5173\/mine/);
+  assert.equal(editor.savedWebPreviewUrl(artifact.id), artifact.url);
+  assert.equal(remote.url, "http://localhost:5173/another-editor");
+  assert.equal(
+    calls.filter((c) => c.method === "artifact.saveWebPreview").length,
+    0,
+  );
+});
+
 async function setup(t, intercept = async () => {}) {
   let disk = {
     canvas: {
@@ -85,7 +246,11 @@ async function setup(t, intercept = async () => {}) {
         canvases: structuredClone(canvasList),
       };
     if (method === "workspace.close") return {};
-    if (method === "node.createDrawing" || method === "node.createText") {
+    if (
+      method === "node.createDrawing" ||
+      method === "node.createText" ||
+      method === "node.createWebPreview"
+    ) {
       assert.equal(params.expectedRevision, disk.canvas.revision);
       sequence += 1;
       const node = {
@@ -98,12 +263,19 @@ async function setup(t, intercept = async () => {}) {
       };
       const artifact = {
         id: node.artifactId,
-        type: method === "node.createDrawing" ? "drawing" : "text",
+        type:
+          method === "node.createDrawing"
+            ? "drawing"
+            : method === "node.createWebPreview"
+              ? "web-preview"
+              : "text",
         schemaVersion: 1,
         revision: 1,
         ...(method === "node.createDrawing"
           ? { drawing: params.drawing }
-          : { text: params.text }),
+          : method === "node.createWebPreview"
+            ? { url: params.url }
+            : { text: params.text }),
       };
       disk.nodes = [...disk.nodes, node];
       disk.artifacts = [...disk.artifacts, artifact];
@@ -219,6 +391,18 @@ async function setup(t, intercept = async () => {}) {
         revision: params.expectedRevision + 1,
       };
       return { artifact: structuredClone(disk.artifacts[0]) };
+    }
+    if (method === "artifact.saveWebPreview") {
+      const index = disk.artifacts.findIndex(
+        (item) => item.id === params.artifactId,
+      );
+      assert.equal(params.expectedRevision, disk.artifacts[index].revision);
+      disk.artifacts[index] = {
+        ...disk.artifacts[index],
+        url: params.url,
+        revision: params.expectedRevision + 1,
+      };
+      return { artifact: structuredClone(disk.artifacts[index]) };
     }
     if (method === "canvas.save") {
       assert.equal(params.expectedRevision, disk.canvas.revision);

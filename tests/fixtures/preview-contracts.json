@@ -1,0 +1,85 @@
+[
+  {
+    "method": "node.createWebPreview",
+    "params": {
+      "workspaceId": "00000000-0000-4000-8000-000000000001",
+      "canvasId": "00000000-0000-4000-8000-000000000002",
+      "expectedRevision": 1,
+      "x": 0,
+      "y": 0,
+      "width": 600,
+      "height": 400,
+      "url": "http://localhost:5173/path"
+    },
+    "valid": true
+  },
+  {
+    "method": "artifact.saveWebPreview",
+    "params": {
+      "workspaceId": "00000000-0000-4000-8000-000000000001",
+      "artifactId": "00000000-0000-4000-8000-000000000003",
+      "expectedRevision": 1,
+      "url": "http://127.0.0.1:5000"
+    },
+    "valid": true
+  },
+  {
+    "method": "node.createWebPreview",
+    "params": {
+      "workspaceId": "00000000-0000-4000-8000-000000000001",
+      "canvasId": "00000000-0000-4000-8000-000000000002",
+      "expectedRevision": 1,
+      "x": 0,
+      "y": 0,
+      "width": 600,
+      "height": 400,
+      "url": "http://[::1]:5173/path"
+    },
+    "valid": false
+  },
+  {
+    "method": "artifact.saveWebPreview",
+    "params": {
+      "workspaceId": "00000000-0000-4000-8000-000000000001",
+      "artifactId": "00000000-0000-4000-8000-000000000003",
+      "expectedRevision": 1,
+      "url": "https://[::1]:443/path"
+    },
+    "valid": false
+  },
+  {
+    "method": "artifact.saveWebPreview",
+    "params": {
+      "workspaceId": "00000000-0000-4000-8000-000000000001",
+      "artifactId": "00000000-0000-4000-8000-000000000003",
+      "expectedRevision": 1,
+      "url": "https://example.com"
+    },
+    "valid": false
+  },
+  {
+    "method": "artifact.saveWebPreview",
+    "params": {
+      "workspaceId": "00000000-0000-4000-8000-000000000001",
+      "artifactId": "00000000-0000-4000-8000-000000000003",
+      "expectedRevision": 1,
+      "url": "http://localhost",
+      "extra": true
+    },
+    "valid": false
+  },
+  {
+    "method": "node.createWebPreview",
+    "params": {
+      "workspaceId": "00000000-0000-4000-8000-000000000001",
+      "canvasId": "00000000-0000-4000-8000-000000000002",
+      "expectedRevision": 1,
+      "x": 0,
+      "y": 0,
+      "width": 5,
+      "height": 400,
+      "url": "http://localhost"
+    },
+    "valid": false
+  }
+]

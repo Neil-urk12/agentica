@@ -392,7 +392,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sessions = Arc::new(SessionService::new(root.clone()));
     let mcp = Arc::new(McpService::new());
     let exiting = Arc::new(AtomicU8::new(0));
-    let backend = DesktopBackend::new(Runtime::new(root.clone()));
+    let context = tauri::generate_context!();
+    let mut runtime = Runtime::new(root.clone());
+    if cfg!(debug_assertions) {
+        if let Some(url) = &context.config().build.dev_url {
+            runtime.set_preview_endpoints(&[url.to_string()]);
+        }
+    }
+    let backend = DesktopBackend::new(runtime);
     let connected = backend.connected_flag();
     tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
@@ -414,7 +421,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             backup_workspace,
             restore_workspace
         ])
-        .build(tauri::generate_context!())?
+        .build(context)?
         .run(move |app, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 if exiting.load(Ordering::SeqCst) == 2 {

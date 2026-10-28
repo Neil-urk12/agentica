@@ -9,6 +9,8 @@ import {
   RunEventPageSchema,
   MAX_EVENT_PAGE_BYTES,
   FileArtifactSchema,
+  WebPreviewArtifactSchema,
+  isLocalPreviewUrl,
   FILE_LIMITS,
   ResultSchemas,
   RuntimeRequestSchema,
@@ -24,6 +26,66 @@ import {
   AgentPresetSchema,
   AgentCapabilitySchema,
 } from "@agentica/protocol";
+
+test("preview URL policy matches shared fixtures", () => {
+  const cases = JSON.parse(
+    readFileSync(new URL("./fixtures/preview-urls.json", import.meta.url)),
+  );
+  for (const { url, valid } of cases)
+    assert.equal(isLocalPreviewUrl(url), valid, url);
+});
+
+test("preview mutation contracts match shared fixtures", () => {
+  const cases = JSON.parse(
+    readFileSync(new URL("./fixtures/preview-contracts.json", import.meta.url)),
+  );
+  for (const { method, params, valid } of cases) {
+    assert.equal(
+      RuntimeRequestSchema.safeParse({
+        protocolVersion: 1,
+        id: "preview",
+        method,
+        params,
+      }).success,
+      valid,
+      method,
+    );
+  }
+  const params = {
+    ...cases[1].params,
+    url: "http://localhost/" + "x".repeat(2048),
+  };
+  assert.equal(
+    RuntimeRequestSchema.safeParse({
+      protocolVersion: 1,
+      id: "preview",
+      method: cases[1].method,
+      params,
+    }).success,
+    false,
+  );
+  const artifact = {
+    id: cases[1].params.artifactId,
+    type: "web-preview",
+    schemaVersion: 1,
+    revision: 1,
+    url: cases[1].params.url,
+  };
+  assert.equal(WebPreviewArtifactSchema.safeParse(artifact).success, true);
+  assert.equal(
+    WebPreviewArtifactSchema.safeParse({ ...artifact, extra: true }).success,
+    false,
+  );
+  assert.equal(
+    ResultSchemas["conversation.read"].safeParse({
+      nodes: [],
+      edges: [],
+      artifacts: [artifact],
+      remaining: { reads: 1, bytes: 100 },
+    }).success,
+    false,
+  );
+});
 
 test("review records and method contracts are bounded within RPC frames", () => {
   const id = "00000000-0000-4000-8000-000000000001";

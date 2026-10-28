@@ -82,6 +82,9 @@
   import CanvasToolbar from "./lib/components/CanvasToolbar.svelte";
   import DrawingNode from "./lib/components/DrawingNode.svelte";
   import FileNode from "./lib/components/FileNode.svelte";
+  import WebPreviewNode from "./lib/components/WebPreviewNode.svelte";
+  import { BACKEND_ORIGIN } from "./lib/runtime";
+  import { PREVIEW_URL_ERROR, previewUrlAllowed } from "./lib/preview-url";
   import TextNode from "./lib/components/TextNode.svelte";
   import {
     FILE_ACCEPT,
@@ -131,6 +134,7 @@
   const nodeTypes = {
     drawing: DrawingNode,
     file: FileNode,
+    "web-preview": WebPreviewNode,
     text: TextNode,
     project: ProjectNode,
     session: SessionNode,
@@ -308,6 +312,9 @@
   let resolving = $state(false);
   let fitNotice = $state("");
   let fileInput = $state<HTMLInputElement>();
+  let creatingPreview = $state(false);
+  let previewDraft = $state("");
+  let previewError = $state("");
   let dropActive = $state(false);
   let importing = $state(false);
   let importProgress = $state(0);
@@ -315,7 +322,7 @@
   const hasSelection = $derived(
     nodes.some((n) => n.selected && !n.id.startsWith("preview-")),
   );
-  const contextIds = $derived(
+  const selectedIds = $derived(
     nodes
       .filter(
         (n) =>
@@ -327,8 +334,11 @@
       )
       .map((n) => n.id),
   );
-  /** Canvas objects (not projects or terminals) in the current selection. */
-  const selectedIds = $derived(contextIds);
+  const contextIds = $derived(
+    selectedIds.filter(
+      (id) => nodes.find((node) => node.id === id)?.type !== "web-preview",
+    ),
+  );
   const nodeGroupBoxes = $derived(
     groupBoxes(editorState.document?.nodes ?? []),
   );
@@ -450,9 +460,11 @@
           ? (artifact.drawing.shapes[0]?.kind ?? "path")
           : artifact?.type === "file"
             ? "file"
-            : artifact?.purpose === "instruction"
-              ? "instruction"
-              : "text";
+            : artifact?.type === "web-preview"
+              ? "web-preview"
+              : artifact?.type === "text" && artifact.purpose === "instruction"
+                ? "instruction"
+                : "text";
       const turn = editorState.turns.find(
         (t) => t.promptNodeId === node.id || t.replyNodeId === node.id,
       );
@@ -464,13 +476,15 @@
           ? "Instruction note"
           : kind === "file" && artifact?.type === "file"
             ? artifact.name
-            : kind === "text"
-              ? "Text"
-              : kind === "rectangle"
-                ? "Rectangle"
-                : kind === "ellipse"
-                  ? "Ellipse"
-                  : "Drawing";
+            : kind === "web-preview"
+              ? "Local preview"
+              : kind === "text"
+                ? "Text"
+                : kind === "rectangle"
+                  ? "Rectangle"
+                  : kind === "ellipse"
+                    ? "Ellipse"
+                    : "Drawing";
       return { id: node.id, kind, label: `${name} ${index + 1}` };
     });
     return [
@@ -924,6 +938,7 @@
     const node = document?.nodes.find((item) => item.id === nodeId);
     const source = document?.artifacts.find((a) => a.id === node?.artifactId);
     if (!node || !source) return;
+    if (source.type === "web-preview") return;
     if (source.type === "file") {
       reader = {
         title: source.name,
@@ -1384,7 +1399,9 @@
               ? "drawing"
               : artifact.type === "file"
                 ? "file"
-                : "text",
+                : artifact.type === "web-preview"
+                  ? "web-preview"
+                  : "text",
           position: { x: node.x, y: node.y },
           width: node.width,
           height: node.height,
@@ -1425,7 +1442,24 @@
                             : "The file could not be opened.";
                       }),
                   }
-                : { text: artifact.text, purpose: artifact.purpose }),
+                : artifact.type === "web-preview"
+                  ? {
+                      nodeId: node.id,
+                      url:
+                        editor.savedWebPreviewUrl(artifact.id) ?? artifact.url,
+                      endpoints: [
+                        window.location.origin,
+                        ...(!desktopMode ? [BACKEND_ORIGIN] : []),
+                      ],
+                      onSave: (url: string) =>
+                        editor.saveWebPreview(artifact.id, url),
+                      onRemove: () => void removeObject(node.id),
+                    }
+                  : artifact.type === "text"
+                    ? { text: artifact.text, purpose: artifact.purpose }
+                    : {
+                        text: "Web preview unavailable.",
+                      }),
             preview,
             editable: editable && !preview,
             connectable: currentTool === "arrow" && !preview,
@@ -1450,11 +1484,13 @@
             onRetry: () => turn && void handlePromptSubmit(turn.prompt),
             onRead: preview
               ? undefined
-              : artifact.type === "file"
-                ? artifact.text
-                  ? () => openNodeReader(node.id)
-                  : undefined
-                : () => openNodeReader(node.id),
+              : artifact.type === "web-preview"
+                ? undefined
+                : artifact.type === "file"
+                  ? artifact.text
+                    ? () => openNodeReader(node.id)
+                    : undefined
+                  : () => openNodeReader(node.id),
             // Conversation cards are not tasks.
             task:
               preview || turn || artifact.type !== "text"
@@ -2416,6 +2452,7 @@
       removal ||
       reviewTile ||
       taskSend ||
+      creatingPreview ||
       deleteConfirm;
     const target = event.target as HTMLElement | null;
     // The queue shortcut also works from tile controls (header buttons,
@@ -3271,6 +3308,12 @@
               onColor={(value) => (strokeColor = value)}
               onWidth={(value) => (strokeWidth = value)}
               onFile={() => fileInput?.click()}
+              onPreview={canEdit
+                ? () => {
+                    creatingPreview = true;
+                    previewError = "";
+                  }
+                : undefined}
             />
           {/if}
           {#if pendingReply || (activeTurn?.status === "generating" && !generating)}
@@ -3335,7 +3378,7 @@
               : "Current canvas · recent conversation"}
             provider={providerLabel}
             details={[
-              "Your prompt. Project folders, session tiles and terminal output are excluded.",
+              "Your prompt. Project folders, session tiles, terminal output and web previews are excluded.",
               hasSelection
                 ? contextIds.length
                   ? `The ${contextIds.length} selected ${contextIds.length === 1 ? "object" : "objects"}: position, size, text, extracted file text, and connections between them.`
@@ -3580,6 +3623,57 @@
         </button>
       </div>
     {/if}
+  {/if}
+
+  {#if creatingPreview}
+    <Modal
+      title="Add local web preview"
+      subtitle="Start your app separately, then enter its local URL."
+      icon="web"
+      onClose={() => (creatingPreview = false)}
+    >
+      <form
+        onsubmit={async (event) => {
+          event.preventDefault();
+          const endpoints = [
+            window.location.origin,
+            ...(!desktopMode ? [BACKEND_ORIGIN] : []),
+          ];
+          if (!previewUrlAllowed(previewDraft, endpoints)) {
+            previewError = PREVIEW_URL_ERROR;
+            return;
+          }
+          const result = await editor.addWebPreview(previewDraft);
+          if (result) {
+            creatingPreview = false;
+            previewDraft = "";
+          } else
+            previewError =
+              editorState.error ||
+              "Could not add the preview. Your URL is still here.";
+        }}
+      >
+        <label for="new-preview-url">Local app URL</label>
+        <input
+          id="new-preview-url"
+          bind:value={previewDraft}
+          maxlength="2048"
+          placeholder="http://localhost:5173"
+        />
+        {#if previewError}<p role="alert">{previewError}</p>{/if}
+        <div class="confirm-actions">
+          <button
+            class="btn btn--ghost"
+            type="button"
+            onclick={() => (creatingPreview = false)}>Cancel</button
+          ><button
+            class="btn btn--primary"
+            type="submit"
+            disabled={editorState.busy}>Add preview</button
+          >
+        </div>
+      </form>
+    </Modal>
   {/if}
 
   {#if deleteConfirm}
