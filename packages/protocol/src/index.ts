@@ -11,6 +11,8 @@ export const LIMITS = {
   maxSize: 4_000,
   minZoom: 0.1,
   maxZoom: 4,
+  /** Context nodes per task (`MAX_CONTEXT` in tasks.rs). */
+  taskContext: 8,
 } as const;
 
 /**
@@ -263,6 +265,10 @@ const UniqueIds = z
   .array(IdSchema)
   .max(MAX_IDS)
   .refine((ids) => new Set(ids).size === ids.length, "IDs must be unique");
+/** Ordered context nodes with the text revision each had when sent. */
+const TaskContextRevisions = z
+  .array(z.strictObject({ nodeId: IdSchema, revision: Revision }))
+  .max(LIMITS.taskContext);
 export const AgentStartSchema = z
   .strictObject({
     ...CanvasRef,
@@ -815,11 +821,15 @@ const ParamSchemas = {
       done: z.boolean().optional(),
       // null clears the assignee.
       assignedTileId: IdSchema.nullable().optional(),
+      // Replaces the whole ordered context list.
+      contextNodeIds: UniqueIds.max(LIMITS.taskContext).optional(),
     })
     .refine(
       (update) =>
-        update.done !== undefined || update.assignedTileId !== undefined,
-      "Change done or assignedTileId",
+        update.done !== undefined ||
+        update.assignedTileId !== undefined ||
+        update.contextNodeIds !== undefined,
+      "Change done, assignedTileId, or contextNodeIds",
     ),
   "task.recordSent": z.strictObject({
     ...CanvasRef,
@@ -827,6 +837,7 @@ const ParamSchemas = {
     expectedRevision: Revision,
     tileId: IdSchema,
     textRevision: Revision,
+    contextRevisions: TaskContextRevisions,
   }),
   "mcp.server.list": z.strictObject({ ...WorkspaceRef }),
   "mcp.server.create": z.strictObject({
@@ -951,6 +962,12 @@ export const TaskSchema = z
     sentAt: z.string().nullable(),
     sentRevision: Revision.nullable(),
     revision: Revision,
+    /** Ordered context nodes whose text is pasted after the task text. */
+    context: z
+      .array(z.strictObject({ nodeId: IdSchema }))
+      .max(LIMITS.taskContext),
+    /** Context last sent; null with a sentAt means sent before context existed. */
+    sentContext: TaskContextRevisions.nullable(),
   })
   .refine(
     (task) => (task.sentAt === null) === (task.sentRevision === null),

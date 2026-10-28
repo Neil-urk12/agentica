@@ -338,7 +338,17 @@ tile without pressing Enter and focuses the terminal, so you submit it. It never
 starts a stopped tile. If the tile is asking for attention, the paste is refused
 and you are asked to check the tile first.
 
+**Add context** attaches up to 8 other notes or files with extracted text (such
+as a PDF) on the same canvas. Images and files with no extracted text are not
+supported. A dotted line connects each context item to the task; canvas
+connectors never change what a task sends. Send pastes the task text, then each
+item in the order added under a `--- Context: <name> ---` line, all in the same
+single paste. The preview lists each item's size; if the total exceeds the paste
+limit, Send is unavailable until you remove context or shorten the text. Nothing
+is cut. Deleting a context note removes it from every task.
+
 Task status shows only facts: when the text was last sent, **Edited since sent**
-if the note changed after, and the tile's current attention label. Agentica never
+if the note changed after, **Context changed since sent** if context was added,
+removed, reordered, or edited after, and the tile's current attention label. Agentica never
 infers progress, completion, or failure from session output. The canvas agent
 cannot see or change tasks.

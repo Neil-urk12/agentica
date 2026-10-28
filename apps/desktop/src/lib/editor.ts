@@ -15,6 +15,7 @@ import {
   type Task,
 } from "@agentica/protocol";
 import { bytesToBase64 } from "./file-types.ts";
+import { contextLabel, contextText, type TaskContextItem } from "./tasks.ts";
 import type { callRuntime } from "./runtime";
 
 export type CanvasDocument = RuntimeResult<"canvas.open">;
@@ -61,6 +62,26 @@ const layoutHasItems = (batch: CanvasLayoutBatch) =>
 export interface DrawingSegment {
   geometry: { x: number; y: number; width: number; height: number };
   drawing: Drawing;
+}
+
+/** Mirrors the runtime cascade: deleted nodes leave every task's context. */
+function withoutContext<T extends { task?: Task | null }>(
+  nodes: T[],
+  deleted: Set<string>,
+): T[] {
+  return nodes.map((node) =>
+    node.task?.context.some((item) => deleted.has(item.nodeId))
+      ? {
+          ...node,
+          task: {
+            ...node.task,
+            context: node.task.context.filter(
+              (item) => !deleted.has(item.nodeId),
+            ),
+          },
+        }
+      : node,
+  );
 }
 
 /** Comparable content, so unsaved work is detected for text and drawings alike. */
@@ -1132,7 +1153,10 @@ export class Editor {
           expectedRevision: document.canvas.revision,
           nodeId,
         });
-        const nodes = document.nodes.filter((node) => node.id !== nodeId);
+        const nodes = withoutContext(
+          document.nodes.filter((node) => node.id !== nodeId),
+          new Set([nodeId]),
+        );
         const retained = new Set(nodes.map((node) => node.artifactId));
         this.load({
           ...document,
@@ -1171,7 +1195,10 @@ export class Editor {
             nodeIds: chunk,
           });
           const doomed = new Set(chunk);
-          const nodes = document.nodes.filter((node) => !doomed.has(node.id));
+          const nodes = withoutContext(
+            document.nodes.filter((node) => !doomed.has(node.id)),
+            doomed,
+          );
           const retained = new Set(nodes.map((node) => node.artifactId));
           this.load({
             ...document,
@@ -1231,6 +1258,33 @@ export class Editor {
     return { text: artifact.text, revision: artifact.revision };
   }
 
+  /** The saved text of each context node a task send will paste, in order. */
+  async settledContext(nodeId: string): Promise<TaskContextItem[]> {
+    await this.enqueue(() => this.settleSave());
+    const document = this.state.document;
+    const id = this.nodeIds.get(nodeId) ?? nodeId;
+    const task = document?.nodes.find((item) => item.id === id)?.task;
+    return (task?.context ?? []).map(({ nodeId: contextId }) => {
+      const node = document?.nodes.find((item) => item.id === contextId);
+      const artifact = document?.artifacts.find(
+        (a) => a.id === node?.artifactId,
+      );
+      const text = contextText(artifact);
+      if (!artifact || text === null)
+        throw new Error("A context node is no longer on this canvas.");
+      if (content(artifact) !== this.savedArtifacts.get(artifact.id))
+        throw new Error(
+          "A context note has unsaved changes. Wait for it to save, then retry.",
+        );
+      return {
+        nodeId: contextId,
+        label: contextLabel(artifact),
+        text,
+        revision: artifact.revision,
+      };
+    });
+  }
+
   /** Mark or unmark a text node as a task. Task calls throw so callers report them in place. */
   async setTask(nodeId: string, enabled: boolean) {
     await this.taskCall(
@@ -1243,7 +1297,11 @@ export class Editor {
 
   async updateTask(
     nodeId: string,
-    change: { done?: boolean; assignedTileId?: string | null },
+    change: {
+      done?: boolean;
+      assignedTileId?: string | null;
+      contextNodeIds?: string[];
+    },
   ) {
     await this.taskCall(nodeId, async (scope, task) => {
       if (!task) throw new Error("This note is no longer a task.");
@@ -1262,6 +1320,7 @@ export class Editor {
     tileId: string,
     textRevision: number,
     retry = false,
+    contextRevisions: { nodeId: string; revision: number }[] = [],
   ) {
     // Reconcile the persisted task before every attempt: the baseline the
     // adoption check compares against must be the truth at write time, or an
@@ -1287,7 +1346,9 @@ export class Editor {
         task.sentAt !== this.sendAttempts.get(nodeId) &&
         task.assignedTileId === tileId &&
         task.sentAt !== null &&
-        task.sentRevision === textRevision
+        task.sentRevision === textRevision &&
+        JSON.stringify(task.sentContext ?? []) ===
+          JSON.stringify(contextRevisions)
       )
         return task;
       this.sendAttempts.set(nodeId, task.sentAt);
@@ -1297,6 +1358,7 @@ export class Editor {
           expectedRevision: task.revision,
           tileId,
           textRevision,
+          contextRevisions,
         })
       ).task;
     });
