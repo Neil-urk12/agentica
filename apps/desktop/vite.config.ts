@@ -18,6 +18,10 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 1420,
     strictPort: true,
+    headers: {
+      "Content-Security-Policy":
+        "frame-src about: http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:*; frame-ancestors 'none'",
+    },
     watch: { ignored: ["**/src-tauri/**"] },
   },
   optimizeDeps: {

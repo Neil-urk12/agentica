@@ -124,6 +124,14 @@ fn model_node(mut node: Value) -> Value {
     node
 }
 
+fn agent_visible(state: &Value, node: &Value) -> bool {
+    state["artifacts"].as_array().is_some_and(|artifacts| {
+        artifacts.iter().any(|artifact| {
+            artifact["id"] == node["artifactId"] && artifact["type"] != "web-preview"
+        })
+    })
+}
+
 /// Canvas map for the model: write scope first, then nearest the stored anchor.
 /// Conversation cards are left out unless writable; the model gets them as history.
 fn outline(
@@ -154,6 +162,7 @@ fn outline(
         .as_array()
         .unwrap()
         .iter()
+        .filter(|n| agent_visible(&state, n))
         .filter(|n| {
             let id = n["id"].as_str().unwrap();
             writable(id) || !cards.contains(id)
@@ -650,10 +659,20 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                 id("nodeIds", n)?;
             }
             let state = canvas_state(tx, &p.canvas_id)?;
+            if p.node_ids.iter().any(|id| {
+                !state["nodes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|n| n["id"] == *id)
+            }) {
+                return Err(not_found("Selected object"));
+            }
             let nodes: Vec<_> = state["nodes"]
                 .as_array()
                 .unwrap()
                 .iter()
+                .filter(|n| agent_visible(&state, n))
                 .filter(|n| {
                     (p.node_ids.is_empty()
                         && !matches!(p.context_mode, Some(ContextMode::Selection)))
@@ -662,9 +681,6 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                 .cloned()
                 .map(model_node)
                 .collect();
-            if !p.node_ids.is_empty() && nodes.len() != p.node_ids.len() {
-                return Err(not_found("Selected object"));
-            }
             let artifacts: Vec<_> = state["artifacts"]
                 .as_array()
                 .unwrap()
@@ -737,6 +753,7 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                 .as_array()
                 .unwrap()
                 .iter()
+                .filter(|n| agent_visible(&state, n))
                 .filter(|n| p.node_ids.iter().any(|id| n["id"] == *id))
                 .cloned()
                 .map(model_node)
@@ -951,6 +968,62 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_is_excluded_from_selection_outline_and_reads() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut runtime = crate::Runtime::new(Some(temp.path().to_owned()));
+        let workspace = runtime
+            .call("workspace.create", json!({"name":"Test"}))
+            .unwrap()["workspace"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let canvas = runtime
+            .call(
+                "canvas.create",
+                json!({"workspaceId":workspace,"title":"Canvas"}),
+            )
+            .unwrap()["canvas"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let text_node = runtime.call("node.createText", json!({"workspaceId":workspace,"canvasId":canvas,"expectedRevision":1,"x":400,"y":0,"width":100,"height":100,"text":"unrelated"})).unwrap()["node"]["id"].as_str().unwrap().to_owned();
+        let preview = new_id().unwrap();
+        let artifact_id = new_id().unwrap();
+        let content_id = new_id().unwrap();
+        runtime.transact(&workspace, |tx| {
+            tx.execute("INSERT INTO web_preview_content VALUES (?1, 'http://localhost:5173/private')", [&content_id])?;
+            tx.execute("INSERT INTO artifact VALUES (?1, 'web-preview', 1, 1, 'sqlite', ?2)", (&artifact_id, &content_id))?;
+            tx.execute("INSERT INTO canvas_node (id, canvas_id, kind, artifact_id, x, y, width, height) VALUES (?1, ?2, 'artifact', ?3, 0, 0, 300, 200)", (&preview, &canvas, &artifact_id))?;
+            Ok(json!({}))
+        }).unwrap();
+        let turn = new_id().unwrap();
+        let started = runtime.call("conversation.start", json!({"workspaceId":workspace,"canvasId":canvas,"turnId":turn,"prompt":"Hello","model":"test","nodeIds":[preview],"contextMode":"selection","anchor":{"x":0,"y":0}})).unwrap();
+        assert_eq!(started["context"]["nodes"], json!([]));
+        assert_eq!(started["context"]["artifacts"], json!([]));
+        assert!(!started["outline"].to_string().contains(&preview));
+        assert!(!started.to_string().contains("localhost:5173"));
+        let error = runtime.call("conversation.read", json!({"workspaceId":workspace,"canvasId":canvas,"turnId":turn,"nodeIds":[preview]})).unwrap_err();
+        assert_eq!(error.code, "SCOPE_DENIED");
+        runtime.call("conversation.finish", json!({"workspaceId":workspace,"canvasId":canvas,"turnId":turn,"reply":"done","operations":[],"status":"complete","error":""})).unwrap();
+        let mixed_turn = new_id().unwrap();
+        let mixed = runtime.call("conversation.start", json!({"workspaceId":workspace,"canvasId":canvas,"turnId":mixed_turn,"prompt":"Mixed","model":"test","nodeIds":[preview,text_node],"contextMode":"selection","anchor":{"x":0,"y":0}})).unwrap();
+        assert_eq!(mixed["context"]["nodes"].as_array().unwrap().len(), 1);
+        assert!(!mixed.to_string().contains("localhost:5173"));
+        assert!(!mixed["outline"].to_string().contains(&preview));
+        let mixed_read = runtime.call("conversation.read", json!({"workspaceId":workspace,"canvasId":canvas,"turnId":mixed_turn,"nodeIds":[preview,text_node]})).unwrap_err();
+        assert_eq!(mixed_read.code, "SCOPE_DENIED");
+        let rejected = runtime.transact(&workspace, |tx| {
+            apply_operations(tx, &canvas, &mixed["context"], &[json!({"op":"place","nodeId":preview,"x":10,"y":10,"width":300,"height":200})])?;
+            Ok(json!({}))
+        }).unwrap_err();
+        assert_eq!(rejected.code, "SCOPE_DENIED");
+        assert!(
+            parse::<Operation>(json!({"op":"createWebPreview","url":"http://localhost:5173"}))
+                .is_err()
+        );
+    }
 
     #[test]
     fn conversation_cards_stay_bounded_for_long_text() {

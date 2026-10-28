@@ -17,6 +17,7 @@
     onColor: (color: string) => void;
     onWidth: (width: number) => void;
     onFile: () => void;
+    onPreview?: () => void;
   }
 
   let {
@@ -28,6 +29,7 @@
     onColor,
     onWidth,
     onFile,
+    onPreview,
   }: Props = $props();
 </script>
 
@@ -69,6 +71,15 @@
     >
       <Icon name="upload_file" size={20} />
     </button>
+    {#if onPreview}
+      <button
+        class="toolbar__btn"
+        type="button"
+        aria-label="Add local web preview"
+        title="Add local web preview"
+        onclick={onPreview}><Icon name="web" size={20} /></button
+      >
+    {/if}
   </div>
 
   {#if tool === "draw"}

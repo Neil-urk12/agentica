@@ -29,6 +29,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("schema_v12.sql"),
     include_str!("schema_v13.sql"),
     include_str!("schema_v14.sql"),
+    include_str!("schema_v15.sql"),
 ];
 pub const STORAGE_VERSION: i64 = MIGRATIONS.len() as i64;
 
@@ -537,6 +538,26 @@ fn validate_backup(conn: &Connection) -> Result<i64, RuntimeError> {
         .map_err(|_| damaged())?;
     if violation {
         return Err(damaged());
+    }
+    if version >= 15 {
+        let missing = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM artifact a LEFT JOIN web_preview_content p ON p.id = a.content_id WHERE a.type = 'web-preview' AND p.id IS NULL)",
+            [], |row| row.get::<_, bool>(0),
+        ).map_err(|_| damaged())?;
+        if missing {
+            return Err(damaged());
+        }
+        let mut statement = conn
+            .prepare("SELECT url FROM web_preview_content")
+            .map_err(|_| damaged())?;
+        let urls = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|_| damaged())?;
+        for url in urls {
+            if crate::commands::preview_url(&url.map_err(|_| damaged())?, &[]).is_err() {
+                return Err(damaged());
+            }
+        }
     }
     Ok(version)
 }
@@ -1060,6 +1081,68 @@ mod tests {
             )
             .unwrap();
         }
+    }
+
+    #[test]
+    fn preview_migration_preserves_existing_artifacts_and_nodes() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", false).unwrap();
+        let tx = conn.transaction().unwrap();
+        migrate(&tx, 0, &MIGRATIONS[..13]).unwrap();
+        tx.execute_batch(
+            "INSERT INTO canvas VALUES ('c', 'Canvas', 4, 1, 2, 1);
+             INSERT INTO text_content (id, body) VALUES ('t', 'note');
+             INSERT INTO drawing_content (id, body) VALUES ('d', '{}');
+             INSERT INTO file_content (id, body, name, mime, size, text)
+                 VALUES ('f', X'01', 'a.txt', 'text/plain', 1, 'a');
+             INSERT INTO artifact VALUES ('at', 'text', 1, 2, 'sqlite', 't');
+             INSERT INTO artifact VALUES ('ad', 'drawing', 1, 3, 'sqlite', 'd');
+             INSERT INTO artifact VALUES ('af', 'file', 1, 4, 'sqlite', 'f');
+             INSERT INTO canvas_node (id, canvas_id, kind, artifact_id, x, y, width, height)
+                 VALUES ('nt', 'c', 'artifact', 'at', 1, 2, 100, 200),
+                        ('nd', 'c', 'artifact', 'ad', 3, 4, 110, 210),
+                        ('nf', 'c', 'artifact', 'af', 5, 6, 120, 220);",
+        )
+        .unwrap();
+        migrate(&tx, 13, MIGRATIONS).unwrap();
+        tx.commit().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        let rows: Vec<(String, String, i64, f64, f64, f64, f64)> = conn
+            .prepare("SELECT artifact.id, type, revision, x, y, width, height FROM artifact JOIN canvas_node ON artifact.id = artifact_id ORDER BY artifact.id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))
+            .unwrap().map(Result::unwrap).collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("ad".into(), "drawing".into(), 3, 3.0, 4.0, 110.0, 210.0),
+                ("af".into(), "file".into(), 4, 5.0, 6.0, 120.0, 220.0),
+                ("at".into(), "text".into(), 2, 1.0, 2.0, 100.0, 200.0),
+            ]
+        );
+        let values: (String, String, Vec<u8>) = conn.query_row(
+            "SELECT (SELECT body FROM text_content WHERE id='t'), (SELECT body FROM drawing_content WHERE id='d'), (SELECT body FROM file_content WHERE id='f')",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap();
+        assert_eq!(values, ("note".into(), "{}".into(), vec![1]));
+        assert!(conn
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .query([])
+            .unwrap()
+            .next()
+            .unwrap()
+            .is_none());
+        conn.execute(
+            "INSERT INTO web_preview_content VALUES ('p', 'http://localhost:5173')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO artifact VALUES ('ap', 'web-preview', 1, 1, 'sqlite', 'p')",
+            [],
+        )
+        .unwrap();
     }
 
     #[test]
@@ -1621,6 +1704,55 @@ mod tests {
         assert_eq!(error.code, "STORAGE_ERROR");
         assert!(!file.exists());
         assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn preview_backup_preserves_configuration_and_geometry() {
+        let temp = tempfile::tempdir().unwrap();
+        let id = populated(temp.path(), "Mixed");
+        let workspace = Workspace::open(Some(temp.path()), &id).unwrap();
+        let canvas: String = workspace
+            .conn
+            .query_row("SELECT id FROM canvas LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        workspace.conn.execute("INSERT INTO web_preview_content VALUES ('preview-content', 'http://localhost:5173/path')", []).unwrap();
+        workspace.conn.execute("INSERT INTO artifact VALUES ('preview-artifact', 'web-preview', 1, 2, 'sqlite', 'preview-content')", []).unwrap();
+        workspace.conn.execute("INSERT INTO canvas_node (id, canvas_id, kind, artifact_id, x, y, width, height) VALUES ('preview-node', ?1, 'artifact', 'preview-artifact', 17, 23, 600, 400)", [&canvas]).unwrap();
+        drop(workspace);
+        let file = temp.path().join("preview.agentica");
+        backup_workspace(Some(temp.path()), &id, &file).unwrap();
+        let (restored, _) = restore_workspace(Some(temp.path()), &file).unwrap();
+        let copy = Workspace::open(Some(temp.path()), &restored).unwrap();
+        let row: (String, String, i64, f64, f64, f64, f64) = copy.conn.query_row("SELECT a.id, p.url, a.revision, n.x, n.y, n.width, n.height FROM artifact a JOIN web_preview_content p ON p.id=a.content_id JOIN canvas_node n ON n.artifact_id=a.id WHERE a.type='web-preview'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))).unwrap();
+        assert_eq!(
+            row,
+            (
+                "preview-artifact".into(),
+                "http://localhost:5173/path".into(),
+                2,
+                17.0,
+                23.0,
+                600.0,
+                400.0
+            )
+        );
+        // Older records must remain restorable even though new IPv6 URLs are rejected.
+        copy.conn
+            .execute(
+                "UPDATE web_preview_content SET url = 'http://[::1]:5173/restored'",
+                [],
+            )
+            .unwrap();
+        drop(copy);
+        let ipv6_backup = temp.path().join("ipv6.agentica");
+        backup_workspace(Some(temp.path()), &restored, &ipv6_backup).unwrap();
+        let (ipv6_id, _) = restore_workspace(Some(temp.path()), &ipv6_backup).unwrap();
+        let ipv6_copy = Workspace::open(Some(temp.path()), &ipv6_id).unwrap();
+        let url: String = ipv6_copy
+            .conn
+            .query_row("SELECT url FROM web_preview_content", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(url, "http://[::1]:5173/restored");
     }
 
     #[test]

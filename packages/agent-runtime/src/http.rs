@@ -88,7 +88,7 @@ async fn dispatch(State(state): State<Arc<HttpState>>, request: Request) -> Resp
         HeaderValue::from_static("no-referrer"),
     );
     headers.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(
-                    "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws://127.0.0.1:1421 https: http://localhost:* http://127.0.0.1:*; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+                    "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws://127.0.0.1:1421 https: http://localhost:* http://127.0.0.1:*; frame-src 'self' http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:*; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
     ));
     if let Some(origin) = cors_origin {
         headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
@@ -275,13 +275,17 @@ pub async fn serve_with_sessions(
 pub async fn serve_with_services(
     listener: TcpListener,
     connection_key: &str,
-    runtime: Runtime,
+    mut runtime: Runtime,
     sessions: Arc<SessionService>,
     mcp: Arc<crate::mcp::McpService>,
 ) -> io::Result<()> {
     if !listener.local_addr()?.ip().is_loopback() {
         return Err(io::Error::other("The backend must bind to loopback."));
     }
+    runtime.set_preview_endpoints(&[
+        FRONTEND_ORIGIN.to_owned(),
+        format!("http://127.0.0.1:{}", listener.local_addr()?.port()),
+    ]);
     let app = Router::new()
         .route("/sessions", session_ws::route())
         .fallback(dispatch)
