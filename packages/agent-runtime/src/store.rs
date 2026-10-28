@@ -450,11 +450,11 @@ pub fn backup_workspace(
     if application_id != APPLICATION_ID || version < 1 {
         return Err(not_found());
     }
-    let name = destination
+    destination
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| RuntimeError::new("INVALID_REQUEST", "Choose a backup file name."))?;
-    let temp = destination.with_file_name(format!(".{name}.{}.partial", new_id()?));
+    let temp = destination.with_file_name(format!(".agentica-{}.partial", new_id()?));
     let target = temp.to_str().ok_or_else(|| {
         RuntimeError::new(
             "INVALID_REQUEST",
@@ -575,6 +575,21 @@ pub fn restore_workspace(
         }
         let name = format!("{}{SUFFIX}", name.trim_end());
         tx.execute("UPDATE workspace SET id = ?1, name = ?2", (&id, &name))?;
+        let server_ids: Vec<String> = tx
+            .prepare("SELECT id FROM mcp_server")?
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        for old_id in server_ids {
+            let new_id = new_id()?;
+            tx.execute(
+                "UPDATE mcp_server SET id = ?1 WHERE id = ?2",
+                (&new_id, &old_id),
+            )?;
+            tx.execute(
+                "UPDATE mcp_tool SET server_id = ?1 WHERE server_id = ?2",
+                (&new_id, &old_id),
+            )?;
+        }
         tx.execute("UPDATE mcp_server SET enabled = 0", [])?;
         tx.commit()?;
         drop(conn);
@@ -1508,7 +1523,8 @@ mod tests {
                 INSERT INTO file_content (id, body, name, mime, size)
                     VALUES ('f', x'00ff', 'a.bin', 'application/octet-stream', 2);
                 INSERT INTO mcp_server (id, name, transport, command, args, env, enabled)
-                    VALUES ('m', 'tool', 'stdio', 'run-me', '[]', '{}', 1);",
+                    VALUES ('m', 'tool', 'stdio', 'run-me', '[]', '{}', 1);
+                INSERT INTO mcp_tool VALUES ('m', 'echo', 'Echo', '{}', 1, 1);",
             )
             .unwrap();
         id
@@ -1554,6 +1570,19 @@ mod tests {
     }
 
     #[test]
+    fn backup_accepts_a_long_multibyte_filename() {
+        let temp = tempfile::tempdir().unwrap();
+        let id = populated(temp.path(), "Notes");
+        let file = temp.path().join(format!("{}.agentica", "中".repeat(80)));
+        fs::write(&file, "older backup").unwrap();
+        backup_workspace(Some(temp.path()), &id, &file).unwrap();
+        let copy = Connection::open(&file).unwrap();
+        assert_eq!(header(&copy).unwrap(), (APPLICATION_ID, STORAGE_VERSION));
+        assert_eq!(contents(&copy).1, "hello");
+        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 2);
+    }
+
+    #[test]
     fn backup_of_an_unknown_workspace_writes_nothing() {
         let temp = tempfile::tempdir().unwrap();
         let file = temp.path().join("none.agentica");
@@ -1590,6 +1619,27 @@ mod tests {
         };
         assert_eq!(enabled(&copy.conn), 0);
         assert_eq!(enabled(&original.conn), 1);
+        let restored_server: String = copy
+            .conn
+            .query_row("SELECT id FROM mcp_server", [], |row| row.get(0))
+            .unwrap();
+        assert!(is_id(&restored_server));
+        assert_ne!(restored_server, "m");
+        let tool_server: String = copy
+            .conn
+            .query_row(
+                "SELECT server_id FROM mcp_tool WHERE name = 'echo' AND enabled = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(tool_server, restored_server);
+        assert!(!copy
+            .conn
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .exists([])
+            .unwrap());
     }
 
     #[test]

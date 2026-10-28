@@ -12,6 +12,12 @@ build the installers and publish the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Backup and restore fixes (2026-10-28)
+
+- Give restored MCP servers fresh identities and remap their tools in the restore
+  transaction, keeping running clients independent across workspaces.
+- Use a short temporary backup filename so valid long destination names work.
+
 ### Landing activity placement (2026-10-28)
 
 - Move counts below the hero actions so the download card has room for platform
