@@ -2,8 +2,9 @@
 //! The server is this test binary re-run as a fake stdio MCP server (`fake_server`), so no
 //! network or paid provider is involved.
 use agentica_runtime::{
+    backup_workspace,
     mcp::{handle_request, McpService},
-    Runtime,
+    restore_workspace, Runtime,
 };
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
@@ -63,7 +64,7 @@ fn fake_server() {
             }
             Some("tools/call") => match message["params"]["name"].as_str() {
                 Some("echo") => json!({"content": [{"type": "text",
-                    "text": message["params"]["arguments"]["text"]},
+                    "text": if message["params"]["arguments"]["identity"] == true { json!(std::env::var("FAKE_IDENTITY").unwrap_or_default()) } else { message["params"]["arguments"]["text"].clone() }},
                     {"type": "image", "data": "AAAA", "mimeType": "image/png"}]}),
                 Some("big") => json!({"content": [{"type": "text", "text": "é".repeat(40_000)}]}),
                 Some("fail") => {
@@ -206,6 +207,74 @@ fn tool<'a>(server: &'a Value, name: &str) -> &'a Value {
         .iter()
         .find(|t| t["name"] == name)
         .unwrap_or_else(|| panic!("no tool {name} in {server}"))
+}
+
+#[test]
+fn restored_servers_have_independent_running_clients() {
+    let mut h = Harness::new();
+    let original_workspace = h.workspace.clone();
+    let original = h.create_fake("fake");
+    let original_state = h._data.path().join("original-lists");
+    h.ok("mcp.server.update", json!({"serverId": original, "env": {"FAKE_MCP": "1", "FAKE_STATE": original_state, "FAKE_IDENTITY": "original"}}));
+    h.ok(
+        "mcp.server.set_enabled",
+        json!({"serverId": original, "enabled": true}),
+    );
+    h.ok(
+        "mcp.tool.set_enabled",
+        json!({"serverId": original, "tool": "echo", "enabled": true}),
+    );
+    let backup = h._data.path().join("backup.agentica");
+    backup_workspace(
+        Some(h._data.path()),
+        original_workspace.as_str().unwrap(),
+        &backup,
+    )
+    .unwrap();
+    let (restored, _) = restore_workspace(Some(h._data.path()), &backup).unwrap();
+    h.workspace = json!(restored);
+    h.runtime("workspace.open", json!({}));
+    let restored_server = h.ok("mcp.server.list", json!({}))["servers"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_ne!(original, restored_server);
+    let restored_state = h._data.path().join("restored-lists");
+    h.ok("mcp.server.update", json!({"serverId": restored_server, "env": {"FAKE_MCP": "1", "FAKE_STATE": restored_state, "FAKE_IDENTITY": "restored"}}));
+    h.ok(
+        "mcp.server.set_enabled",
+        json!({"serverId": restored_server, "enabled": true}),
+    );
+    h.ok(
+        "mcp.tool.set_enabled",
+        json!({"serverId": restored_server, "tool": "echo", "enabled": true}),
+    );
+    let restored_canvas = h.turn();
+    assert_eq!(
+        h.call(&restored_canvas, "fake", "echo", json!({"identity": true}))["result"]["text"],
+        "restored\n[image content omitted]"
+    );
+    h.workspace = original_workspace.clone();
+    let original_canvas = h.turn();
+    assert_eq!(
+        h.call(&original_canvas, "fake", "echo", json!({"identity": true}))["result"]["text"],
+        "original\n[image content omitted]"
+    );
+    h.workspace = json!(restored);
+    h.ok(
+        "mcp.server.set_enabled",
+        json!({"serverId": restored_server, "enabled": false}),
+    );
+    h.ok("mcp.server.delete", json!({"serverId": restored_server}));
+    h.workspace = original_workspace;
+    assert_eq!(
+        h.ok("mcp.server.list", json!({}))["servers"][0]["status"],
+        "running"
+    );
+    assert_eq!(
+        h.call(&original_canvas, "fake", "echo", json!({"identity": true}))["result"]["text"],
+        "original\n[image content omitted]"
+    );
 }
 
 #[test]
