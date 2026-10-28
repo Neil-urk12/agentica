@@ -224,7 +224,12 @@ test("task requests, results and the guarded paste are strict", () => {
       expectedRevision: 1,
       tileId: id,
       textRevision: 3,
+      contextRevisions: [{ nodeId: id, revision: 2 }],
     }),
+    true,
+  );
+  assert.equal(
+    request("task.update", { ...ref, expectedRevision: 1, contextNodeIds: [] }),
     true,
   );
   for (const [method, params] of [
@@ -234,6 +239,22 @@ test("task requests, results and the guarded paste are strict", () => {
     ["task.update", { ...ref, expectedRevision: 1, assignedTileId: "codex" }],
     ["task.update", { ...ref, expectedRevision: 1, done: true, sentAt: "now" }],
     ["task.recordSent", { ...ref, expectedRevision: 1, tileId: id }],
+    [
+      "task.recordSent",
+      { ...ref, expectedRevision: 1, tileId: id, textRevision: 1 },
+    ],
+    ["task.update", { ...ref, expectedRevision: 1, contextNodeIds: [id, id] }],
+    [
+      "task.update",
+      {
+        ...ref,
+        expectedRevision: 1,
+        contextNodeIds: Array.from(
+          { length: 9 },
+          (_, i) => `00000000-0000-4000-8000-00000000000${i}`,
+        ),
+      },
+    ],
   ])
     assert.equal(
       request(method, params),
@@ -246,6 +267,8 @@ test("task requests, results and the guarded paste are strict", () => {
     sentAt: null,
     sentRevision: null,
     revision: 1,
+    context: [{ nodeId: id }],
+    sentContext: null,
   };
   assert.equal(ResultSchemas["task.update"].safeParse({ task }).success, true);
   assert.equal(

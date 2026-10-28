@@ -26,6 +26,11 @@
         assignees: { id: string; label: string }[];
         sent: string;
         edited: boolean;
+        contextChanged: boolean;
+        context: { id: string; label: string }[];
+        contextOptions: { id: string; label: string }[];
+        onAddContext: (nodeId: string) => void;
+        onRemoveContext: (nodeId: string) => void;
         attention: string;
         blocker: string;
         busy: boolean;
@@ -250,11 +255,58 @@
           ><Icon name="close" size={14} /></button
         >
       </div>
-      {#if t.sent || t.edited || (t.blocker && t.task.assignedTileId)}
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <div
+        class="task-context nodrag"
+        role="group"
+        aria-label="Task context"
+        onkeydown={(event) => event.stopPropagation()}
+      >
+        {#each t.context as item (item.id)}
+          <span class="task-context-chip">
+            <span class="task-context-label" title={item.label}
+              >{item.label}</span
+            >
+            <button
+              class="card-action"
+              type="button"
+              title="Remove from context"
+              aria-label={`Remove ${item.label} from context`}
+              disabled={t.busy || !data.editable}
+              onclick={() => t.onRemoveContext(item.id)}
+              ><Icon name="close" size={12} /></button
+            >
+          </span>
+        {/each}
+        <select
+          class="task-context-add"
+          aria-label="Add context"
+          value=""
+          disabled={t.busy ||
+            !data.editable ||
+            t.context.length >= LIMITS.taskContext ||
+            t.contextOptions.length === 0}
+          title={t.context.length >= LIMITS.taskContext
+            ? `A task can have at most ${LIMITS.taskContext} context items.`
+            : "Paste a note or file text after the task text when sending"}
+          onchange={(event) => {
+            const id = event.currentTarget.value;
+            event.currentTarget.value = "";
+            if (id) t.onAddContext(id);
+          }}
+        >
+          <option value="">Add context</option>
+          {#each t.contextOptions as option (option.id)}
+            <option value={option.id}>{option.label}</option>
+          {/each}
+        </select>
+      </div>
+      {#if t.sent || t.edited || t.contextChanged || (t.blocker && t.task.assignedTileId)}
         <p class="task-status" role="status">
           {[
             t.sent,
             t.edited ? "Edited since sent" : "",
+            t.contextChanged ? "Context changed since sent" : "",
             t.task.assignedTileId ? t.blocker : "",
           ]
             .filter(Boolean)

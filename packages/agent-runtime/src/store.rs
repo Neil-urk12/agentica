@@ -28,6 +28,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("schema_v11.sql"),
     include_str!("schema_v12.sql"),
     include_str!("schema_v13.sql"),
+    include_str!("schema_v14.sql"),
 ];
 pub const STORAGE_VERSION: i64 = MIGRATIONS.len() as i64;
 
@@ -941,6 +942,30 @@ mod tests {
             [],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn task_context_migration_keeps_tasks_without_context() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut conn = connect(&temp.path().join("db"), true).unwrap();
+        let tx = conn.transaction().unwrap();
+        migrate(&tx, 0, &MIGRATIONS[..13]).unwrap();
+        tx.execute_batch(
+            "INSERT INTO text_content (id, body) VALUES ('t', 'Task');
+            INSERT INTO artifact VALUES ('a', 'text', 1, 2, 'sqlite', 't');
+            INSERT INTO text_task (artifact_id, sent_at, sent_revision) VALUES ('a', 'x', 2);",
+        )
+        .unwrap();
+        migrate(&tx, 13, MIGRATIONS).unwrap();
+        tx.commit().unwrap();
+        let row: (i64, Option<String>, i64) = conn
+            .query_row(
+                "SELECT sent_revision, sent_context, (SELECT count(*) FROM task_context) FROM text_task",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row, (2, None, 0));
     }
 
     #[test]

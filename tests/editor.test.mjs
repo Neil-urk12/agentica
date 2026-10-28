@@ -293,11 +293,75 @@ async function taskSendSetup(t) {
         Date.UTC(2026, 9, 22, 0, 0, records.length),
       ).toISOString(),
       sentRevision: params.textRevision,
+      sentContext: params.contextRevisions,
     };
     return { task: structuredClone(disk.nodes[0].task) };
   };
   return { ...fixture, tileId, records };
 }
+
+test("task context resolves saved text and refuses unsaved context", async (t) => {
+  const { editor, disk, call } = await taskSendSetup(t);
+  disk.nodes[0].task.context = [{ nodeId }];
+  await editor.openCanvas(canvasId);
+  assert.deepEqual(await editor.settledContext(nodeId), [
+    { nodeId, label: "Original", text: "Original", revision: 1 },
+  ]);
+  editor.call = async (...args) => {
+    if (args[2] === "artifact.saveText") throw new Error("Disk full");
+    return call(...args);
+  };
+  editor.editText(artifactId, "Unsaved");
+  await assert.rejects(editor.settledContext(nodeId), /unsaved changes/);
+});
+
+test("deleting a context node removes it from the task's local context", async (t) => {
+  const { editor, disk } = await taskSendSetup(t);
+  const note = "00000000-0000-4000-8000-000000000031";
+  const noteArtifact = "00000000-0000-4000-8000-000000000032";
+  disk.nodes.push({
+    id: note,
+    artifactId: noteArtifact,
+    x: 0,
+    y: 400,
+    width: 200,
+    height: 100,
+  });
+  disk.artifacts.push({
+    id: noteArtifact,
+    type: "text",
+    schemaVersion: 1,
+    revision: 1,
+    text: "Spec",
+  });
+  disk.nodes[0].task.context = [{ nodeId: note }];
+  await editor.openCanvas(canvasId);
+  await editor.deleteNode(note);
+  assert.deepEqual(editor.state.document.nodes[0].task.context, []);
+  assert.equal(editor.state.document.nodes[0].task.revision, 2);
+});
+
+test("task recording retry does not adopt a send of different context", async (t) => {
+  const { editor, tileId, records } = await taskSendSetup(t);
+  const call = editor.call;
+  editor.call = async (...args) => {
+    const result = await call(...args);
+    if (args[2] === "task.recordSent")
+      throw new TypeError("Reply lost after commit");
+    return result;
+  };
+  const context = [{ nodeId, revision: 1 }];
+  await assert.rejects(
+    editor.recordSent(nodeId, tileId, 1, false, context),
+    /Reply lost/,
+  );
+  editor.call = call;
+  await editor.recordSent(nodeId, tileId, 1, true, []);
+  assert.equal(records.length, 2);
+  assert.deepEqual(records[1].contextRevisions, []);
+  await editor.recordSent(nodeId, tileId, 1, true, []);
+  assert.equal(records.length, 2);
+});
 
 test("task recording retry adopts a committed send without rewriting it or losing drafts", async (t) => {
   const { editor, disk, tileId, records } = await taskSendSetup(t);

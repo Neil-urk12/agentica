@@ -12,6 +12,28 @@ build the installers and publish the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Task context (2026-10-28)
+
+- Let a task list up to 8 context nodes on its canvas: other notes, or files with
+  extracted text. Images and files without text are not supported. Send pastes
+  each item's saved text after the task text under a labelled delimiter, through
+  the same sanitizer, size check, preview, attention guard, and single paste.
+  Over-limit payloads are refused with per-part sizes instead of truncated.
+- Reject image MIME types in task context validation and the shared frontend
+  context helper, even when imports supply text; text presence alone cannot
+  enforce image exclusion.
+- Store membership in a `task_context` table keyed by task artifact and context
+  node (storage v14). Foreign-key cascades from `text_task` and `canvas_node`
+  remove rows on unmark, task deletion, and every node-deletion path without new
+  delete code; a `canvas_edge` kind would need a table rebuild and let connector
+  proposals change what a task sends.
+- `task.update` replaces the whole list through `contextNodeIds` under the task
+  revision, so the client needs no ordering protocol. `task.recordSent` requires
+  `contextRevisions` and stores them in `text_task.sent_context`, which detects
+  removed context that per-row revisions could not. Pre-v14 sends read as sent
+  with no context. The migration is v14, not the planned v15, because the staged
+  web-preview v14 has not landed.
+
 ### Backup and restore fixes (2026-10-28)
 
 - Give restored MCP servers fresh identities and remap their tools in the restore
