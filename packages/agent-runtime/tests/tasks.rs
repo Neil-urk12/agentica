@@ -159,7 +159,7 @@ fn task_lifecycle_assignment_send_record_and_conflicts() {
         .clone();
     assert_eq!(
         task,
-        json!({"done":false,"assignedTileId":null,"sentAt":null,"sentRevision":null,"revision":1})
+        json!({"done":false,"assignedTileId":null,"sentAt":null,"sentRevision":null,"revision":1,"context":[],"sentContext":null})
     );
     // Marking changes neither the canvas nor the text.
     assert_eq!(canvas.revision(&mut runtime), canvas_revision);
@@ -196,7 +196,7 @@ fn task_lifecycle_assignment_send_record_and_conflicts() {
 
     let record = |tile: &Value, expected: i64, text: i64| {
         canvas.params(
-            json!({"nodeId":node,"expectedRevision":expected,"tileId":tile,"textRevision":text}),
+            json!({"nodeId":node,"expectedRevision":expected,"tileId":tile,"textRevision":text,"contextRevisions":[]}),
         )
     };
     assert_eq!(
@@ -209,6 +209,7 @@ fn task_lifecycle_assignment_send_record_and_conflicts() {
     );
     let sent = ok(&mut runtime, "task.recordSent", record(&codex, 2, 1))["task"].clone();
     assert_eq!(sent["sentRevision"], 1);
+    assert_eq!(sent["sentContext"], json!([]));
     assert!(sent["sentAt"].as_str().unwrap().ends_with('Z'));
 
     // Text edits bump only the text; the task keeps its revision and sent record.
@@ -241,7 +242,7 @@ fn task_lifecycle_assignment_send_record_and_conflicts() {
     let cleared = ok(&mut runtime, "task.update", update(Value::Null, 5))["task"].clone();
     assert_eq!(
         cleared,
-        json!({"done":true,"assignedTileId":null,"sentAt":null,"sentRevision":null,"revision":6})
+        json!({"done":true,"assignedTileId":null,"sentAt":null,"sentRevision":null,"revision":6,"context":[],"sentContext":null})
     );
 
     // Unmarking removes everything; re-marking starts fresh.
@@ -409,4 +410,288 @@ fn agent_reads_carry_no_task_fields() {
         canvas.params(json!({"turnId":turn,"nodeIds":[node]})),
     );
     assert!(!read.to_string().contains("\"task\""), "{read}");
+}
+
+impl Canvas {
+    /// A file node with the given MIME type and extracted text.
+    fn file(&self, runtime: &mut Runtime, name: &str, mime: &str, text: &str) -> Value {
+        let upload = ok(
+            runtime,
+            "file.begin",
+            self.params(json!({"name":name,"mime":mime,"size":1,"text":text})),
+        )["uploadId"]
+            .clone();
+        ok(
+            runtime,
+            "file.chunk",
+            json!({"workspaceId":self.workspace,"uploadId":upload,"offset":0,"data":"eA=="}),
+        );
+        let revision = self.revision(runtime);
+        ok(runtime, "file.finish", self.params(json!({"expectedRevision":revision,"uploadId":upload,"x":0,"y":0,"width":200,"height":200})))["node"]["id"].clone()
+    }
+    fn marked(&self, runtime: &mut Runtime, text: &str) -> (Value, Value) {
+        let (node, artifact) = self.text(runtime, text);
+        ok(
+            runtime,
+            "task.set",
+            self.params(json!({"nodeId":node,"enabled":true})),
+        );
+        (node, artifact)
+    }
+    fn set_context(&self, runtime: &mut Runtime, node: &Value, context: Value) -> Value {
+        let revision = self.task(runtime, node)["revision"].clone();
+        ok(
+            runtime,
+            "task.update",
+            self.params(
+                json!({"nodeId":node,"expectedRevision":revision,"contextNodeIds":context}),
+            ),
+        )["task"]
+            .clone()
+    }
+    fn context(&self, runtime: &mut Runtime, node: &Value) -> Value {
+        self.task(runtime, node)["context"].clone()
+    }
+}
+
+fn context_rows(data: &tempfile::TempDir, workspace: &Value) -> i64 {
+    let path = data
+        .path()
+        .join("workspaces")
+        .join(workspace.as_str().unwrap())
+        .join("workspace.sqlite3");
+    rusqlite::Connection::open(path)
+        .unwrap()
+        .query_row("SELECT count(*) FROM task_context", [], |row| row.get(0))
+        .unwrap()
+}
+
+#[test]
+fn task_context_accepts_notes_and_text_files_only() {
+    let (_data, _project, mut runtime, canvas) = setup();
+    let (task, task_artifact) = canvas.marked(&mut runtime, "Build the parser");
+    let (note, _) = canvas.text(&mut runtime, "Acceptance criteria");
+    let pdf = canvas.file(&mut runtime, "spec.pdf", "application/pdf", "The grammar");
+    let image = canvas.file(&mut runtime, "shot.png", "image/png", "");
+    let image_with_text = canvas.file(&mut runtime, "captioned.png", "image/png", "Supplied text");
+    let revision = canvas.revision(&mut runtime);
+    let drawing = ok(&mut runtime, "node.createDrawing", canvas.params(json!({"expectedRevision":revision,"x":0,"y":0,"width":100,"height":100,"drawing":{"shapes":[{"kind":"rectangle","x":0,"y":0,"width":10,"height":10,"color":"#123456"}]}})))["node"]["id"].clone();
+    let other = Canvas::new(&mut runtime, &canvas.workspace);
+    let (elsewhere, _) = other.text(&mut runtime, "Other canvas");
+    let canvas_revision = canvas.revision(&mut runtime);
+
+    let attached = canvas.set_context(&mut runtime, &task, json!([note, pdf]));
+    assert_eq!(attached["context"], json!([{"nodeId":note},{"nodeId":pdf}]));
+    assert_eq!(attached["revision"], 2);
+    // The text, its revision, and the canvas are untouched.
+    assert_eq!(canvas.revision(&mut runtime), canvas_revision);
+    let state = canvas.state(&mut runtime);
+    let artifact = state["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == task_artifact)
+        .unwrap();
+    assert_eq!(artifact["revision"], 1);
+    assert_eq!(state["edges"], json!([]));
+
+    let update = |context: Value, expected: i64| {
+        canvas.params(json!({"nodeId":task,"expectedRevision":expected,"contextNodeIds":context}))
+    };
+    let missing = json!("00000000-0000-4000-8000-0000000000aa");
+    let nine: Vec<String> = (0..9)
+        .map(|i| format!("00000000-0000-4000-8000-00000000000{i}"))
+        .collect();
+    for (context, expected) in [
+        (json!([image]), "INVALID_PARAMS"),
+        (json!([image_with_text]), "INVALID_PARAMS"),
+        (json!([drawing]), "INVALID_PARAMS"),
+        (json!([task]), "INVALID_PARAMS"),
+        (json!([note, note]), "INVALID_PARAMS"),
+        (json!(nine), "INVALID_PARAMS"),
+        (json!([elsewhere]), "NOT_FOUND"),
+        (json!([missing]), "NOT_FOUND"),
+    ] {
+        assert_eq!(
+            code(&mut runtime, "task.update", update(context.clone(), 2)),
+            expected,
+            "{context}"
+        );
+        assert_eq!(canvas.task(&mut runtime, &task), attached);
+    }
+    assert_eq!(
+        code(&mut runtime, "task.update", update(json!([pdf]), 1)),
+        "CONFLICT"
+    );
+    assert_eq!(
+        canvas.context(&mut runtime, &task),
+        json!([{"nodeId":note},{"nodeId":pdf}])
+    );
+    let cleared = canvas.set_context(&mut runtime, &task, json!([]));
+    assert_eq!(cleared["context"], json!([]));
+}
+
+#[test]
+fn record_sent_checks_the_context_that_was_sent() {
+    let (_data, project, mut runtime, canvas) = setup();
+    let group = canvas.project(&mut runtime, project.path());
+    let codex = canvas.tile(&mut runtime, &group, "cli-agent", 16.0);
+    let (task, _) = canvas.marked(&mut runtime, "Task");
+    let (first, first_artifact) = canvas.text(&mut runtime, "First");
+    let pdf = canvas.file(&mut runtime, "spec.pdf", "application/pdf", "Spec");
+    ok(
+        &mut runtime,
+        "task.update",
+        canvas.params(json!({"nodeId":task,"expectedRevision":1,"assignedTileId":codex})),
+    );
+    canvas.set_context(&mut runtime, &task, json!([first, pdf]));
+    let record = |context: Value, expected: i64| {
+        canvas.params(json!({"nodeId":task,"expectedRevision":expected,"tileId":codex,"textRevision":1,"contextRevisions":context}))
+    };
+    let sent = json!([{"nodeId":first,"revision":1},{"nodeId":pdf,"revision":1}]);
+    let reordered = json!([{"nodeId":pdf,"revision":1},{"nodeId":first,"revision":1}]);
+    for context in [json!([]), reordered, json!([{"nodeId":first,"revision":1}])] {
+        assert_eq!(
+            code(&mut runtime, "task.recordSent", record(context.clone(), 3)),
+            "CONFLICT",
+            "{context}"
+        );
+    }
+    let recorded = ok(&mut runtime, "task.recordSent", record(sent.clone(), 3))["task"].clone();
+    assert_eq!(recorded["sentContext"], sent);
+
+    // An edited context note no longer matches what was sent.
+    ok(
+        &mut runtime,
+        "artifact.saveText",
+        json!({"workspaceId":canvas.workspace,"artifactId":first_artifact,"expectedRevision":1,"text":"First, edited"}),
+    );
+    assert_eq!(
+        code(&mut runtime, "task.recordSent", record(sent.clone(), 4)),
+        "CONFLICT"
+    );
+    // A removed context node no longer matches either.
+    canvas.set_context(&mut runtime, &task, json!([pdf]));
+    assert_eq!(
+        code(
+            &mut runtime,
+            "task.recordSent",
+            record(
+                json!([{"nodeId":first,"revision":2},{"nodeId":pdf,"revision":1}]),
+                5
+            )
+        ),
+        "CONFLICT"
+    );
+    // The stored record stays until the assignee changes.
+    assert_eq!(canvas.task(&mut runtime, &task)["sentContext"], sent);
+    let cleared = ok(
+        &mut runtime,
+        "task.update",
+        canvas.params(json!({"nodeId":task,"expectedRevision":5,"assignedTileId":null})),
+    )["task"]
+        .clone();
+    assert_eq!(cleared["sentContext"], Value::Null);
+    assert_eq!(cleared["context"], json!([{"nodeId":pdf}]));
+}
+
+#[test]
+fn deleting_context_or_tasks_cleans_up_context_rows() {
+    let (data, _project, mut runtime, canvas) = setup();
+    let (first, _) = canvas.marked(&mut runtime, "First task");
+    let (second, _) = canvas.marked(&mut runtime, "Second task");
+    let (shared, _) = canvas.text(&mut runtime, "Shared note");
+    let (kept, _) = canvas.text(&mut runtime, "Kept note");
+    let (extra, _) = canvas.text(&mut runtime, "Extra note");
+    canvas.set_context(&mut runtime, &first, json!([shared, kept]));
+    canvas.set_context(&mut runtime, &second, json!([shared, extra]));
+
+    // Saving the layout leaves the lists alone.
+    let state = canvas.state(&mut runtime);
+    let nodes: Vec<Value> = state["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(
+            |n| json!({"id":n["id"],"x":n["x"],"y":n["y"],"width":n["width"],"height":n["height"]}),
+        )
+        .collect();
+    ok(&mut runtime, "canvas.save", canvas.params(json!({"expectedRevision":state["canvas"]["revision"],"viewport":{"x":0,"y":0,"zoom":1},"nodes":nodes})));
+    assert_eq!(context_rows(&data, &canvas.workspace), 4);
+
+    let revision = canvas.revision(&mut runtime);
+    ok(
+        &mut runtime,
+        "node.delete",
+        canvas.params(json!({"expectedRevision":revision,"nodeId":shared})),
+    );
+    assert_eq!(
+        canvas.context(&mut runtime, &first),
+        json!([{"nodeId":kept}])
+    );
+    assert_eq!(
+        canvas.context(&mut runtime, &second),
+        json!([{"nodeId":extra}])
+    );
+    let revision = canvas.revision(&mut runtime);
+    ok(
+        &mut runtime,
+        "node.deleteMany",
+        canvas.params(json!({"expectedRevision":revision,"nodeIds":[extra]})),
+    );
+    assert_eq!(canvas.context(&mut runtime, &second), json!([]));
+    assert_eq!(canvas.task(&mut runtime, &second)["revision"], 2);
+
+    // Unmarking or deleting the task removes its rows but not the context node.
+    ok(
+        &mut runtime,
+        "task.set",
+        canvas.params(json!({"nodeId":first,"enabled":false})),
+    );
+    assert_eq!(context_rows(&data, &canvas.workspace), 0);
+    let (third, _) = canvas.marked(&mut runtime, "Third task");
+    canvas.set_context(&mut runtime, &third, json!([kept]));
+    let revision = canvas.revision(&mut runtime);
+    ok(
+        &mut runtime,
+        "node.delete",
+        canvas.params(json!({"expectedRevision":revision,"nodeId":third})),
+    );
+    assert_eq!(context_rows(&data, &canvas.workspace), 0);
+    assert!(canvas.state(&mut runtime)["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|n| n["id"] == kept));
+
+    canvas.set_context(&mut runtime, &second, json!([kept]));
+    ok(
+        &mut runtime,
+        "canvas.delete",
+        json!({"workspaceId":canvas.workspace,"canvasId":canvas.id}),
+    );
+    assert_eq!(context_rows(&data, &canvas.workspace), 0);
+}
+
+#[test]
+fn agent_reads_carry_no_task_context() {
+    let (_data, _project, mut runtime, canvas) = setup();
+    let (task, _) = canvas.marked(&mut runtime, "Task");
+    let (note, _) = canvas.text(&mut runtime, "Context");
+    canvas.set_context(&mut runtime, &task, json!([note]));
+    let turn = "00000000-0000-4000-8000-000000000001";
+    let started = ok(&mut runtime, "conversation.start", canvas.params(json!({"turnId":turn,"prompt":"Help","model":"openrouter/free","nodeIds":[task, note],"anchor":{"x":5000,"y":0}})));
+    let read = ok(
+        &mut runtime,
+        "conversation.read",
+        canvas.params(json!({"turnId":turn,"nodeIds":[task, note]})),
+    );
+    for reply in [started, read] {
+        let reply = reply.to_string();
+        assert!(reply.contains("Context"), "{reply}");
+        assert!(
+            !reply.contains("\"task\"") && !reply.contains("sentContext"),
+            "{reply}"
+        );
+    }
 }

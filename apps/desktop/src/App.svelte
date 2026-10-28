@@ -38,9 +38,14 @@
   } from "./lib/runtime";
   import {
     MAX_TASK_BYTES,
+    contextChangedSinceSent,
+    contextLabel,
+    contextText,
     editedSinceSent,
+    largestParts,
     sendBlocker,
     taskPayload,
+    type TaskContextItem,
   } from "./lib/tasks";
   import { clock } from "./lib/clock.svelte";
   import { Editor, type DrawingSegment } from "./lib/editor";
@@ -182,15 +187,20 @@
         label: string;
         text: string;
         revision: number;
+        context: TaskContextItem[];
       } & ReturnType<typeof taskPayload>)
     | null
   >(null);
   let taskBusy = $state("");
   let taskErrors = $state.raw<Record<string, string>>({});
+  type SentTask = {
+    tileId: string;
+    label: string;
+    revision: number;
+    context: { nodeId: string; revision: number }[];
+  };
   // Pastes that succeeded but whose sent record failed; kept for retry.
-  let unrecorded = $state.raw<
-    Record<string, { tileId: string; label: string; revision: number }>
-  >({});
+  let unrecorded = $state.raw<Record<string, SentTask>>({});
   const hasSentTask = $derived(
     !!editorState.document?.nodes.some((node) => node.task?.sentAt),
   );
@@ -1269,11 +1279,22 @@
         else tilesByProject.set(tile.projectId, [tile]);
       }
       const assignable = agentTiles();
+      const nodeArtifact = new Map(
+        (document?.nodes ?? []).map(
+          (item) => [item.id, artifactsById.get(item.artifactId)] as const,
+        ),
+      );
       const taskData = (
         node: NonNullable<typeof document>["nodes"][number],
         revision: number,
       ) => {
         const task = node.task ?? null;
+        const context = task?.context ?? [];
+        const listed = new Set(context.map((item) => item.nodeId));
+        const setContext = (contextNodeIds: string[]) =>
+          void taskAction(node.id, () =>
+            editor.updateTask(node.id, { contextNodeIds }),
+          );
         const target = assignable.find((t) => t.id === task?.assignedTileId);
         const view = target ? sessions.view(agentOwner(target.id)) : null;
         const status = view?.status ?? null;
@@ -1287,6 +1308,32 @@
               ? ""
               : `Sent ${waitedLabel(sentAt, clock.now)}${task?.assignedTileId ? "" : " to a removed agent"}`,
           edited: editedSinceSent(task, revision),
+          contextChanged: contextChangedSinceSent(
+            task,
+            (id) => nodeArtifact.get(id)?.revision,
+          ),
+          context: context.map(({ nodeId }) => {
+            const artifact = nodeArtifact.get(nodeId);
+            return {
+              id: nodeId,
+              label: artifact ? contextLabel(artifact) : "Missing node",
+            };
+          }),
+          contextOptions: (document?.nodes ?? []).flatMap((item) => {
+            const artifact = nodeArtifact.get(item.id);
+            return item.id !== node.id &&
+              !listed.has(item.id) &&
+              artifact &&
+              contextText(artifact) !== null
+              ? [{ id: item.id, label: contextLabel(artifact) }]
+              : [];
+          }),
+          onAddContext: (id: string) =>
+            setContext([...context.map((item) => item.nodeId), id]),
+          onRemoveContext: (id: string) =>
+            setContext(
+              context.map((item) => item.nodeId).filter((item) => item !== id),
+            ),
           // Live hint only; never stored and never changes done.
           attention:
             target && status?.attention.raised
@@ -1616,6 +1663,18 @@
               ]
             : [];
         }),
+        // Derived context wires: drawn from the task's context list only.
+        ...(document?.nodes ?? []).flatMap((node) =>
+          (node.task?.context ?? []).map(({ nodeId }) => ({
+            id: `task-context-wire-${node.id}-${nodeId}`,
+            source: nodeId,
+            target: node.id,
+            class: "task-context-wire",
+            selectable: false,
+            focusable: false,
+            deletable: false,
+          })),
+        ),
       ];
       const pending = turns.find((t) => t.status === "pending");
       if (document && pending) {
@@ -2217,13 +2276,15 @@
       );
       if (!target) throw new Error("Assign an agent tile to send this task.");
       const { text, revision } = await editor.settledText(nodeId);
+      const context = await editor.settledContext(nodeId);
       taskSend = {
         nodeId,
         tileId: target.id,
         label: target.label,
         text,
         revision,
-        ...taskPayload(text),
+        context,
+        ...taskPayload(text, context),
       };
     });
   }
@@ -2240,13 +2301,15 @@
     sessions.focus(agentOwner(tileId));
   }
 
-  async function recordTaskSend(
-    nodeId: string,
-    sent: { tileId: string; label: string; revision: number },
-    retry = false,
-  ) {
+  async function recordTaskSend(nodeId: string, sent: SentTask, retry = false) {
     try {
-      await editor.recordSent(nodeId, sent.tileId, sent.revision, retry);
+      await editor.recordSent(
+        nodeId,
+        sent.tileId,
+        sent.revision,
+        retry,
+        sent.context,
+      );
       const { [nodeId]: _, ...rest } = unrecorded;
       unrecorded = rest;
     } catch (error) {
@@ -2280,7 +2343,15 @@
       } finally {
         taskSend = null;
       }
-      await recordTaskSend(send.nodeId, send);
+      await recordTaskSend(send.nodeId, {
+        tileId: send.tileId,
+        label: send.label,
+        revision: send.revision,
+        context: send.context.map(({ nodeId, revision }) => ({
+          nodeId,
+          revision,
+        })),
+      });
       const tile = agentTiles().find((t) => t.id === send.tileId);
       if (tile) {
         // The send dialog fades out for 180ms and its teardown retakes
@@ -2300,18 +2371,32 @@
     }
   }
 
-  // The preview is only valid for the text and assignee it showed.
+  // The preview is only valid for the text, context, and assignee it showed.
   $effect(() => {
     const send = taskSend;
     const document = editorState.document;
     if (!send) return;
+    const artifactOf = (nodeId: string) => {
+      const node = document?.nodes.find((n) => n.id === nodeId);
+      return document?.artifacts.find((a) => a.id === node?.artifactId);
+    };
     const node = document?.nodes.find((n) => n.id === send.nodeId);
-    const artifact = document?.artifacts.find((a) => a.id === node?.artifactId);
+    const artifact = artifactOf(send.nodeId);
+    const context = node?.task?.context ?? [];
     if (
       artifact?.type !== "text" ||
       artifact.revision !== send.revision ||
       artifact.text !== send.text ||
-      node?.task?.assignedTileId !== send.tileId
+      node?.task?.assignedTileId !== send.tileId ||
+      context.length !== send.context.length ||
+      send.context.some((item, index) => {
+        const current = artifactOf(item.nodeId);
+        return (
+          context[index]?.nodeId !== item.nodeId ||
+          current?.revision !== item.revision ||
+          contextText(current) !== item.text
+        );
+      })
     ) {
       taskSend = null;
       untrack(() =>
@@ -2571,10 +2656,21 @@
     }}
   >
     <pre class="task-preview" aria-label="Text to paste">{send.payload}</pre>
+    {#if send.sections.length}
+      <ul class="task-preview-sizes" aria-label="Context sizes">
+        {#each send.sections as section (section.nodeId)}
+          <li>
+            Context: {section.label} — {section.bytes.toLocaleString()} bytes
+          </li>
+        {/each}
+      </ul>
+    {/if}
     <p class:card-error={!send.fits} role={send.fits ? undefined : "alert"}>
       {send.bytes.toLocaleString()} of {MAX_TASK_BYTES.toLocaleString()} bytes{send.fits
         ? ""
-        : " — too large to paste. Shorten the text, then retry."}
+        : send.sections.length
+          ? ` — too large to paste. Largest parts: ${largestParts(send).join(", ")}. Remove context or shorten the text, then retry.`
+          : " — too large to paste. Shorten the text, then retry."}
     </p>
     {#if send.empty}<p role="alert">There is no text to send.</p>{/if}
     <div class="project-dialog-actions">

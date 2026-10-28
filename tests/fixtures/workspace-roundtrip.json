@@ -612,14 +612,55 @@
       "error": "CONFLICT"
     },
     {
-      "method": "task.recordSent",
+      "method": "task.update",
       "params": {
         "workspaceId": "$workspaceId",
         "canvasId": "$canvasId",
         "nodeId": "$firstNode",
         "expectedRevision": 2,
+        "contextNodeIds": ["$drawingNode"]
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "task.update",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "nodeId": "$firstNode",
+        "expectedRevision": 2,
+        "contextNodeIds": ["$firstNode"]
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
+      "method": "task.update",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "nodeId": "$firstNode",
+        "expectedRevision": 2,
+        "contextNodeIds": ["$secondNode"]
+      },
+      "expect": {
+        "task": {
+          "done": true,
+          "revision": 3,
+          "context": [{ "nodeId": "$secondNode" }],
+          "sentContext": null
+        }
+      }
+    },
+    {
+      "method": "task.recordSent",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "canvasId": "$canvasId",
+        "nodeId": "$firstNode",
+        "expectedRevision": 3,
         "tileId": "00000000-0000-4000-8000-0000000000ff",
-        "textRevision": 2
+        "textRevision": 2,
+        "contextRevisions": []
       },
       "error": "CONFLICT"
     },
@@ -692,7 +733,9 @@
               "assignedTileId": null,
               "sentAt": null,
               "sentRevision": null,
-              "revision": 2
+              "revision": 3,
+              "context": [{ "nodeId": "$secondNode" }],
+              "sentContext": null
             }
           },
           {

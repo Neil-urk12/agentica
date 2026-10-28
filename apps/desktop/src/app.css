@@ -2275,7 +2275,31 @@ button.card-more {
   accent-color: var(--accent);
 }
 
-.task-assignee {
+.task-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--type-meta);
+}
+
+.task-context-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 12rem;
+  padding-left: 6px;
+  border: 1px dashed var(--card-line);
+  border-radius: 6px;
+}
+
+.task-context-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-assignee,
+.task-context-add {
   min-width: 0;
   max-width: 14rem;
   min-height: 28px;
@@ -2313,6 +2337,13 @@ button.card-more {
   color: var(--warn);
 }
 
+.task-preview-sizes {
+  margin: 0;
+  padding-left: 1.25rem;
+  font-size: var(--type-meta);
+  color: var(--muted);
+}
+
 .task-preview {
   max-height: 40vh;
   overflow: auto;
@@ -2332,6 +2363,11 @@ button.card-more {
 .svelte-flow__edge.task-wire path {
   stroke: var(--accent);
   stroke-dasharray: 6 4;
+}
+
+.svelte-flow__edge.task-context-wire path {
+  stroke: var(--muted);
+  stroke-dasharray: 2 4;
 }
 
 .handles-hidden .svelte-flow__handle,
