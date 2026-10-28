@@ -53,6 +53,39 @@ const Label = z
   .max(LIMITS.label)
   .refine((value) => value.trim().length > 0, "Must not be blank");
 const Text = z.string().max(LIMITS.text);
+export function isLocalPreviewUrl(value: string): boolean {
+  if (
+    value.length > 2048 ||
+    [...value].some((char) => {
+      const code = char.charCodeAt(0);
+      return code < 32 || (code >= 127 && code <= 159) || char === "\\";
+    })
+  )
+    return false;
+  const match = value.match(
+    /^[hH][tT][tT][pP][sS]?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::([0-9]+))?(?=[/?#]|$)/,
+  );
+  if (!match || (match[2] !== undefined && Number(match[2]) > 65535))
+    return false;
+  try {
+    const parsed = new URL(value);
+    return parsed.hostname === match[1] && !parsed.username && !parsed.password;
+  } catch {
+    return false;
+  }
+}
+const PreviewUrl = z
+  .string()
+  .max(2048)
+  .refine(isLocalPreviewUrl, "Enter a local HTTP(S) URL without credentials");
+// Keep stored IPv6 URLs readable, but current frame policies cannot embed them.
+export function isSupportedPreviewUrl(value: string): boolean {
+  return isLocalPreviewUrl(value) && new URL(value).hostname !== "[::1]";
+}
+const SupportedPreviewUrl = PreviewUrl.refine(
+  isSupportedPreviewUrl,
+  "Use localhost or 127.0.0.1; IPv6 previews are not supported",
+);
 const Revision = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
 const Coordinate = z.number().min(-LIMITS.coordinate).max(LIMITS.coordinate);
 const Size = z.number().min(LIMITS.minSize).max(LIMITS.maxSize);
@@ -763,6 +796,18 @@ const ParamSchemas = {
     ...Geometry,
     drawing: DrawingSchema,
   }),
+  "node.createWebPreview": z.strictObject({
+    ...CanvasRef,
+    expectedRevision: Revision,
+    ...Geometry,
+    url: SupportedPreviewUrl,
+  }),
+  "artifact.saveWebPreview": z.strictObject({
+    ...WorkspaceRef,
+    artifactId: IdSchema,
+    expectedRevision: Revision,
+    url: SupportedPreviewUrl,
+  }),
   // Binary content is copied in bounded chunks, then finished in one atomic
   // transaction that places the node and bumps the canvas revision.
   "file.begin": z.strictObject({
@@ -938,7 +983,20 @@ export const FileArtifactSchema = z.strictObject({
   size: z.number().int().min(0).max(FILE_LIMITS.maxBytes),
   text: z.string().max(FILE_LIMITS.text),
 });
+export const WebPreviewArtifactSchema = z.strictObject({
+  id: IdSchema,
+  type: z.literal("web-preview"),
+  schemaVersion: z.literal(1),
+  revision: Revision,
+  url: PreviewUrl,
+});
 export const ArtifactSchema = z.discriminatedUnion("type", [
+  TextArtifactSchema,
+  DrawingArtifactSchema,
+  FileArtifactSchema,
+  WebPreviewArtifactSchema,
+]);
+const AgentArtifactSchema = z.discriminatedUnion("type", [
   TextArtifactSchema,
   DrawingArtifactSchema,
   FileArtifactSchema,
@@ -996,7 +1054,7 @@ export const ResultSchemas = {
     context: z.strictObject({
       nodes: z.array(NodeSchema),
       edges: z.array(EdgeSchema),
-      artifacts: z.array(ArtifactSchema),
+      artifacts: z.array(AgentArtifactSchema),
     }),
     outline: OutlineSchema,
     history: z
@@ -1014,7 +1072,7 @@ export const ResultSchemas = {
   "conversation.read": z.strictObject({
     nodes: z.array(NodeSchema).max(CONVERSATION_READ.nodes),
     edges: z.array(EdgeSchema),
-    artifacts: z.array(ArtifactSchema).max(CONVERSATION_READ.nodes),
+    artifacts: z.array(AgentArtifactSchema).max(CONVERSATION_READ.nodes),
     remaining: z.strictObject({
       reads: z.number().int().nonnegative(),
       bytes: z.number().int().nonnegative(),
@@ -1123,6 +1181,14 @@ export const ResultSchemas = {
     revision: Revision,
     node: NodeSchema,
     artifact: DrawingArtifactSchema,
+  }),
+  "node.createWebPreview": z.strictObject({
+    revision: Revision,
+    node: NodeSchema,
+    artifact: WebPreviewArtifactSchema,
+  }),
+  "artifact.saveWebPreview": z.strictObject({
+    artifact: WebPreviewArtifactSchema,
   }),
   "file.begin": z.strictObject({ uploadId: IdSchema }),
   "file.chunk": z.strictObject({ received: z.number().int().min(0) }),

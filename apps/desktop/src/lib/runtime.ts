@@ -12,6 +12,7 @@ import {
 } from "@agentica/protocol";
 
 export const desktopMode = isTauri();
+export const BACKEND_ORIGIN = "http://127.0.0.1:1421";
 
 /** A runtime error; `code` is absent for transport and validation failures. */
 export class RuntimeCallError extends Error {
@@ -53,7 +54,7 @@ export async function callRuntime<M extends RuntimeMethod>(
   if (desktopMode) {
     reply = await invoke("runtime_request", { request, connect });
   } else {
-    const response = await fetch("http://127.0.0.1:1421/rpc", {
+    const response = await fetch(`${BACKEND_ORIGIN}/rpc`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

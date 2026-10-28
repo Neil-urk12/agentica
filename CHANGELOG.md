@@ -12,6 +12,25 @@ build the installers and publish the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Local web previews (2026-10-28)
+
+- Reject IPv6 preview creation and edits because supported frame policies cannot
+  embed IPv6 literals. Preserve existing records and backups, showing those
+  previews as unavailable until their URL is changed.
+- Keep submitted preview URL drafts in the editor's save/recovery flow. Retry
+  failed writes and reconcile lost acknowledgements without overwriting remote
+  changes or navigating the frame before the saved URL is acknowledged.
+- Add a separate preview configuration store and extend the artifact type through
+  a migration (storage v15) that preserves existing canvas content and placement.
+- Keep preview URLs out of agent context and use a sandboxed frame without a
+  privileged proxy. Enabled in normal builds after the hostile fixture passed in
+  the desktop webview (WebKitGTK 2.54.1, Fedora 44 on WSL) and headless
+  Chromium 155.
+- Restart the loading indicator only when the saved URL changes; canvas
+  re-renders previously re-armed it without reloading the frame.
+- Validate preview destinations with the existing URL parser dependency so the
+  runtime checks parsed hosts as well as the user-supplied authority.
+
 ### Task context (2026-10-28)
 
 - Let a task list up to 8 context nodes on its canvas: other notes, or files with

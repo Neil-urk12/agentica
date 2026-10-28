@@ -5,6 +5,7 @@ How to use each Agentica feature. To install and start the app, see
 
 - [Canvas basics](#canvas-basics)
 - [Canvas files](#canvas-files)
+- [Local web previews](#local-web-previews)
 - [Canvas conversation](#canvas-conversation)
 - [Tools from MCP servers](#tools-from-mcp-servers)
 - [Projects and native sessions](#projects-and-native-sessions)
@@ -73,6 +74,31 @@ agent when the file node is selected, exactly like note text. File bytes are
 never included in canvas context or a provider prompt; select the node to attach
 its extracted text to the next request. Images and scanned PDFs without a text
 layer contribute no text. The canvas agent cannot create or upload files itself.
+
+## Local web previews
+
+Start your app separately, then use **Canvas tools > Add local web preview** and
+enter its local HTTP(S) URL. Accepted hosts are `localhost` and `127.0.0.1`;
+paths, queries, fragments, and valid ports are supported. IPv6 literals such as
+`[::1]` are not supported by the preview's embedding policy. Previously saved
+IPv6 previews remain available for URL editing but do not load. Agentica's
+own active UI and runtime endpoints cannot be previewed. Each tile saves its
+URL and canvas layout, and reopening the canvas loads it automatically.
+
+Use the header to move, reload, expand, or remove a tile. Submit a URL edit to
+save it; a failed save keeps the draft and the last acknowledged page URL.
+Use the tile's **Save** or the error banner's **Retry save** to retry. A genuine
+conflict preserves your draft for **Copy edits** without overwriting newer data.
+Reload returns to the saved URL, even
+after navigation inside the app. If a page does not appear, check that its
+server is running and permits embedding, then select **Reload**. Some apps
+require popups or browser features the preview does not provide.
+
+The preview runs on the frontend machine and connects directly to the app.
+Agentica does not start or stop the server, and preview configuration and page
+content are excluded from canvas-agent context. Local scripts retain their own
+origin and network access. Tested environments and remaining checks are listed
+in [local web preview validation](development/local-web-preview-validation.md).
 
 ## Canvas conversation
 

@@ -1,0 +1,20 @@
+[
+  {
+    "url": "http://localhost:5173/settings?mode=preview#details",
+    "valid": true
+  },
+  { "url": "http://127.0.0.1/", "valid": true },
+  { "url": "https://[::1]:443/", "valid": true },
+  { "url": "http://localhost", "valid": true },
+  { "url": "HTTP://localhost/path", "valid": true },
+  { "url": "http://localhost:80/", "valid": true },
+  { "url": "http://localhost:", "valid": false },
+  { "url": "http://localhost:65536", "valid": false },
+  { "url": "http://user@localhost/", "valid": false },
+  { "url": "http://127.1/", "valid": false },
+  { "url": "http://0x7f000001/", "valid": false },
+  { "url": "http://localhost.evil/", "valid": false },
+  { "url": "http://192.168.1.1/", "valid": false },
+  { "url": "file://localhost/a", "valid": false },
+  { "url": "http://localhost\\@evil/", "valid": false }
+]

@@ -1,5 +1,6 @@
 import {
   FILE_LIMITS,
+  LIMITS,
   MAX_FRAME_BYTES,
   MAX_IDS,
   type Drawing,
@@ -87,6 +88,7 @@ function withoutContext<T extends { task?: Task | null }>(
 /** Comparable content, so unsaved work is detected for text and drawings alike. */
 function content(artifact: Artifact): string {
   if (artifact.type === "text") return artifact.text;
+  if (artifact.type === "web-preview") return artifact.url;
   if (artifact.type === "file")
     return JSON.stringify([
       artifact.name,
@@ -1656,6 +1658,99 @@ export class Editor {
     return created;
   }
 
+  /** Only acknowledged URLs may navigate a live frame, even while a draft is dirty. */
+  savedWebPreviewUrl(artifactId: string): string | undefined {
+    return this.savedArtifacts.get(artifactId);
+  }
+
+  async saveWebPreview(artifactId: string, url: string): Promise<boolean> {
+    let saved = false;
+    await this.enqueue(async () => {
+      await this.settleSave();
+      if (this.state.busy || this.disposed) return;
+      const document = this.state.document;
+      const artifact = document?.artifacts.find(
+        (item) => item.id === artifactId,
+      );
+      if (
+        !document ||
+        !this.state.workspace ||
+        artifact?.type !== "web-preview"
+      )
+        return;
+      this.publish({
+        document: {
+          ...document,
+          artifacts: document.artifacts.map((item) =>
+            item.id === artifactId ? { ...artifact, url } : item,
+          ),
+        },
+      });
+      if (this.state.error) await this.retrySave();
+      else await this.save();
+      saved = !this.state.error && this.savedArtifacts.get(artifactId) === url;
+    });
+    return saved;
+  }
+
+  async addWebPreview(
+    url: string,
+  ): Promise<RuntimeResult<"node.createWebPreview"> | undefined> {
+    let created: RuntimeResult<"node.createWebPreview"> | undefined;
+    await this.enqueue(async () => {
+      await this.settleSave();
+      // Only an unsaved draft blocks; a rejected create must not block a retry.
+      if ((this.state.dirty && this.state.error) || this.disposed) return;
+      await this.mutation(async () => {
+        const document = this.state.document;
+        const workspaceId = this.state.workspace?.workspace.id;
+        if (!document || !workspaceId) return;
+        const { x, y, zoom } = document.canvas.viewport;
+        let left = (40 - x) / zoom;
+        const top = (40 - y) / zoom;
+        const occupied = [...document.nodes, ...(document.projectGroups ?? [])];
+        for (let attempts = 0; attempts <= occupied.length; attempts++) {
+          const overlap = occupied.find(
+            (item) =>
+              item.x < left + 640 &&
+              item.x + item.width > left &&
+              item.y < top + 480 &&
+              item.y + item.height > top,
+          );
+          if (!overlap) break;
+          left = overlap.x + overlap.width + 32;
+          if (left > LIMITS.coordinate)
+            throw new Error(
+              "There is no room for a preview here. Pan to an open area and retry.",
+            );
+        }
+        const result = await this.call(
+          this.key(),
+          false,
+          "node.createWebPreview",
+          {
+            workspaceId,
+            canvasId: document.canvas.id,
+            expectedRevision: document.canvas.revision,
+            x: left,
+            y: top,
+            width: 640,
+            height: 480,
+            url,
+          },
+        );
+        created = result;
+        this.load({
+          ...document,
+          canvas: { ...document.canvas, revision: result.revision },
+          nodes: [...document.nodes, { ...result.node, task: null }],
+          artifacts: [...document.artifacts, result.artifact],
+        });
+      });
+    });
+    return created;
+  }
+
   editText(artifactId: string, text: string) {
     const document = this.state.document;
     if (!document || this.state.busy) return;
@@ -2006,21 +2101,27 @@ export class Editor {
         for (const artifact of document.artifacts) {
           if (content(artifact) === this.savedArtifacts.get(artifact.id))
             continue;
-          // Drawings are immutable once created; only text content is edited.
-          if (artifact.type !== "text") continue;
-          this.attemptedArtifacts.set(artifact.id, artifact.text);
-          const result = await this.call(
-            this.key(),
-            false,
-            "artifact.saveText",
-            {
-              workspaceId,
-              artifactId: artifact.id,
-              expectedRevision: artifact.revision,
-              text: artifact.text,
-            },
-          );
-          this.savedArtifacts.set(artifact.id, artifact.text);
+          // Drawings and files are immutable once created.
+          if (artifact.type !== "text" && artifact.type !== "web-preview")
+            continue;
+          const value = content(artifact);
+          this.attemptedArtifacts.set(artifact.id, value);
+          const reference = {
+            workspaceId,
+            artifactId: artifact.id,
+            expectedRevision: artifact.revision,
+          };
+          const result =
+            artifact.type === "text"
+              ? await this.call(this.key(), false, "artifact.saveText", {
+                  ...reference,
+                  text: artifact.text,
+                })
+              : await this.call(this.key(), false, "artifact.saveWebPreview", {
+                  ...reference,
+                  url: artifact.url,
+                });
+          this.savedArtifacts.set(artifact.id, value);
           this.attemptedArtifacts.delete(artifact.id);
           const current = this.state.document!;
           this.publish({
@@ -2115,7 +2216,7 @@ export class Editor {
           known !== this.attemptedArtifacts.get(artifact.id)
         )
           throw new Error(
-            "Saved text changed elsewhere. Copy your unsaved edits for recovery.",
+            "Saved content changed elsewhere. Copy your unsaved edits for recovery.",
           );
       }
       const committed = document.artifacts.filter(

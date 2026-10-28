@@ -39,6 +39,60 @@ const MAX_FILE_NAME: usize = 120;
 const MAX_FILE_TEXT: usize = 10_000;
 const MAX_FILE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_FILE_CHUNK_BYTES: usize = 11_000;
+const MAX_PREVIEW_URL: usize = 2048;
+
+pub(crate) fn preview_url(value: &str, excluded: &[(String, u16)]) -> Result<(), RuntimeError> {
+    let valid = || -> Option<()> {
+        if value.encode_utf16().count() > MAX_PREVIEW_URL
+            || value.chars().any(|c| c.is_control() || c == '\\')
+        {
+            return None;
+        }
+        let (scheme, rest) = value.split_once("://")?;
+        if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+            return None;
+        }
+        let authority = rest.split(['/', '?', '#']).next()?;
+        let (host, suffix) = ["localhost", "127.0.0.1", "[::1]"]
+            .iter()
+            .find_map(|host| authority.strip_prefix(host).map(|suffix| (*host, suffix)))?;
+        if !suffix.is_empty() {
+            let port = suffix.strip_prefix(':')?;
+            if port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            port.parse::<u16>().ok()?;
+        }
+        let parsed = url::Url::parse(value).ok()?;
+        if !matches!(parsed.scheme(), "http" | "https")
+            || parsed.host_str()? != host
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+        {
+            return None;
+        }
+        if excluded.iter().any(|(scheme, port)| {
+            scheme == parsed.scheme() && Some(*port) == parsed.port_or_known_default()
+        }) {
+            return None;
+        }
+        Some(())
+    };
+    valid().ok_or_else(|| {
+        invalid("Enter an HTTP(S) URL using localhost, 127.0.0.1, or [::1] without credentials.")
+    })
+}
+
+// Stored IPv6 URLs remain valid for backup/restore, but cannot be embedded.
+fn supported_preview_url(value: &str, excluded: &[(String, u16)]) -> Result<(), RuntimeError> {
+    preview_url(value, excluded)?;
+    if url::Url::parse(value).is_ok_and(|url| url.host_str() == Some("[::1]")) {
+        return Err(invalid(
+            "Use localhost or 127.0.0.1; IPv6 previews are not supported.",
+        ));
+    }
+    Ok(())
+}
 /// Copied canvas files kept in workspace storage; images, PDFs, Word documents,
 /// and text-like files. The frontend normalizes types before uploading.
 const FILE_MIMES: &[&str] = &[
@@ -84,6 +138,8 @@ pub(crate) const METHODS: &[&str] = &[
     "edge.create",
     "artifact.saveText",
     "node.createDrawing",
+    "node.createWebPreview",
+    "artifact.saveWebPreview",
     "file.begin",
     "file.chunk",
     "file.finish",
@@ -384,6 +440,28 @@ struct SaveText {
     text: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateWebPreview {
+    workspace_id: String,
+    canvas_id: String,
+    expected_revision: f64,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    url: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SaveWebPreview {
+    workspace_id: String,
+    artifact_id: String,
+    expected_revision: f64,
+    url: String,
+}
+
 /// A freehand stroke; points are local to the node origin.
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -569,6 +647,7 @@ fn delete_node(tx: &Transaction, canvas_id: &str, node_id: &str) -> Result<(), R
 /// each open workspace and its writer lock is held independently.
 pub struct Runtime {
     data_root: Option<PathBuf>,
+    preview_endpoints: Vec<(String, u16)>,
     open: HashMap<String, Workspace>,
     /// Workspaces this process has opened. Reopening one, after another tab
     /// closed it, keeps turns that are still generating.
@@ -580,6 +659,7 @@ impl Runtime {
     pub fn new(data_root: Option<PathBuf>) -> Self {
         Self {
             data_root,
+            preview_endpoints: Vec::new(),
             open: HashMap::new(),
             opened: HashSet::new(),
         }
@@ -587,6 +667,17 @@ impl Runtime {
 
     pub fn data_root(&self) -> Option<&Path> {
         self.data_root.as_deref()
+    }
+
+    /// Exclude active application endpoints across the accepted loopback aliases.
+    pub fn set_preview_endpoints(&mut self, endpoints: &[String]) {
+        self.preview_endpoints = endpoints
+            .iter()
+            .filter_map(|endpoint| {
+                let url = url::Url::parse(endpoint).ok()?;
+                Some((url.scheme().to_owned(), url.port_or_known_default()?))
+            })
+            .collect();
     }
 
     /// Storage side of the MCP dispatcher. Not reachable over RPC: `METHODS` omits `mcp.*`.
@@ -966,6 +1057,27 @@ impl Runtime {
                     }))
                 })
             }
+            "node.createWebPreview" => {
+                let p: CreateWebPreview = parse(params)?;
+                id("canvasId", &p.canvas_id)?;
+                let expected = revision(p.expected_revision)?;
+                let g = Geometry {
+                    x: p.x,
+                    y: p.y,
+                    width: p.width,
+                    height: p.height,
+                };
+                g.check()?;
+                supported_preview_url(&p.url, &self.preview_endpoints)?;
+                let (node_id, artifact_id, content_id) = (new_id()?, new_id()?, new_id()?);
+                self.transact(&p.workspace_id, |tx| {
+                    check_canvas(tx, &p.canvas_id, expected)?;
+                    tx.execute("INSERT INTO web_preview_content (id, url) VALUES (?1, ?2)", (&content_id, &p.url))?;
+                    tx.execute("INSERT INTO artifact VALUES (?1, 'web-preview', 1, 1, 'sqlite', ?2)", (&artifact_id, &content_id))?;
+                    tx.execute("INSERT INTO canvas_node (id, canvas_id, kind, artifact_id, x, y, width, height) VALUES (?1, ?2, 'artifact', ?3, ?4, ?5, ?6, ?7)", (&node_id, &p.canvas_id, &artifact_id, g.x, g.y, g.width, g.height))?;
+                    Ok(json!({"revision":bump(tx, &p.canvas_id, expected)?, "node":{"id":node_id,"artifactId":artifact_id,"x":g.x,"y":g.y,"width":g.width,"height":g.height}, "artifact":artifact(tx, &artifact_id)?}))
+                })
+            }
             "file.begin" => {
                 let params: FileBegin = parse(params)?;
                 id("canvasId", &params.canvas_id)?;
@@ -1248,6 +1360,24 @@ impl Runtime {
                     Ok(json!({ "artifact": save_text(tx, &params.artifact_id, expected, &params.text)? }))
                 })
             }
+            "artifact.saveWebPreview" => {
+                let p: SaveWebPreview = parse(params)?;
+                id("artifactId", &p.artifact_id)?;
+                let expected = revision(p.expected_revision)?;
+                supported_preview_url(&p.url, &self.preview_endpoints)?;
+                self.transact(&p.workspace_id, |tx| {
+                    let current: Option<(String, i64)> = tx.query_row("SELECT type, revision FROM artifact WHERE id = ?1", [&p.artifact_id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+                    match current {
+                        None => return Err(not_found("Artifact")),
+                        Some((kind, _)) if kind != "web-preview" => return Err(not_found("Web preview")),
+                        Some((_, current)) if current != expected => return Err(conflict("artifact", current)),
+                        Some(_) => {}
+                    }
+                    tx.execute("UPDATE web_preview_content SET url = ?2 WHERE id = (SELECT content_id FROM artifact WHERE id = ?1)", (&p.artifact_id, &p.url))?;
+                    tx.execute("UPDATE artifact SET revision = revision + 1 WHERE id = ?1", [&p.artifact_id])?;
+                    Ok(json!({"artifact":artifact(tx, &p.artifact_id)?}))
+                })
+            }
             _ => unreachable!("methods are checked against METHODS"),
         }
     }
@@ -1376,6 +1506,16 @@ fn artifact(tx: &Transaction, artifact_id: &str) -> Result<Value, RuntimeError> 
         .optional()?
         .ok_or_else(|| not_found("Artifact"))?;
     match kind.as_str() {
+        "web-preview" => {
+            let url: String = tx.query_row(
+                "SELECT url FROM web_preview_content WHERE id = ?1",
+                [&content_id],
+                |row| row.get(0),
+            )?;
+            Ok(
+                json!({"id": artifact_id, "type": "web-preview", "schemaVersion": schema_version, "revision": revision, "url": url}),
+            )
+        }
         "text" => {
             let (body, purpose): (String, String) = tx.query_row(
                 "SELECT body, purpose FROM text_content WHERE id = ?1",
@@ -1495,6 +1635,13 @@ fn delete_artifact_content(tx: &Transaction, artifact_id: &str) -> Result<(), Ru
         return Ok(());
     }
     match kind.as_str() {
+        "web-preview" => {
+            tx.execute(
+                "DELETE FROM web_preview_content WHERE id = ?1 AND NOT EXISTS
+                 (SELECT 1 FROM artifact WHERE content_id = ?1)",
+                [&content_id],
+            )?;
+        }
         "text" => {
             tx.execute(
                 "DELETE FROM text_content WHERE id = ?1 AND NOT EXISTS
@@ -1602,6 +1749,138 @@ fn canvas_state(tx: &Transaction, canvas_id: &str) -> Result<Value, RuntimeError
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_url_rejects_alternate_hosts_and_authorities() {
+        let cases: Value =
+            serde_json::from_str(include_str!("../../../tests/fixtures/preview-urls.json"))
+                .unwrap();
+        for case in cases.as_array().unwrap() {
+            let value = case["url"].as_str().unwrap();
+            assert_eq!(
+                preview_url(value, &[]).is_ok(),
+                case["valid"].as_bool().unwrap(),
+                "{value}"
+            );
+        }
+        for value in [
+            "http://localhost:5173/settings?mode=preview#details",
+            "http://127.0.0.1/",
+            "https://[::1]:443/",
+        ] {
+            assert!(preview_url(value, &[]).is_ok(), "{value}");
+        }
+        for value in [
+            "http://localhost:",
+            "http://localhost:65536",
+            "http://user@localhost/",
+            "http://127.1/",
+            "http://0x7f000001/",
+            "http://localhost.evil/",
+            "http://192.168.1.1/",
+            "file://localhost/a",
+            "http://localhost\\@evil/",
+        ] {
+            assert!(preview_url(value, &[]).is_err(), "{value}");
+        }
+        for host in ["localhost", "127.0.0.1", "[::1]"] {
+            assert!(preview_url(
+                &format!("http://{host}:1421/path"),
+                &[("http".into(), 1421)]
+            )
+            .is_err());
+        }
+        assert!(preview_url("http://localhost/path", &[("http".into(), 80)]).is_err());
+        assert!(preview_url("https://127.0.0.1:443/", &[("https".into(), 443)]).is_err());
+    }
+
+    #[test]
+    fn preview_mutation_contracts_match_shared_fixtures() {
+        let cases: Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/preview-contracts.json"
+        ))
+        .unwrap();
+        let mut runtime = Runtime::new(None);
+        for case in cases.as_array().unwrap() {
+            let error = runtime
+                .call(case["method"].as_str().unwrap(), case["params"].clone())
+                .unwrap_err();
+            assert_eq!(
+                error.code != "INVALID_PARAMS",
+                case["valid"].as_bool().unwrap(),
+                "{case}"
+            );
+        }
+        let mut oversized = cases[1]["params"].clone();
+        oversized["url"] = json!(format!("http://localhost/{}", "x".repeat(2048)));
+        assert_eq!(
+            runtime
+                .call("artifact.saveWebPreview", oversized)
+                .unwrap_err()
+                .code,
+            "INVALID_PARAMS"
+        );
+    }
+
+    #[test]
+    fn preview_persists_with_revision_checks_and_cleanup() {
+        let root = tempfile::tempdir().unwrap();
+        let mut runtime = Runtime::new(Some(root.path().to_owned()));
+        let workspace = call(&mut runtime, "workspace.create", json!({"name":"Preview"}))
+            ["workspace"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let canvas = call(
+            &mut runtime,
+            "canvas.create",
+            json!({"workspaceId":workspace,"title":"Canvas"}),
+        )["canvas"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let params = json!({"workspaceId":workspace,"canvasId":canvas,"expectedRevision":1,"x":20,"y":30,"width":600,"height":400,"url":"http://localhost:5173/a"});
+        let first = call(&mut runtime, "node.createWebPreview", params.clone());
+        assert_eq!(
+            runtime
+                .call("node.createWebPreview", params)
+                .unwrap_err()
+                .code,
+            "CONFLICT"
+        );
+        let second = call(
+            &mut runtime,
+            "node.createWebPreview",
+            json!({"workspaceId":workspace,"canvasId":canvas,"expectedRevision":2,"x":700,"y":30,"width":600,"height":400,"url":"http://localhost:6000"}),
+        );
+        let artifact_id = first["artifact"]["id"].as_str().unwrap();
+        let saved = call(
+            &mut runtime,
+            "artifact.saveWebPreview",
+            json!({"workspaceId":workspace,"artifactId":artifact_id,"expectedRevision":1,"url":"http://127.0.0.1:5173/b"}),
+        );
+        assert_eq!(saved["artifact"]["revision"], 2);
+        assert_eq!(runtime.call("artifact.saveWebPreview", json!({"workspaceId":workspace,"artifactId":artifact_id,"expectedRevision":1,"url":"http://localhost:5000"})).unwrap_err().code, "CONFLICT");
+        let reopened = call(
+            &mut runtime,
+            "canvas.open",
+            json!({"workspaceId":workspace,"canvasId":canvas}),
+        );
+        assert_eq!(reopened["artifacts"][0]["url"], "http://127.0.0.1:5173/b");
+        assert_eq!(reopened["artifacts"][1]["url"], second["artifact"]["url"]);
+        call(
+            &mut runtime,
+            "node.delete",
+            json!({"workspaceId":workspace,"canvasId":canvas,"expectedRevision":3,"nodeId":first["node"]["id"]}),
+        );
+        assert_eq!(content_rows(&runtime, &workspace, "web_preview_content"), 1);
+        call(
+            &mut runtime,
+            "node.delete",
+            json!({"workspaceId":workspace,"canvasId":canvas,"expectedRevision":4,"nodeId":second["node"]["id"]}),
+        );
+        assert_eq!(content_rows(&runtime, &workspace, "web_preview_content"), 0);
+    }
 
     fn call(runtime: &mut Runtime, method: &str, params: Value) -> Value {
         runtime.call(method, params).unwrap()
