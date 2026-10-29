@@ -14,6 +14,14 @@ build the installers and publish the release. Keep validation evidence in the
 
 ## 0.2.0 — 2026-10-29
 
+### Windows session test deadline (2026-10-30)
+
+- Give the Windows PowerShell session test 30s instead of 5s to see each
+  expected output in `packages/agent-runtime/src/sessions.rs`. The backup,
+  restore, and migration tests added since 0.1.1 run in parallel with it and
+  delayed PowerShell's first prompt past 5s on CI runners. A passing run still
+  returns as soon as the output arrives.
+
 ### Canvas picker page (2026-10-29)
 
 - Turn the canvas picker from a modal into a full page that shares the
