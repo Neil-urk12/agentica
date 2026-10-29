@@ -824,6 +824,28 @@ label {
   opacity: 0.5;
 }
 
+.home__reconnect--turning,
+.home__reconnect--turning:disabled {
+  color: var(--accent);
+  opacity: 1;
+}
+
+.home__reconnect--turning .material-icons {
+  /* The sync glyph's arrows point anticlockwise. */
+  animation: spin 0.8s linear infinite reverse;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The global 0.01ms duration would make the infinite spin jitter. */
+  .home__reconnect--turning .material-icons {
+    animation: none;
+  }
+}
+
+.home__ready--busy .home__dot {
+  background: var(--muted);
+}
+
 .home__dot {
   width: 0.5rem;
   height: 0.5rem;

@@ -1891,6 +1891,25 @@
     if (!pendingTurn) reviewError = "";
   });
 
+  // A reconnect from the workspace Ready chip shows its progress on the chip,
+  // so the page doesn't jump to the connection bar unless it fails.
+  let reconnecting = $state(false);
+  let retryButton = $state<HTMLButtonElement>();
+
+  async function reconnect() {
+    reconnecting = true;
+    try {
+      await checkConnection(true);
+    } finally {
+      reconnecting = false;
+    }
+    // A failure swaps the focused chip for the connection bar; keep keyboard focus.
+    if (!connected && document.activeElement === document.body) {
+      await tick();
+      retryButton?.focus();
+    }
+  }
+
   async function checkConnection(connect = false) {
     if (busy) return;
     busy = true;
@@ -2758,7 +2777,7 @@
 {/if}
 
 {#snippet connectionControls()}
-  {#if !connected}
+  {#if !connected && !reconnecting}
     <div class="connbar" class:connbar--bad={status === "failed"}>
       <span class="connbar__dot"></span>
       <span class="connbar__text">{message}</span>
@@ -2784,6 +2803,7 @@
           />
         {/if}
         <button
+          bind:this={retryButton}
           class="btn btn--soft"
           type="submit"
           disabled={busy || (!desktopMode && !connectionKey.trim())}
@@ -2806,7 +2826,8 @@
       workspaces={editorState.workspaces}
       {connected}
       connection={connectionControls}
-      onReconnect={() => void checkConnection(true)}
+      {reconnecting}
+      onReconnect={() => void reconnect()}
       {busy}
       error={editorState.error}
       onRefresh={() => void editor.listWorkspaces()}
