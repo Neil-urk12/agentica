@@ -331,8 +331,8 @@ test(
           )
         ).result.value;
       const initialWidth = await viewport();
-      await clickAt(page, await boxOf(page, ".web-preview__head span"));
-      const header = await boxOf(page, ".web-preview__head span");
+      await clickAt(page, await boxOf(page, ".web-preview__title"));
+      const header = await boxOf(page, ".web-preview__title");
       const positionBeforeDrag = await evaluate(
         page,
         "document.querySelector('.web-preview').closest('.svelte-flow__node').style.transform",
@@ -403,7 +403,7 @@ test(
       );
       await evaluate(
         page,
-        "[...document.querySelectorAll('.web-preview button')].find(b => b.textContent.trim() === 'Reload').click()",
+        "document.querySelector('.web-preview button[aria-label=\"Reload preview\"]').click()",
       );
       assert.equal(
         await evaluate(
@@ -682,9 +682,21 @@ test(
       for (const theme of ["light", "dark"]) {
         await evaluate(
           page,
-          `document.documentElement.dataset.theme = ${JSON.stringify(theme)}; document.querySelector(".web-preview button[aria-label='Reload preview']").focus()`,
+          `document.documentElement.dataset.theme = ${JSON.stringify(theme)}; document.querySelector(".web-preview__url input").focus()`,
         );
-        for (const label of ["Expand preview", "Remove preview"]) {
+        assert.equal(
+          await evaluate(
+            page,
+            "getComputedStyle(document.activeElement).outlineStyle !== 'none'",
+          ),
+          true,
+        );
+        // Save only renders for an edited URL, so Tab goes straight to the actions.
+        for (const label of [
+          "Reload preview",
+          "Expand preview",
+          "Remove preview",
+        ]) {
           await page.send(
             "Input.dispatchKeyEvent",
             {
@@ -713,51 +725,6 @@ test(
             label,
           );
         }
-        await page.send(
-          "Input.dispatchKeyEvent",
-          {
-            type: "keyDown",
-            key: "Tab",
-            code: "Tab",
-            windowsVirtualKeyCode: 9,
-          },
-          page.sessionId,
-        );
-        await page.send(
-          "Input.dispatchKeyEvent",
-          { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 },
-          page.sessionId,
-        );
-        assert.equal(
-          await evaluate(page, "document.activeElement?.tagName"),
-          "INPUT",
-        );
-        assert.equal(
-          await evaluate(
-            page,
-            "getComputedStyle(document.activeElement).outlineStyle !== 'none'",
-          ),
-          true,
-        );
-        await page.send(
-          "Input.dispatchKeyEvent",
-          {
-            type: "keyDown",
-            key: "Tab",
-            code: "Tab",
-            windowsVirtualKeyCode: 9,
-          },
-          page.sessionId,
-        );
-        await page.send(
-          "Input.dispatchKeyEvent",
-          { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 },
-          page.sessionId,
-        );
-        assert.equal(
-          await evaluate(page, "document.activeElement?.textContent.trim()"),
-          "Save",
-        );
         await page.send(
           "Input.dispatchKeyEvent",
           {
