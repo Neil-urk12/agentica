@@ -1,36 +1,112 @@
 <!doctype html>
 <html lang="en">
-<meta charset="utf-8">
-<title>Agentica preview isolation fixture</title>
-<body>
-  <h1>Preview isolation fixture</h1>
-  <p>Run this only in a disposable test workspace. The checks below attempt to cross the frame boundary.</p>
-  <pre id="results">Running…</pre>
-  <form id="form"><label>Test input <input name="input"></label><button>Submit</button></form>
-  <p><a href="?route=second">Navigate within fixture</a></p>
-  <label>Agentica frontend URL <input id="agentica" value="http://127.0.0.1:1420/"></label>
-  <button id="redirect">Redirect this frame to the Agentica frontend</button>
-  <script>
-    const results = document.querySelector('#results');
-    const lines = [];
-    const show = (text) => { lines.push(text); results.textContent = lines.join('\n'); };
-    try { localStorage.setItem('preview-test', 'ok'); show('Own origin storage: ' + localStorage.getItem('preview-test')); } catch { show('Own origin storage unavailable'); }
-    try { void parent.document.body; show('FAIL: parent document readable'); } catch { show('PASS: parent document inaccessible'); }
-    try { void parent.localStorage; show('FAIL: parent storage readable'); } catch { show('PASS: parent storage inaccessible'); }
-    const nativeInvoke = window.__TAURI_INTERNALS__?.invoke || window.__TAURI__?.core?.invoke;
-    if (nativeInvoke) {
-      show('FAIL: native bridge present; attempting runtime invocation');
-      Promise.resolve(nativeInvoke('runtime_request', {request:{protocolVersion:1,id:'hostile',method:'workspace.list',params:{}},connect:false})).then(() => show('FAIL: native invocation succeeded')).catch(() => show('Native invocation rejected'));
-    } else show('PASS: no native bridge');
-    try { top.location = 'https://example.com/'; show('Top navigation attempted; confirm Agentica remains open'); } catch { show('PASS: top navigation denied'); }
-    try { const popup = window.open('about:blank'); show(popup ? 'FAIL: popup opened' : 'PASS: popup blocked'); popup?.close(); } catch { show('PASS: popup denied'); }
-    parent.postMessage({ method: 'runtime_request', params: { method: 'workspace.list' } }, '*');
-    show('Command-shaped message sent; confirm no command executes');
-    fetch('http://127.0.0.1:1421/rpc', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer invalid' }, body: JSON.stringify({protocolVersion:1,id:'hostile',method:'workspace.list',params:{}}) })
-      .then((response) => show(response.ok ? 'FAIL: unauthenticated RPC succeeded' : 'PASS: unauthenticated RPC rejected'))
-      .catch(() => show('PASS: RPC unavailable to fixture'));
-    document.querySelector('#form').addEventListener('submit', (event) => { event.preventDefault(); show('PASS: form interaction received'); });
-    document.querySelector('#redirect').addEventListener('click', () => { location.href = document.querySelector('#agentica').value; });
-  </script>
-</body>
+  <meta charset="utf-8" />
+  <title>Agentica preview isolation fixture</title>
+  <body>
+    <h1>Preview isolation fixture</h1>
+    <p>
+      Run this only in a disposable test workspace. The checks below attempt to
+      cross the frame boundary.
+    </p>
+    <pre id="results">Running…</pre>
+    <form id="form">
+      <label>Test input <input name="input" /></label><button>Submit</button>
+    </form>
+    <p><a href="?route=second">Navigate within fixture</a></p>
+    <label
+      >Agentica frontend URL
+      <input id="agentica" value="http://127.0.0.1:1420/"
+    /></label>
+    <button id="redirect">Redirect this frame to the Agentica frontend</button>
+    <script>
+      const results = document.querySelector("#results");
+      const lines = [];
+      const show = (text) => {
+        lines.push(text);
+        results.textContent = lines.join("\n");
+      };
+      try {
+        localStorage.setItem("preview-test", "ok");
+        show("Own origin storage: " + localStorage.getItem("preview-test"));
+      } catch {
+        show("Own origin storage unavailable");
+      }
+      try {
+        void parent.document.body;
+        show("FAIL: parent document readable");
+      } catch {
+        show("PASS: parent document inaccessible");
+      }
+      try {
+        void parent.localStorage;
+        show("FAIL: parent storage readable");
+      } catch {
+        show("PASS: parent storage inaccessible");
+      }
+      const nativeInvoke =
+        window.__TAURI_INTERNALS__?.invoke || window.__TAURI__?.core?.invoke;
+      if (nativeInvoke) {
+        show("FAIL: native bridge present; attempting runtime invocation");
+        Promise.resolve(
+          nativeInvoke("runtime_request", {
+            request: {
+              protocolVersion: 1,
+              id: "hostile",
+              method: "workspace.list",
+              params: {},
+            },
+            connect: false,
+          }),
+        )
+          .then(() => show("FAIL: native invocation succeeded"))
+          .catch(() => show("Native invocation rejected"));
+      } else show("PASS: no native bridge");
+      try {
+        top.location = "https://example.com/";
+        show("Top navigation attempted; confirm Agentica remains open");
+      } catch {
+        show("PASS: top navigation denied");
+      }
+      try {
+        const popup = window.open("about:blank");
+        show(popup ? "FAIL: popup opened" : "PASS: popup blocked");
+        popup?.close();
+      } catch {
+        show("PASS: popup denied");
+      }
+      parent.postMessage(
+        { method: "runtime_request", params: { method: "workspace.list" } },
+        "*",
+      );
+      show("Command-shaped message sent; confirm no command executes");
+      fetch("http://127.0.0.1:1421/rpc", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer invalid",
+        },
+        body: JSON.stringify({
+          protocolVersion: 1,
+          id: "hostile",
+          method: "workspace.list",
+          params: {},
+        }),
+      })
+        .then((response) =>
+          show(
+            response.ok
+              ? "FAIL: unauthenticated RPC succeeded"
+              : "PASS: unauthenticated RPC rejected",
+          ),
+        )
+        .catch(() => show("PASS: RPC unavailable to fixture"));
+      document.querySelector("#form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        show("PASS: form interaction received");
+      });
+      document.querySelector("#redirect").addEventListener("click", () => {
+        location.href = document.querySelector("#agentica").value;
+      });
+    </script>
+  </body>
 </html>
