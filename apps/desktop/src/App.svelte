@@ -2769,12 +2769,7 @@
   ondrop={blockFileDrop}
 />
 
-<!-- One live region per screen context. The workspace and editor screens
-     share this one; the canvas screen renders its own inside its modal
-     dialog, because a modal makes the rest of the page inert. -->
-{#if stage !== "canvas"}
-  <p class="sr-only" role="status" aria-live="polite">{message}</p>
-{/if}
+<p class="sr-only" role="status" aria-live="polite">{message}</p>
 
 {#snippet connectionControls()}
   {#if !connected && !reconnecting}
@@ -2862,7 +2857,6 @@
         "Unnamed workspace"}
       canvases={editorState.workspace?.canvases ?? []}
       connection={connectionControls}
-      connectionMessage={message}
       busy={working}
       error={editorState.error}
       onCreate={(title) => void editor.createCanvas(title)}
