@@ -222,7 +222,7 @@ async function setup(t, intercept = async () => {}) {
   let sequence = 0;
   const uploads = new Map();
   // The stub owns the lists the runtime would return after a delete.
-  let workspaceList = [{ id: workspaceId, name: "Work" }];
+  let workspaceList = [{ id: workspaceId, name: "Work", canvases: 1 }];
   let canvasList = [{ id: canvasId, title: "Plan" }];
   const call = async (_key, _connect, method, params) => {
     calls.push({ method, params });
@@ -2218,7 +2218,7 @@ test("deleting a saved canvas and workspace updates the lists the pickers show",
   const { editor, calls } = await setup(t);
   await editor.listWorkspaces();
   assert.deepEqual(editor.state.workspaces, [
-    { id: workspaceId, name: "Work" },
+    { id: workspaceId, name: "Work", canvases: 1 },
   ]);
 
   assert.equal(await editor.deleteCanvas(canvasId), true);
@@ -2256,7 +2256,7 @@ test("a refused delete keeps the list and reports the runtime message", async (t
 
 test("restoring a backup reloads the list and a cancelled dialog changes nothing", async (t) => {
   const restoredId = "00000000-0000-4000-8000-0000000000aa";
-  let listed = [{ id: workspaceId, name: "Work" }];
+  let listed = [{ id: workspaceId, name: "Work", canvases: 1 }];
   const calls = [];
   const editor = new Editor(
     async (_key, _connect, method) => {
@@ -2276,13 +2276,17 @@ test("restoring a backup reloads the list and a cancelled dialog changes nothing
   assert.equal(editor.state.workspaces.length, 1);
 
   await editor.restoreWorkspace(async () => {
-    listed = [...listed, { id: restoredId, name: "Work (restored)" }];
+    listed = [
+      ...listed,
+      { id: restoredId, name: "Work (restored)", canvases: 1 },
+    ];
     return restoredId;
   });
   assert.deepEqual(calls, ["workspace.list", "workspace.list"]);
   assert.deepEqual(editor.state.workspaces.at(-1), {
     id: restoredId,
     name: "Work (restored)",
+    canvases: 1,
   });
   assert.equal(editor.state.busy, false);
 

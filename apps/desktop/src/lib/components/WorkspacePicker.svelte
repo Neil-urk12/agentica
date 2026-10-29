@@ -6,12 +6,14 @@
   interface WorkspaceInfo {
     id: string;
     name: string | null;
+    canvases: number | null;
   }
 
   interface Props {
     workspaces: WorkspaceInfo[];
     connected: boolean;
     connection: Snippet;
+    onReconnect: () => void;
     busy: boolean;
     error: string;
     onRefresh: () => void;
@@ -29,6 +31,7 @@
     workspaces,
     connected,
     connection,
+    onReconnect,
     busy,
     error,
     onRefresh,
@@ -44,12 +47,14 @@
   let name = $state("");
   // Deleting storage is destructive, so the tile asks for confirmation first.
   let confirming = $state("");
-  // "Ready" reveals the connection controls, so the key can be changed and the
-  // backend reconnected without leaving this screen.
-  let showConnection = $state(false);
   const locked = $derived(busy || !connected);
   // Announced once a backup file is written; cleared by the next action.
   let backedUp = $state("");
+
+  function countLabel(canvases: number) {
+    if (canvases === 0) return "No canvases";
+    return canvases === 1 ? "1 canvas" : `${canvases} canvases`;
+  }
 
   async function backup(id: string, label: string) {
     backedUp = "";
@@ -110,18 +115,19 @@
     </span>
     <span class="home__tools">
       {#if connected}
-        <button
-          class="home__ready"
-          type="button"
-          aria-expanded={showConnection}
-          aria-controls="home-connection"
-          title={showConnection
-            ? "Hide connection settings"
-            : "Show connection settings"}
-          onclick={() => (showConnection = !showConnection)}
-        >
+        <span class="home__ready">
           <span class="home__dot"></span>Ready
-        </button>
+          <button
+            class="home__reconnect"
+            type="button"
+            title="Reconnect to the backend"
+            aria-label="Reconnect to the backend"
+            disabled={busy}
+            onclick={onReconnect}
+          >
+            <Icon name="sync" size={18} />
+          </button>
+        </span>
       {/if}
       <button class="btn btn--ghost" type="button" onclick={onOpenSettings}>
         <Icon name="settings" size={18} />
@@ -130,15 +136,13 @@
     </span>
   </header>
 
-  <!-- The panel stays mounted so the disclosure keeps pointing at it; the
-       live region in App announces connection changes. -->
-  <div
-    class="home__conn"
-    id="home-connection"
-    hidden={connected && !showConnection}
-  >
-    {@render connection()}
-  </div>
+  <!-- Without a backend there is no Ready button, so the controls sit in the
+       page where they can't be missed. -->
+  {#if !connected}
+    <div class="home__conn">
+      {@render connection()}
+    </div>
+  {/if}
 
   <main class="home__main">
     <section class="home__start">
@@ -236,38 +240,37 @@
                 title={label}
                 onclick={() => onOpen(workspace.id)}
               >
-                <span class="tile__paper" aria-hidden="true">
-                  <span class="tile__note"></span>
-                  <span class="tile__line"></span>
-                  <span class="tile__ring"></span>
-                </span>
                 <span class="tile__name">{label}</span>
-                {#if !workspace.name}
-                  <small class="tile__meta">ID {workspace.id}</small>
-                {/if}
+                <small class="tile__meta"
+                  >{workspace.name === null || workspace.canvases === null
+                    ? `ID ${workspace.id}`
+                    : countLabel(workspace.canvases)}</small
+                >
               </button>
-              <button
-                class="icon-btn tile__backup"
-                type="button"
-                title="Back up workspace"
-                aria-label={`Back up ${label}`}
-                aria-describedby="backup-hint"
-                disabled={locked || !backups || !workspace.name}
-                onclick={() => void backup(workspace.id, label)}
-              >
-                <Icon name="save_alt" size={18} />
-              </button>
-              <button
-                class="icon-btn icon-btn--danger tile__delete"
-                type="button"
-                title="Delete workspace"
-                aria-label={`Delete ${label}`}
-                disabled={locked}
-                use:trackDelete={workspace.id}
-                onclick={() => void askDelete(workspace.id)}
-              >
-                <Icon name="delete_outline" size={18} />
-              </button>
+              <span class="tile__tools">
+                <button
+                  class="icon-btn"
+                  type="button"
+                  title="Back up workspace"
+                  aria-label={`Back up ${label}`}
+                  aria-describedby="backup-hint"
+                  disabled={locked || !backups || !workspace.name}
+                  onclick={() => void backup(workspace.id, label)}
+                >
+                  <Icon name="save_alt" size={18} />
+                </button>
+                <button
+                  class="icon-btn icon-btn--danger"
+                  type="button"
+                  title="Delete workspace"
+                  aria-label={`Delete ${label}`}
+                  disabled={locked}
+                  use:trackDelete={workspace.id}
+                  onclick={() => void askDelete(workspace.id)}
+                >
+                  <Icon name="delete_outline" size={18} />
+                </button>
+              </span>
               {#if confirming === workspace.id}
                 <div
                   class="tile__confirm"

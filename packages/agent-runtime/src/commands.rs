@@ -1411,7 +1411,10 @@ impl Runtime {
     fn workspaces(&self) -> Result<Vec<Value>, RuntimeError> {
         Ok(list_workspaces(self.data_root())?
             .into_iter()
-            .map(|(id, name)| json!({ "id": id, "name": name }))
+            .map(|(id, summary)| {
+                let (name, canvases) = summary.unzip();
+                json!({ "id": id, "name": name, "canvases": canvases })
+            })
             .collect())
     }
 

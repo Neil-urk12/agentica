@@ -171,8 +171,12 @@
     title={`Waiting for you (${queueShortcutLabel(apple)})`}
     onclick={() => (open ? close() : (open = true))}
   >
-    {#if count}<span class="dot" aria-hidden="true"></span>{count} waiting{:else}Nothing
-      waiting{/if}
+    <!-- Narrow top bars keep only the dot and count, or the idle icon. -->
+    {#if count}<span class="dot" aria-hidden="true"></span>{count}<span
+        class="label">waiting</span
+      >{:else}<span class="idle"
+        ><Icon name="notifications_none" size={18} /></span
+      ><span class="label">Nothing waiting</span>{/if}
   </button>
   <span class="sr-only" role="status" aria-live="polite" aria-atomic="true"
     >{sentence}</span
@@ -286,6 +290,14 @@
   }
   .dot--bad {
     background: var(--bad);
+  }
+  .idle {
+    display: none;
+  }
+  @media (max-width: 700px) {
+    .idle {
+      display: inline-flex;
+    }
   }
   .waiting__panel {
     position: absolute;
