@@ -616,7 +616,7 @@ test(
         page,
         await boxOf(page, "button[aria-label='Canvas gallery']"),
       );
-      const canvasCard = ".cards .card";
+      const canvasCard = ".tiles .tile__open";
       await waitFor(
         page,
         `[...document.querySelectorAll(${JSON.stringify(canvasCard)})].some(el => el.textContent.includes('Preview canvas'))`,

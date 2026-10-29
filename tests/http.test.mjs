@@ -1111,6 +1111,78 @@ test("the UI save buffer recovers a real SQLite write failure and reopens after 
   }
 });
 
+test("canvas picker delete confirmations stay above later tile rows", async () => {
+  const backend = await startBackend();
+  key = backend.connectionKey;
+  let browser;
+  const rpc = async (method, params) => {
+    const reply = await send(port, {
+      body: JSON.stringify({
+        protocolVersion: 1,
+        id: crypto.randomUUID(),
+        method,
+        params,
+      }),
+    });
+    const response = RuntimeResponseSchema.parse(JSON.parse(reply.text));
+    assert.equal(response.error, undefined, JSON.stringify(response));
+    return ResultSchemas[method].parse(response.result);
+  };
+  try {
+    const { workspace } = await rpc("workspace.create", {
+      name: "Picker stacking",
+    });
+    for (let i = 0; i < 12; i++)
+      await rpc("canvas.create", {
+        workspaceId: workspace.id,
+        title: `Release notes canvas ${i}`,
+      });
+    browser = await launchBrowser();
+    await browser.send(
+      "Page.navigate",
+      { url: `http://127.0.0.1:${port}/` },
+      browser.sessionId,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector('#connection-key')`,
+      "the connection form",
+    );
+    await evaluate(
+      browser,
+      `(async () => { const input = document.querySelector('#connection-key'); input.value = ${JSON.stringify(key)}; input.dispatchEvent(new Event('input', {bubbles:true})); await new Promise(requestAnimationFrame); document.querySelector('.connbar button[type=submit]').click(); })()`,
+    );
+    await openCard(browser, "Picker stacking");
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.tiles > .tile').length === 12`,
+      "all twelve canvas tiles",
+    );
+    const remove = ".tiles > .tile:first-child .tile__tools button";
+    await clickAt(browser, await boxOf(browser, remove));
+    await clickAt(
+      browser,
+      await boxByText(browser, ".tile__confirm button", "Cancel"),
+    );
+    await waitFor(
+      browser,
+      `!document.querySelector('.tile__confirm')`,
+      "the dismissed confirmation",
+    );
+    assert.equal(await countOf(browser, ".tiles > .tile"), 12);
+    await clickAt(browser, await boxOf(browser, remove));
+    await clickAt(browser, await boxOf(browser, ".tile__confirm .btn--danger"));
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.tiles > .tile').length === 11`,
+      "only the confirmed canvas to be removed",
+    );
+  } finally {
+    await browser?.close();
+    await stopBackend(backend.child);
+  }
+});
+
 test("drawing labels, connections and inspector text edits reopen without Codex", async () => {
   const backend = await startBackend();
   key = backend.connectionKey;
@@ -1494,12 +1566,12 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
     );
     await waitFor(
       browser,
-      `[...document.querySelectorAll(".cards .card")].some((card) => card.textContent.includes("Handle canvas"))`,
+      `[...document.querySelectorAll(".tiles .tile__open")].some((card) => card.textContent.includes("Handle canvas"))`,
       "the canvas picker",
     );
     await clickAt(
       browser,
-      await boxByText(browser, ".cards .card", "Handle canvas"),
+      await boxByText(browser, ".tiles .tile__open", "Handle canvas"),
     );
     await waitFor(
       browser,
@@ -2113,7 +2185,7 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
       );
       await waitFor(
         browser,
-        `[...document.querySelectorAll('.cards .card')].some(c => c.textContent.includes('Conversation UI'))`,
+        `[...document.querySelectorAll('.tiles .tile__open')].some(c => c.textContent.includes('Conversation UI'))`,
         "the canvas gallery",
       );
       await selectCard("Conversation UI");
