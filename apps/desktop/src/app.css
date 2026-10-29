@@ -537,13 +537,7 @@ label {
   width: 13rem;
 }
 
-/* ------------------------------------------------------------------ split */
-
-.split {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 1.25rem;
-}
+/* -------------------------------------------- shared panel and count pill */
 
 .panel {
   display: flex;
@@ -554,38 +548,6 @@ label {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   min-height: 16rem;
-}
-
-.panel__head {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-}
-
-.panel__head h2 {
-  margin: 0;
-  font-size: 0.95rem;
-  font-weight: 600;
-}
-
-.panel__badge {
-  display: grid;
-  place-items: center;
-  width: 1.9rem;
-  height: 1.9rem;
-  border-radius: 9px;
-  color: var(--accent-strong);
-  background: var(--accent-soft);
-}
-
-.panel__hint {
-  margin: 0;
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-
-.panel--list {
-  min-height: 0;
 }
 
 .count {
@@ -600,142 +562,6 @@ label {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 999px;
-}
-
-.stack {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-  margin-top: auto;
-}
-
-.cards {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  /* Room inside the scrollport for the 2px-offset focus outline. */
-  margin: -4px;
-  padding: 4px;
-  list-style: none;
-  overflow-y: auto;
-  max-height: 19rem;
-}
-
-.card-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.card-row .card {
-  flex: 1;
-  min-width: 0;
-}
-
-.card {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  width: 100%;
-  padding: 0.75rem 0.85rem;
-  text-align: left;
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: border-color 0.16s ease;
-}
-
-.card:hover:not(:disabled) {
-  border-color: var(--accent);
-}
-
-/* A row asking to confirm a destructive delete, in the card's own shape. */
-.card--confirm {
-  flex-wrap: wrap;
-  cursor: default;
-  gap: 0.6rem;
-  padding: 0.6rem 0.7rem;
-  border-color: var(--bad-line);
-  background: var(--bad-soft);
-}
-
-.card--confirm:hover {
-  border-color: var(--bad-line);
-}
-
-.card--confirm .card__body strong {
-  color: var(--bad);
-}
-
-.card:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.card__icon {
-  display: grid;
-  place-items: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  flex: none;
-  border-radius: 10px;
-  color: var(--accent-strong);
-  background: var(--accent-soft);
-}
-
-.card__body {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
-
-.card__body strong {
-  font-size: 0.88rem;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.card__body small {
-  font-size: 0.72rem;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.card > .material-icons {
-  color: var(--muted);
-}
-
-.empty {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.35rem;
-  padding: 1.5rem 1rem;
-  text-align: center;
-  color: var(--muted);
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-}
-
-.empty p {
-  margin: 0.35rem 0 0;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--ink-soft);
-}
-
-.empty small {
-  font-size: 0.76rem;
 }
 
 /* ---------------------------------------------------------- workspace home */
@@ -766,6 +592,51 @@ label {
   gap: 0.6rem;
   font-size: 1.05rem;
   font-weight: 700;
+}
+
+.home__crumbs {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+button.home__brand {
+  flex: none;
+  padding: 0.25rem 0.4rem 0.25rem 0.25rem;
+  margin-left: -0.25rem;
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+button.home__brand:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+button.home__brand:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.home__sep {
+  flex: none;
+  color: var(--muted);
+}
+
+.home__crumb {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--ink-soft);
 }
 
 .home__logo {
@@ -894,6 +765,12 @@ label {
   letter-spacing: -0.02em;
 }
 
+/* The canvas picker is a step after the landing page, so it speaks quieter. */
+.home__start .home__step {
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  overflow-wrap: anywhere;
+}
+
 .home__form {
   display: flex;
   flex-wrap: wrap;
@@ -993,6 +870,11 @@ label {
 
 .tile:has(.tile__open:hover:not(:disabled)) {
   border-color: var(--accent);
+}
+
+/* Keep overflowing confirmations above later rows. */
+.tile:has(.tile__confirm) {
+  z-index: 1;
 }
 
 .tile__open {

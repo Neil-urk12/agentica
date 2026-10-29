@@ -12,6 +12,22 @@ build the installers and publish the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Canvas picker page (2026-10-29)
+
+- Turn the canvas picker from a modal into a full page that shares the
+  workspace home's layout: a top bar with an `Agentica / <workspace>` breadcrumb
+  and Settings, one inline create row, and saved canvases as tiles with the
+  workspace tiles' inline delete confirmation and focus handling. The brand
+  button replaces the "Switch workspace" footer button, the title field gets
+  focus so Enter creates a canvas, and the hint now names notes, AI sessions,
+  files, previews and drawings. With no modal, the app-level live region
+  announces connection changes, so the picker's own copy is gone. Picker-only
+  `.split`, `.panel__*`, `.cards`, `.card*`, `.stack` and `.empty` styles are
+  removed; `.panel` and `.count` stay because the changes view builds on them.
+- Raise tiles with an open delete confirmation above later rows so Delete and
+  Cancel stay clickable. Update browser tests to reopen canvases through tiles,
+  including a multi-row delete and cancel regression check.
+
 ### App chrome fixes (2026-10-29)
 
 - Merge the save pill and the Save button into one status control: "Saved" at
