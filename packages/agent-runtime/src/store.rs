@@ -290,13 +290,16 @@ fn needs_rollback(error: &rusqlite::Error) -> bool {
         if failure.extended_code == rusqlite::ffi::SQLITE_READONLY_ROLLBACK)
 }
 
-/// Committed workspaces as `(id, name)`; `name` is `None` when the workspace
-/// cannot be read by this build. Incomplete creations are skipped. Readers
+/// A readable workspace's `(name, canvas count)`.
+pub(crate) type WorkspaceSummary = (String, i64);
+
+/// Committed workspaces as `(id, summary)`; the summary is `None`
+/// when the workspace cannot be read by this build. Incomplete creations are skipped. Readers
 /// never modify storage, except to roll back a crashed write while no writer
 /// holds the workspace and to remove restores abandoned by a crash.
 pub(crate) fn list_workspaces(
     data_root: Option<&Path>,
-) -> Result<Vec<(String, Option<String>)>, RuntimeError> {
+) -> Result<Vec<(String, Option<WorkspaceSummary>)>, RuntimeError> {
     let dir = workspaces_dir(data_root)?;
     remove_abandoned_restores(&dir, ABANDONED_RESTORE);
     let mut workspaces = Vec::new();
@@ -314,14 +317,16 @@ pub(crate) fn list_workspaces(
         if !database.is_file() {
             continue;
         }
-        let read = |conn: Connection| -> rusqlite::Result<Option<Option<String>>> {
+        let read = |conn: Connection| -> rusqlite::Result<Option<Option<WorkspaceSummary>>> {
             conn.busy_timeout(Duration::from_secs(1))?;
             match header(&conn)? {
                 (0, 0) => Ok(None),
                 (APPLICATION_ID, 1..=STORAGE_VERSION) => Ok(Some(
-                    conn.query_row("SELECT name FROM workspace WHERE id = ?1", [&id], |row| {
-                        row.get(0)
-                    })
+                    conn.query_row(
+                        "SELECT name, (SELECT count(*) FROM canvas) FROM workspace WHERE id = ?1",
+                        [&id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
                     .optional()?,
                 )),
                 _ => Ok(Some(None)),
@@ -339,7 +344,7 @@ pub(crate) fn list_workspaces(
         }
         match result {
             Ok(None) => {}
-            Ok(Some(name)) => workspaces.push((id, name)),
+            Ok(Some(summary)) => workspaces.push((id, summary)),
             Err(_) => workspaces.push((id, None)),
         }
     }
@@ -795,11 +800,20 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), bytes);
         assert_eq!(
             list_workspaces(Some(temp.path())).unwrap(),
-            [(id.clone(), Some("Research".to_owned()))]
+            [(id.clone(), Some(("Research".to_owned(), 0)))]
         );
-        // The open workspace stays listed; listing never takes the lock.
-        let _open = Workspace::open(Some(temp.path()), &id).unwrap();
-        assert_eq!(list_workspaces(Some(temp.path())).unwrap().len(), 1);
+        // The open workspace stays listed with its count; listing never takes the lock.
+        let open = Workspace::open(Some(temp.path()), &id).unwrap();
+        open.conn
+            .execute_batch(
+                "INSERT INTO canvas (id, title, revision, viewport_x, viewport_y, viewport_zoom)
+                VALUES ('a', 'A', 1, 0, 0, 1), ('b', 'B', 1, 0, 0, 1);",
+            )
+            .unwrap();
+        assert_eq!(
+            list_workspaces(Some(temp.path())).unwrap(),
+            [(id.clone(), Some(("Research".to_owned(), 2)))]
+        );
         assert_eq!(
             Workspace::open(Some(temp.path()), &id).err().unwrap().code,
             "WORKSPACE_LOCKED"
@@ -1580,7 +1594,7 @@ mod tests {
         drop(held);
         assert_eq!(
             list_workspaces(Some(temp.path())).unwrap(),
-            [(id.clone(), Some("Before".to_owned()))]
+            [(id.clone(), Some(("Before".to_owned(), 0)))]
         );
         crash_writer(&path);
         delete_workspace(Some(temp.path()), &id).unwrap();
@@ -1765,8 +1779,8 @@ mod tests {
         assert_ne!(restored, id);
         assert_eq!(name, "Notes (restored)");
         let listed = list_workspaces(Some(temp.path())).unwrap();
-        assert!(listed.contains(&(id.clone(), Some("Notes".to_owned()))));
-        assert!(listed.contains(&(restored.clone(), Some(name))));
+        assert!(listed.contains(&(id.clone(), Some(("Notes".to_owned(), 1)))));
+        assert!(listed.contains(&(restored.clone(), Some((name, 1)))));
         let original = Workspace::open(Some(temp.path()), &id).unwrap();
         let copy = Workspace::open(Some(temp.path()), &restored).unwrap();
         assert_eq!(contents(&copy.conn), contents(&original.conn));

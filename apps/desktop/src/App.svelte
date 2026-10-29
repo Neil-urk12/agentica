@@ -417,19 +417,12 @@
   const connected = $derived(status === "connected");
   const working = $derived(editorState.busy || editorState.saving || busy);
   const canEdit = $derived(connected && !working && !editorState.dirty);
+  const workspaceName = $derived(
+    editorState.workspace?.workspace.name ?? "Workspace",
+  );
+  const canvasTitle = $derived(editorState.document?.canvas.title ?? "Canvas");
   const canSave = $derived(
     connected && !working && editorState.dirty && !editorState.error,
-  );
-  const saveLabel = $derived(
-    editorState.saving
-      ? "Saving…"
-      : editorState.error && editorState.dirty
-        ? "Save failed"
-        : editorState.dirty
-          ? "Unsaved changes"
-          : editorState.error
-            ? "Operation failed"
-            : "All changes saved",
   );
   const selected = $derived(
     editorState.document?.nodes.find((node) => node.id === selectedId),
@@ -2765,14 +2758,8 @@
 {/if}
 
 {#snippet connectionControls()}
-  <!-- The workspace screen shows the controls on demand, so the bar stays
-       rendered there even while connected. -->
-  {#if stage === "workspace" || !connected}
-    <div
-      class="connbar"
-      class:connbar--ok={connected}
-      class:connbar--bad={status === "failed"}
-    >
+  {#if !connected}
+    <div class="connbar" class:connbar--bad={status === "failed"}>
       <span class="connbar__dot"></span>
       <span class="connbar__text">{message}</span>
       <form
@@ -2801,7 +2788,7 @@
           type="submit"
           disabled={busy || (!desktopMode && !connectionKey.trim())}
         >
-          <Icon name={connected ? "sync" : "bolt"} size={18} />
+          <Icon name="bolt" size={18} />
           {status === "connecting"
             ? "Connecting…"
             : status === "disconnected"
@@ -2819,6 +2806,7 @@
       workspaces={editorState.workspaces}
       {connected}
       connection={connectionControls}
+      onReconnect={() => void checkConnection(true)}
       {busy}
       error={editorState.error}
       onRefresh={() => void editor.listWorkspaces()}
@@ -2879,20 +2867,22 @@
         </span>
         <nav class="crumbs" aria-label="Breadcrumb">
           <button
-            class="crumb"
+            class="crumb crumb--workspace"
             type="button"
-            title="Switch workspace"
+            title={`Switch workspace (${workspaceName})`}
             disabled={working}
             onclick={() => void backToWorkspaces()}
           >
-            <Icon name="workspaces" size={16} />
-            {editorState.workspace?.workspace.name ?? "Workspace"}
+            <span class="crumb__icon"><Icon name="workspaces" size={16} /></span
+            ><span class="crumb__back"
+              ><Icon name="arrow_back" size={16} /></span
+            ><span class="crumb__label">{workspaceName}</span>
           </button>
           <span class="crumbs__sep"
             ><Icon name="chevron_right" size={16} /></span
           >
-          <span class="crumb crumb--current">
-            {editorState.document?.canvas.title ?? "Canvas"}
+          <span class="crumb crumb--current" title={canvasTitle}>
+            <span class="crumb__label">{canvasTitle}</span>
           </span>
         </nav>
       </div>
@@ -2912,16 +2902,46 @@
           class="btn btn--soft"
           type="button"
           disabled={!canEdit || pickingProject}
+          title="Open project"
           onclick={() => void openProject()}
-          ><Icon name="folder_open" size={18} />Open project</button
+          ><Icon name="folder_open" size={18} /><span class="label"
+            >Open project</span
+          ></button
         >
-        <span
-          class="pill"
-          class:pill--ok={!editorState.dirty && !editorState.error}
-          class:pill--warn={editorState.dirty && !editorState.error}
-          class:pill--bad={!!editorState.error}
-        >
-          <span class="pill__dot"></span>{saveLabel}
+        <!-- One control: a status at rest, an action only when one can run. -->
+        <span class="save-status" role="status" aria-live="polite">
+          {#if editorState.saving}
+            <span class="pill"><span class="pill__dot"></span>Saving…</span>
+          {:else if editorState.error && editorState.dirty && connected}
+            <button
+              class="pill pill--bad"
+              type="button"
+              disabled={working}
+              onclick={() => void editor.retrySave()}
+            >
+              <Icon name="refresh" size={16} />Retry save
+            </button>
+          {:else if editorState.error && !editorState.dirty}
+            <span class="pill pill--bad"
+              ><span class="pill__dot"></span>Operation failed</span
+            >
+          {:else if canSave}
+            <button
+              class="btn btn--primary"
+              type="button"
+              onclick={() => void editor.save()}
+            >
+              <Icon name="save" size={18} />Save now
+            </button>
+          {:else if editorState.dirty}
+            <span class="pill pill--warn"
+              ><span class="pill__dot"></span>Unsaved changes</span
+            >
+          {:else}
+            <span class="pill pill--ok"
+              ><span class="pill__dot"></span>Saved</span
+            >
+          {/if}
         </span>
         <span class="topbar__divider"></span>
         <button
@@ -2942,16 +2962,6 @@
           onclick={() => (settingsOpen = true)}
         >
           <Icon name="settings" size={20} />
-        </button>
-        <button
-          class="btn btn--primary"
-          type="button"
-          aria-label="Save"
-          disabled={!canSave}
-          onclick={() => void editor.save()}
-        >
-          <Icon name="save" size={18} />
-          Save
         </button>
       </div>
     </header>

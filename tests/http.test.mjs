@@ -1241,7 +1241,7 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
     );
     await waitFor(
       browser,
-      `!!document.querySelector(".connbar--ok")`,
+      `!!document.querySelector(".home__ready")`,
       "the connected status",
     );
 
@@ -1452,7 +1452,7 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
     );
     await waitFor(
       browser,
-      `document.querySelector(".pill")?.textContent.includes("All changes saved")`,
+      `document.querySelector(".save-status")?.textContent.trim() === "Saved"`,
       "the save indicator to settle",
     );
 
@@ -1476,7 +1476,7 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
     await press("Tab", "Tab");
     await waitFor(
       browser,
-      `document.querySelector(".pill")?.textContent.includes("All changes saved") && document.querySelector("#node-x")?.value === "180"`,
+      `document.querySelector(".save-status")?.textContent.trim() === "Saved" && document.querySelector("#node-x")?.value === "180"`,
       "text content and placement to save",
     );
     assert.equal(
@@ -1585,7 +1585,7 @@ test("Settings Tools lists built-in tools and manages MCP servers in the rendere
     );
     await waitFor(
       browser,
-      `!!document.querySelector('.connbar--ok')`,
+      `!!document.querySelector('.home__ready')`,
       "connection",
     );
     const open = async (label) => {
@@ -1799,7 +1799,7 @@ test("box selection groups, moves, ungroups, and deletes canvas objects", async 
     );
     await waitFor(
       browser,
-      `!!document.querySelector('.connbar--ok')`,
+      `!!document.querySelector('.home__ready')`,
       "the connected status",
     );
     // Workspaces are tiles on the start screen; canvases are picker cards.
@@ -2047,7 +2047,7 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
     );
     await waitFor(
       browser,
-      `!!document.querySelector('.connbar--ok')`,
+      `!!document.querySelector('.home__ready')`,
       "connection",
     );
     // Workspaces are tiles on the start screen; canvases are picker cards.
@@ -2234,7 +2234,7 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
     );
     await waitFor(
       browser,
-      `document.body.textContent.includes('All changes saved')`,
+      `document.querySelector('.save-status')?.textContent.trim() === 'Saved'`,
       "the manual text save",
     );
     const edited = await rpc("canvas.open", ref);
@@ -2605,7 +2605,7 @@ test("review feedback survives browser reload and backend restart with original 
   );
   const tile = ".changes--tile";
   const saved = (root) =>
-    `!!document.querySelector('${root} .notices [role=status]')?.textContent.includes('Feedback: Saved') && !!document.querySelector('.pill')?.textContent.includes('All changes saved')`;
+    `!!document.querySelector('${root} .notices [role=status]')?.textContent.includes('Feedback: Saved') && document.querySelector('.save-status')?.textContent.trim() === 'Saved'`;
   const run = (script) => evaluate(browser, script);
   const click = (selector) =>
     run(`document.querySelector(${JSON.stringify(selector)}).click()`);
@@ -2641,7 +2641,7 @@ test("review feedback survives browser reload and backend restart with original 
     );
     await waitFor(
       browser,
-      `!!document.querySelector(".connbar--ok")`,
+      `!!document.querySelector(".home__ready")`,
       "the connected status",
     );
     for (const label of ["Review restore", "Review canvas"]) {
@@ -2864,7 +2864,7 @@ wait
     );
     await waitFor(
       browser,
-      `!!document.querySelector(".connbar--ok")`,
+      `!!document.querySelector(".home__ready")`,
       "the connected status",
     );
     for (const label of ["Task dispatch", "Task canvas"]) {
@@ -3102,7 +3102,7 @@ test("dragging a reopened canvas pans from its saved viewport", async () => {
     );
     await waitFor(
       browser,
-      `!!document.querySelector('.connbar--ok')`,
+      `!!document.querySelector('.home__ready')`,
       "the connected status",
     );
     for (const label of ["Saved view", "Panned canvas"]) {
@@ -3224,7 +3224,7 @@ test("picked files are copied, previewed, and shared with the next prompt", asyn
     );
     await waitFor(
       browser,
-      `!!document.querySelector('.connbar--ok')`,
+      `!!document.querySelector('.home__ready')`,
       "the connected status",
     );
     const selectCard = (label) => openCard(browser, label);
@@ -3580,7 +3580,7 @@ test("Ctrl+Z undoes an accidental drag in the rendered app and saves it", async 
     );
     await waitFor(
       browser,
-      `!!document.querySelector('.connbar--ok')`,
+      `!!document.querySelector('.home__ready')`,
       "the connected status",
     );
     for (const label of ["Undo history", "Undo canvas"]) {

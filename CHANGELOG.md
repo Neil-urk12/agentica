@@ -12,6 +12,24 @@ build the installers and publish the release. Keep validation evidence in the
 
 ## Unreleased
 
+### App chrome fixes (2026-10-29)
+
+- Merge the save pill and the Save button into one status control: "Saved" at
+  rest, "Saving…", "Save now" only when a save can start, "Unsaved changes"
+  while it cannot, and "Retry save" after a failed save. A disabled primary Save
+  button is no longer shown.
+- Keep the canvas title visible below 900px; the workspace crumb collapses to a
+  labeled back button. Crumb labels end with an ellipsis and carry the full name
+  as a tooltip.
+- Keep top-bar labels on one line and collapse "Open project" and the waiting
+  queue to icons below 700px, so every action fits down to 360px.
+- Replace the identical workspace tile art with a canvas count and a row of
+  actions that no longer overlaps the tile. `workspace.list` entries gain an
+  additive `canvases` count (null when the workspace is unreadable), read in the
+  existing read-only query without taking the workspace lock.
+- Drop the hover lift on saved-canvas rows and pad the list so focus outlines
+  are not clipped; theme the canvas attribution label for dark mode.
+
 ### Local web previews (2026-10-28)
 
 - Reject IPv6 preview creation and edits because supported frame policies cannot

@@ -869,7 +869,10 @@ export class Editor {
       this.publish({
         workspace,
         document: null,
-        workspaces: [...this.state.workspaces, workspace.workspace],
+        workspaces: [
+          ...this.state.workspaces,
+          { ...workspace.workspace, canvases: workspace.canvases.length },
+        ],
       });
     });
   }

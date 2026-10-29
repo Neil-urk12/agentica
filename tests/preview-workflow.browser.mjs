@@ -190,7 +190,7 @@ test(
       await clickAt(page, await boxOf(page, ".connbar button[type='submit']"));
       await waitFor(
         page,
-        "!!document.querySelector('.connbar--ok')",
+        "!!document.querySelector('.home__ready')",
         "connection",
       );
       for (const label of ["Preview test", "Preview canvas"]) {
