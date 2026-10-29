@@ -1001,7 +1001,9 @@ mod tests {
         attachment: &str,
         needle: &[u8],
     ) -> Vec<u8> {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        // A cold PowerShell start on a CI runner busy with parallel tests can
+        // take longer than 5s; a passing run returns as soon as the needle arrives.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         let mut bytes = Vec::new();
         loop {
             let page = supervisor.output(owner, identity, attachment).unwrap();
