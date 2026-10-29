@@ -12,6 +12,8 @@ build the installers and publish the release. Keep validation evidence in the
 
 ## Unreleased
 
+## 0.2.0 — 2026-10-29
+
 ### Canvas picker page (2026-10-29)
 
 - Turn the canvas picker from a modal into a full page that shares the
