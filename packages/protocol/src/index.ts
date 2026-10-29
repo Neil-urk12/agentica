@@ -951,9 +951,13 @@ export const RuntimeRequestSchema = z.union([
 ]);
 
 const Workspace = z.strictObject({ id: IdSchema, name: z.string() });
-// `name` is null when this build cannot read the workspace.
+// `name` and `canvases` are null when this build cannot read the workspace.
 const WorkspaceSummaries = z.array(
-  z.strictObject({ id: IdSchema, name: z.string().nullable() }),
+  z.strictObject({
+    id: IdSchema,
+    name: z.string().nullable(),
+    canvases: z.number().int().nonnegative().nullable(),
+  }),
 );
 const CanvasSummary = z.strictObject({ id: IdSchema, title: z.string() });
 export const TextArtifactSchema = z.strictObject({

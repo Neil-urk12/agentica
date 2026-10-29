@@ -183,6 +183,7 @@ body {
   font-size: 0.875rem;
   font-weight: 600;
   line-height: 1.1;
+  white-space: nowrap;
   color: var(--ink);
   background: var(--surface);
   cursor: pointer;
@@ -516,11 +517,6 @@ label {
   box-shadow: 0 0 0 3px rgba(142, 142, 147, 0.15);
 }
 
-.connbar--ok .connbar__dot {
-  background: var(--ok);
-  box-shadow: 0 0 0 3px var(--ok-soft);
-}
-
 .connbar--bad .connbar__dot {
   background: var(--bad);
   box-shadow: 0 0 0 3px var(--bad-soft);
@@ -617,8 +613,9 @@ label {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  margin: 0;
-  padding: 0;
+  /* Room inside the scrollport for the 2px-offset focus outline. */
+  margin: -4px;
+  padding: 4px;
   list-style: none;
   overflow-y: auto;
   max-height: 19rem;
@@ -647,16 +644,11 @@ label {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition:
-    border-color 0.16s ease,
-    box-shadow 0.16s ease,
-    transform 0.12s ease;
+  transition: border-color 0.16s ease;
 }
 
 .card:hover:not(:disabled) {
   border-color: var(--accent);
-  box-shadow: var(--shadow-sm);
-  transform: translateY(-1px);
 }
 
 /* A row asking to confirm a destructive delete, in the card's own shape. */
@@ -671,8 +663,6 @@ label {
 
 .card--confirm:hover {
   border-color: var(--bad-line);
-  box-shadow: none;
-  transform: none;
 }
 
 .card--confirm .card__body strong {
@@ -799,23 +789,39 @@ label {
   align-items: center;
   gap: 0.5rem;
   min-height: 2.75rem;
-  padding: 0 0.85rem;
+  padding: 0 0 0 0.85rem;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
-  font: inherit;
   font-size: 0.875rem;
   font-weight: 600;
   color: var(--ink-soft);
   background: var(--surface);
-  cursor: pointer;
-  transition:
-    border-color 0.16s ease,
-    color 0.16s ease;
 }
 
-.home__ready:hover {
-  color: var(--ink);
-  border-color: var(--accent);
+/* Reconnect lives inside the status chip, split off by a hairline. */
+.home__reconnect {
+  display: grid;
+  place-items: center;
+  align-self: stretch;
+  width: 2.5rem;
+  margin-left: 0.35rem;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--muted);
+  background: none;
+  cursor: pointer;
+  transition: color 0.16s ease;
+}
+
+.home__reconnect:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.home__reconnect:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 .home__dot {
@@ -841,7 +847,6 @@ label {
 .home__conn[hidden] {
   display: none;
 }
-
 .home__main {
   width: 100%;
   max-width: 65rem;
@@ -956,19 +961,31 @@ label {
 
 .tile {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  transition: border-color 0.16s ease;
+}
+
+.tile:has(.tile__open:hover:not(:disabled)) {
+  border-color: var(--accent);
 }
 
 .tile__open {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: 0.3rem;
   width: 100%;
-  padding: 0;
+  min-width: 0;
+  padding: 1rem 1rem 0.5rem;
   font: inherit;
   text-align: left;
   color: var(--ink);
   background: none;
   border: 0;
+  border-radius: var(--radius) var(--radius) 0 0;
   cursor: pointer;
 }
 
@@ -977,54 +994,7 @@ label {
   cursor: not-allowed;
 }
 
-.tile__paper {
-  position: relative;
-  display: block;
-  height: 8rem;
-  overflow: hidden;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  background: var(--surface);
-  transition: border-color 0.16s ease;
-}
-
-.tile__open:hover:not(:disabled) .tile__paper {
-  border-color: var(--accent);
-}
-
-.tile__note {
-  position: absolute;
-  left: 1.4rem;
-  top: 1.5rem;
-  width: 4rem;
-  height: 2.75rem;
-  border-radius: 4px;
-  background: var(--card-note);
-  border: 1px solid var(--card-note-line);
-  transform: rotate(-3deg);
-}
-
-.tile__line {
-  position: absolute;
-  left: 6.5rem;
-  top: 2.1rem;
-  width: 4.5rem;
-  height: 2px;
-  background: var(--card-line);
-}
-
-.tile__ring {
-  position: absolute;
-  left: 7rem;
-  top: 3.75rem;
-  width: 3.25rem;
-  height: 2.1rem;
-  border: 2px solid var(--card-line);
-  border-radius: 50%;
-}
-
 .tile__name {
-  padding-right: 0.5rem;
   font-size: 1rem;
   font-weight: 600;
   overflow: hidden;
@@ -1033,7 +1003,6 @@ label {
 }
 
 .tile__meta {
-  margin-top: -0.4rem;
   font-size: var(--type-meta);
   color: var(--muted);
   overflow: hidden;
@@ -1041,18 +1010,11 @@ label {
   white-space: nowrap;
 }
 
-.tile__delete {
-  position: absolute;
-  top: 0.5rem;
-  right: 0.5rem;
-  background: var(--surface);
-}
-
-.tile__backup {
-  position: absolute;
-  top: 0.5rem;
-  right: 3rem;
-  background: var(--surface);
+.tile__tools {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.25rem;
+  padding: 0 0.5rem 0.5rem;
 }
 
 .home__backup {
@@ -1062,11 +1024,12 @@ label {
   gap: 0.75rem;
 }
 
-/* Covers the tile's preview while asking to confirm a destructive delete. */
+/* Covers the whole tile while asking to confirm a destructive delete. */
 .tile__confirm {
   position: absolute;
   inset: 0 0 auto;
-  min-height: 8rem;
+  /* Grows past the tile rather than clipping when the question is long. */
+  min-height: 100%;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -1192,6 +1155,7 @@ label {
 }
 
 .crumbs {
+  flex: 1;
   display: flex;
   align-items: center;
   gap: 0.35rem;
@@ -1211,9 +1175,19 @@ label {
   border: none;
   border-radius: 8px;
   cursor: pointer;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.crumb__label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+/* The back arrow replaces the workspace icon once the trail collapses. */
+.crumb__back {
+  display: none;
 }
 
 .crumb:hover:not(:disabled) {
@@ -1247,6 +1221,22 @@ label {
   border: 1px solid var(--line);
   background: var(--surface-soft);
   color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.save-status {
+  display: inline-flex;
+}
+
+button.pill {
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.pill:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .pill__dot {
@@ -2051,6 +2041,15 @@ label {
   outline-offset: 6px;
 }
 
+.svelte-flow .svelte-flow__attribution {
+  color: var(--muted);
+  background: var(--surface-glass);
+}
+
+.svelte-flow .svelte-flow__attribution a {
+  color: inherit;
+}
+
 /* -------------------------------------------------------- canvas content */
 
 .canvas-text {
@@ -2801,8 +2800,37 @@ span.card-more {
   .topbar__lead {
     gap: 0.6rem;
   }
-  .crumbs {
+  .crumbs__sep,
+  .crumb__icon {
     display: none;
+  }
+  .crumb__back {
+    display: inline-block;
+  }
+  .crumb--workspace .crumb__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+@media (max-width: 700px) {
+  .topbar .label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
   }
 }
 
