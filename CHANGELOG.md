@@ -29,6 +29,11 @@ build the installers and publish the release. Keep validation evidence in the
   existing read-only query without taking the workspace lock.
 - Drop the hover lift on saved-canvas rows and pad the list so focus outlines
   are not clipped; theme the canvas attribution label for dark mode.
+- Show reconnect progress on the workspace Ready chip ("Connecting…" with a
+  spinning sync icon that finishes its turn) instead of swapping in the
+  connection bar; the bar appears only if the reconnect fails, and keyboard
+  focus moves to its Reconnect button. Under reduced motion the icon stays
+  still instead of jittering.
 
 ### Local web previews (2026-10-28)
 

@@ -14,6 +14,7 @@
     connected: boolean;
     connection: Snippet;
     onReconnect: () => void;
+    reconnecting: boolean;
     busy: boolean;
     error: string;
     onRefresh: () => void;
@@ -32,6 +33,7 @@
     connected,
     connection,
     onReconnect,
+    reconnecting,
     busy,
     error,
     onRefresh,
@@ -47,6 +49,17 @@
   let name = $state("");
   // Deleting storage is destructive, so the tile asks for confirmation first.
   let confirming = $state("");
+  // The icon spins in whole turns, so a fast reconnect still shows one.
+  let turning = $state(false);
+  // A failed reconnect hides the chip mid-turn; don't resume spinning later.
+  // Under reduced motion the icon doesn't spin, so no iteration event clears it.
+  $effect(() => {
+    if (
+      !reconnecting &&
+      (!connected || matchMedia("(prefers-reduced-motion: reduce)").matches)
+    )
+      turning = false;
+  });
   const locked = $derived(busy || !connected);
   // Announced once a backup file is written; cleared by the next action.
   let backedUp = $state("");
@@ -114,16 +127,25 @@
       Agentica
     </span>
     <span class="home__tools">
-      {#if connected}
-        <span class="home__ready">
-          <span class="home__dot"></span>Ready
+      {#if connected || reconnecting}
+        <span class="home__ready" class:home__ready--busy={reconnecting}>
+          <span class="home__dot"></span>{reconnecting
+            ? "Connecting…"
+            : "Ready"}
           <button
             class="home__reconnect"
+            class:home__reconnect--turning={turning}
             type="button"
             title="Reconnect to the backend"
             aria-label="Reconnect to the backend"
             disabled={busy}
-            onclick={onReconnect}
+            onclick={() => {
+              turning = true;
+              onReconnect();
+            }}
+            onanimationiteration={() => {
+              if (!reconnecting) turning = false;
+            }}
           >
             <Icon name="sync" size={18} />
           </button>
