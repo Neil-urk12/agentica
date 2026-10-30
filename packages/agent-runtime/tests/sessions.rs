@@ -498,6 +498,21 @@ async fn conversations_exclude_project_metadata_and_empty_native_selection_never
         .await
         .get("error")
         .is_none());
+    // Chat turns add no notes, so give canvas mode one to include.
+    let revision =
+        host.rpc("canvas.open", reference.clone()).await["result"]["canvas"]["revision"].clone();
+    let mut note = reference.clone();
+    note.as_object_mut().unwrap().extend(
+        json!({"expectedRevision":revision,"x":2000,"y":0,"width":200,"height":100,"text":"Note"})
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
+    assert!(host
+        .rpc("node.createText", note)
+        .await
+        .get("error")
+        .is_none());
     start["turnId"] = json!("00000000-0000-4000-8000-000000000011");
     start["contextMode"] = json!("canvas");
     let canvas = host.rpc("conversation.start", start).await;

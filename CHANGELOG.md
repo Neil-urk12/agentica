@@ -12,6 +12,65 @@ build the installers and publish the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Canvas agent chat panel (2026-10-30)
+
+- Move the main agent's conversation into a Chat panel in the canvas side slot,
+  shared with the Inspector and open by default. It shows the canvas's prompts,
+  replies, outcomes, and the existing composer, recovery, and review controls.
+  Hiding it keeps the composer mounted, so drafts, running turns, pending
+  proposals, and buffered replies survive; the collapsed toggle marks running,
+  review, and error states. The canvas toolbar is always shown; the composer's
+  tools toggle is gone, since the composer no longer sits under the toolbar.
+  At 820px and below the panel overlays the canvas, and Show dismisses it. The panel counts as covered space for Show, Fit, and proposal anchors.
+- New turns no longer create prompt or reply cards or bump the canvas revision:
+  only applied proposals change the canvas. The stored anchor is the proposal
+  origin, so the harness drops its fixed 404-unit card offset and the frontend
+  reserves room for proposed objects only.
+- `ConversationTurn.promptNodeId` is nullable (breaking). Storage v16 rebuilds
+  `conversation_turn` with a nullable `prompt_node_id`, keeping turn IDs,
+  sequences, the AUTOINCREMENT counter, the active-turn index, and read/MCP
+  audit rows; older builds refuse the upgraded workspace. Legacy cards, including
+  hand-edited ones, stay on the canvas and the panel shows the original saved
+  exchange; neither copy overwrites the other.
+- The editor pages history with the existing `before`/`nextBefore` cursor and
+  merges refreshes by turn ID, so Apply/Discard outcomes update without losing
+  older pages; delayed pages for another canvas are ignored, and failed pages
+  keep loaded messages and retry the same cursor. The model still gets at most
+  eight prior exchanges.
+- Checked with runtime migration/conversation tests, editor and harness tests, a
+  browser workflow (history beyond one page, reviewed creation and selected
+  edit, discard, hide/reopen during and after generation, save recovery, legacy
+  card preservation, narrow-width Show), `pnpm check`, clippy, lint, and format.
+  Verified in browser launch mode only; the Tauri desktop shell was not run.
+- Chats: New chat clears the panel and starts a separate conversation whose
+  model context holds only its own turns (still at most eight). History in the
+  panel header lists the canvas's chats, most recent first, by first prompt
+  and exchange count; choosing one shows it and the next prompt continues it.
+  Storage v17 marks a chat's first turn (`new_chat`) and v18 adds `chat_id`
+  (the first turn's ID), backfilling existing turns into the canvas's first
+  chat or the chat begun by an earlier New chat. `conversation.start` takes
+  `newChat` or `chatId` (default: the latest chat), `conversation.list` takes
+  an optional `chatId`, and `conversation.chats` lists chats. Switching chats
+  is disabled while a turn runs, waits for review, or holds an unsaved reply,
+  since the runtime allows one active turn per canvas.
+  Shortcut: History shows the 100 most recent chats; add a cursor if a canvas
+  outgrows it.
+- The Chat panel resizes from its left edge by drag or arrow keys (Shift for
+  larger steps), between 320 and 720px and at most 60% of the stage, and
+  remembers its width per browser like the Nodes drawer. Both panels now share
+  one width read/clamp/store helper.
+- Composer in the panel: the prompt takes its own full-width line above the
+  tool, file, dictation, and send buttons, and the placeholder is shorter, so
+  it fits on one line at the panel's 320px minimum. WebKitGTK (the Linux
+  desktop webview) lacks `field-sizing: content`, so the prompt grows with its
+  text through a small script there instead of clipping behind a scrollbar.
+  Docked in the panel, the composer is flat: a quiet border and 12px radius
+  with no floating shadow, and an accent border while typing.
+- Fix app banners: `.banner span` also matched icon spans, so icons grew to
+  fill the row, centring the message and splitting button icons from their
+  labels. Only the message grows now. Error banners use body text with a red
+  accent edge and icon, and compact neutral buttons.
+
 ## 0.2.0 — 2026-10-29
 
 ### Windows session test deadline (2026-10-30)

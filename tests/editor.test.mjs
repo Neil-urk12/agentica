@@ -36,6 +36,7 @@ const workspaceId = "00000000-0000-4000-8000-000000000001";
 const canvasId = "00000000-0000-4000-8000-000000000002";
 const nodeId = "00000000-0000-4000-8000-000000000003";
 const artifactId = "00000000-0000-4000-8000-000000000004";
+const CHAT_ID = "00000000-0000-4000-8000-000000000005";
 
 test("preview saves use artifact revisions and leave other previews unchanged on conflict", async (t) => {
   let conflict = false;
@@ -230,6 +231,10 @@ async function setup(t, intercept = async () => {}) {
     if (method === "workspace.list")
       return { workspaces: structuredClone(workspaceList) };
     if (method === "conversation.list") return { turns: [], nextBefore: 0 };
+    if (method === "conversation.chats")
+      return {
+        chats: [{ chatId: CHAT_ID, title: "Plan", turns: 1, lastSequence: 1 }],
+      };
     if (method === "workspace.delete") {
       workspaceList = workspaceList.filter(
         (workspace) => workspace.id !== params.workspaceId,
@@ -2380,6 +2385,159 @@ test("a finish committed without an acknowledgement is found for adoption", asyn
   assert.match(editor.state.error, /already finished/);
   await editor.resolveConversation(turnId, "discard");
   assert.equal((await editor.finishedTurn(turnId)).status, "discarded");
+});
+
+const turnAt = (sequence, status = "complete") => ({
+  id: `00000000-0000-4000-8000-${String(1000 + sequence).padStart(12, "0")}`,
+  sequence,
+  model: "openrouter/free",
+  prompt: `Prompt ${sequence}`,
+  reply: `Reply ${sequence}`,
+  promptNodeId: null,
+  replyNodeId: null,
+  anchor: { x: 0, y: 0 },
+  status,
+  operations: [],
+  error: "",
+});
+
+/** `conversation.list` as the runtime pages it: eight turns, newest first. */
+function listPage(stored, before) {
+  const turns = stored
+    .filter((turn) => !before || turn.sequence < before)
+    .sort((a, b) => b.sequence - a.sequence)
+    .slice(0, 8);
+  return {
+    turns: structuredClone(turns),
+    nextBefore: turns.length === 8 ? turns[7].sequence : 0,
+  };
+}
+
+test("history beyond one page loads once in order, keeps pages on refresh, and retries the same page", async (t) => {
+  const { editor, call, calls } = await setup(t);
+  const stored = Array.from({ length: 20 }, (_, index) => turnAt(index + 1));
+  stored[19].status = "pending";
+  const requested = [];
+  let failing = false;
+  editor.call = async (...args) => {
+    const [, , method, params] = args;
+    if (method === "conversation.list") {
+      requested.push(params.before);
+      if (failing) throw new Error("Connection lost");
+      return listPage(stored, params.before);
+    }
+    if (method === "conversation.resolve") {
+      stored[19].status = "applied";
+      return { turn: structuredClone(stored[19]) };
+    }
+    return call(...args);
+  };
+  await editor.refreshConversation();
+  assert.equal(editor.state.turns.length, 8);
+  assert.equal(editor.state.olderTurns, 13);
+
+  failing = true;
+  await editor.loadOlderTurns();
+  assert.match(editor.state.historyError, /Connection lost/);
+  assert.equal(editor.state.historyLoading, false);
+  assert.equal(editor.state.turns.length, 8);
+  failing = false;
+  await editor.loadOlderTurns();
+  assert.equal(editor.state.historyError, "");
+  assert.equal(editor.state.turns.length, 16);
+  assert.equal(editor.state.olderTurns, 5);
+
+  // Apply and a new turn refresh the newest page without dropping older ones.
+  await editor.resolveConversation(stored[19].id, "apply");
+  assert.equal(editor.state.turns[0].status, "applied");
+  stored.push(turnAt(21));
+  await editor.refreshConversation();
+  assert.equal(editor.state.turns.length, 17);
+  assert.equal(editor.state.olderTurns, 5);
+
+  await editor.loadOlderTurns();
+  await editor.loadOlderTurns();
+  assert.equal(editor.state.olderTurns, 0);
+  assert.deepEqual(
+    editor.state.turns.map((turn) => turn.sequence),
+    Array.from({ length: 21 }, (_, index) => 21 - index),
+  );
+  assert.deepEqual(requested, [0, 13, 13, 0, 0, 5]);
+  // Browsing history never starts a turn or writes the canvas.
+  assert.ok(
+    !calls.some(({ method }) =>
+      /^(conversation\.(start|finish)|node\.|artifact\.|canvas\.(save|update))/.test(
+        method,
+      ),
+    ),
+  );
+});
+
+test("new chats start empty, adopt their first turn's chat, and past chats reopen by ID", async (t) => {
+  const { editor, call } = await setup(t);
+  const first = turnAt(1);
+  const listed = [];
+  editor.call = async (...args) => {
+    const [, , method, params] = args;
+    if (method === "conversation.list") {
+      listed.push(params.chatId);
+      return {
+        turns: params.chatId === CHAT_ID ? [] : [structuredClone(first)],
+        nextBefore: 0,
+      };
+    }
+    if (method === "conversation.start")
+      return { turn: { ...first, chatId: first.id }, context: {}, outline: {} };
+    return call(...args);
+  };
+  assert.equal(editor.state.chatId, CHAT_ID, "a canvas opens its latest chat");
+  await editor.openChat(null);
+  assert.equal(editor.state.chatId, null);
+  assert.deepEqual(editor.state.turns, []);
+  assert.deepEqual(listed, [], "an unsent new chat lists nothing");
+  await editor.startConversation({ newChat: true });
+  assert.equal(editor.state.chatId, first.id);
+  assert.deepEqual(
+    editor.state.turns.map((turn) => turn.id),
+    [first.id],
+  );
+  await editor.openChat(CHAT_ID);
+  assert.equal(editor.state.chatId, CHAT_ID);
+  assert.deepEqual(editor.state.turns, []);
+  assert.deepEqual(listed, [first.id, CHAT_ID]);
+});
+
+test("a delayed history page for the previous canvas is ignored", async (t) => {
+  const { editor, call, disk } = await setup(t);
+  const otherId = "00000000-0000-4000-8000-000000000099";
+  const stored = Array.from({ length: 10 }, (_, index) => turnAt(index + 1));
+  const delayed = deferred();
+  editor.call = async (...args) => {
+    const [, , method, params] = args;
+    if (method === "conversation.list") {
+      if (params.canvasId === otherId) return { turns: [], nextBefore: 0 };
+      if (params.before) await delayed.promise;
+      return listPage(stored, params.before);
+    }
+    if (method === "canvas.open" && params.canvasId === otherId)
+      return structuredClone({
+        ...disk,
+        canvas: { ...disk.canvas, id: otherId },
+        nodes: [],
+        artifacts: [],
+      });
+    return call(...args);
+  };
+  await editor.refreshConversation();
+  assert.equal(editor.state.olderTurns, 3);
+  const older = editor.loadOlderTurns();
+  await editor.openCanvas(otherId);
+  delayed.resolve();
+  await older;
+  assert.equal(editor.state.document.canvas.id, otherId);
+  assert.deepEqual(editor.state.turns, []);
+  assert.equal(editor.state.olderTurns, 0);
+  assert.equal(editor.state.historyLoading, false);
 });
 
 test("a maximum file chunk still fits one runtime frame", () => {

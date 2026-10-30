@@ -519,12 +519,16 @@ export const ConversationTurnSchema = z.strictObject({
   model: Label,
   prompt: Text,
   reply: Text,
-  promptNodeId: IdSchema,
+  promptNodeId: IdSchema.nullable(),
   replyNodeId: IdSchema.nullable(),
   anchor: Anchor,
   status: ConversationStatus,
   operations: Operations,
   error: Text,
+  /** This turn started a new chat; the model saw no earlier exchange. */
+  newChat: z.boolean(),
+  /** The chat this turn belongs to: the ID of the chat's first turn. */
+  chatId: IdSchema,
 });
 export type ConversationTurn = z.infer<typeof ConversationTurnSchema>;
 export const ChangeSectionSchema = z.enum(["staged", "unstaged", "untracked"]);
@@ -647,6 +651,8 @@ const ParamSchemas = {
     nodeIds: UniqueIds,
     contextMode: z.enum(["canvas", "selection"]).optional(),
     anchor: Anchor,
+    newChat: z.boolean().optional(),
+    chatId: IdSchema.optional(),
   }),
   "conversation.finish": z.strictObject({
     ...TurnRef,
@@ -670,7 +676,9 @@ const ParamSchemas = {
   "conversation.list": z.strictObject({
     ...CanvasRef,
     before: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    chatId: IdSchema.optional(),
   }),
+  "conversation.chats": z.strictObject({ ...CanvasRef }),
   "artifact.applyBatch": ArtifactBatchSchema,
   "agent.capabilities": z.strictObject({}),
   "agent.start": AgentStartSchema,
@@ -1085,6 +1093,18 @@ export const ResultSchemas = {
   "conversation.list": z.strictObject({
     turns: z.array(ConversationTurnSchema).max(8),
     nextBefore: z.number().int().nonnegative(),
+  }),
+  "conversation.chats": z.strictObject({
+    chats: z
+      .array(
+        z.strictObject({
+          chatId: IdSchema,
+          title: z.string(),
+          turns: z.number().int().positive(),
+          lastSequence: z.number().int().positive(),
+        }),
+      )
+      .max(100),
   }),
   "artifact.applyBatch": z.strictObject({
     artifacts: z.array(TextArtifactSchema).min(1).max(32),

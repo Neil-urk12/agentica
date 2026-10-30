@@ -6,7 +6,7 @@ import {
   type CanvasOperation,
 } from "@agentica/protocol";
 import type { CanvasDocument } from "./editor.ts";
-import { EXCHANGE_RESERVE, type Box } from "./canvas-view.ts";
+import { PROPOSAL_RESERVE, type Box } from "./canvas-view.ts";
 
 type Context = Pick<CanvasDocument, "nodes" | "edges" | "artifacts">;
 
@@ -76,7 +76,8 @@ export function canvasTools() {
   ];
 }
 
-export function exchangePosition(
+/** Origin for proposed objects: beside the selection, else the usable viewport centre. */
+export function proposalAnchor(
   nodes: (Box & { id: string })[],
   selectedIds: string[],
   center: { x: number; y: number },
@@ -86,21 +87,20 @@ export function exchangePosition(
     ? Math.max(...selected.map((n) => n.x + n.width)) + 64
     : center.x;
   const y = selected.length ? Math.min(...selected.map((n) => n.y)) : center.y;
-  // Reserve room for the compact prompt and reply cards plus a nearby
-  // diagram without moving user work; the runtime caps card heights to match.
+  // Seek open room for new objects without moving user work.
   for (let attempts = 0; attempts <= nodes.length; attempts++) {
     const overlap = nodes.find(
       (n) =>
-        n.x < x + EXCHANGE_RESERVE.width &&
+        n.x < x + PROPOSAL_RESERVE.width &&
         n.x + n.width > x - 32 &&
-        n.y < y + EXCHANGE_RESERVE.height &&
+        n.y < y + PROPOSAL_RESERVE.height &&
         n.y + n.height > y - 32,
     );
     if (!overlap) return { x, y };
     x = overlap.x + overlap.width + 64;
   }
   throw new Error(
-    "There is no room for this exchange. Pan to an open area and retry.",
+    "There is no room for proposed objects. Pan to an open area and retry.",
   );
 }
 

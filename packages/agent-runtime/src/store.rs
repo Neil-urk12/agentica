@@ -30,6 +30,9 @@ const MIGRATIONS: &[&str] = &[
     include_str!("schema_v13.sql"),
     include_str!("schema_v14.sql"),
     include_str!("schema_v15.sql"),
+    include_str!("schema_v16.sql"),
+    include_str!("schema_v17.sql"),
+    include_str!("schema_v18.sql"),
 ];
 pub const STORAGE_VERSION: i64 = MIGRATIONS.len() as i64;
 
@@ -1160,6 +1163,133 @@ mod tests {
     }
 
     #[test]
+    fn chat_migration_keeps_turns_cards_audits_and_sequence() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut conn = connect(&temp.path().join("db"), true).unwrap();
+        let tx = conn.transaction().unwrap();
+        migrate(&tx, 0, &MIGRATIONS[..15]).unwrap();
+        tx.execute_batch(
+            "INSERT INTO workspace (id, name) VALUES ('w', 'Existing');
+            INSERT INTO canvas VALUES ('c', 'Canvas', 9, 0, 0, 1);
+            INSERT INTO text_content (id, body) VALUES ('tp', 'Prompt'), ('tr', 'Edited reply');
+            INSERT INTO artifact VALUES ('ap', 'text', 1, 1, 'sqlite', 'tp');
+            INSERT INTO artifact VALUES ('ar', 'text', 1, 4, 'sqlite', 'tr');
+            INSERT INTO canvas_node (id, canvas_id, kind, artifact_id, x, y, width, height)
+                VALUES ('np', 'c', 'artifact', 'ap', 10, 20, 300, 120),
+                       ('nr', 'c', 'artifact', 'ar', 10, 160, 320, 200);
+            INSERT INTO conversation_turn
+                (id, canvas_id, model, prompt, reply, prompt_node_id, reply_node_id, anchor, context, status)
+                VALUES ('done', 'c', 'm', 'Prompt', 'Original reply', 'np', 'nr', '{}', '{}', 'complete'),
+                       ('gone', 'c', 'm', 'Removed', '', 'nx', NULL, '{}', '{}', 'failed'),
+                       ('wait', 'c', 'm', 'Pending', 'Proposal', 'nq', 'ns', '{\"x\":1}', '{}', 'pending'),
+                       ('dropped', 'c', 'm', 'Dropped', '', 'nd', NULL, '{}', '{}', 'cancelled');
+            UPDATE conversation_turn SET operations = '[1]' WHERE id = 'wait';
+            DELETE FROM conversation_turn WHERE id = 'dropped';
+            INSERT INTO conversation_read (turn_id, sequence, node_ids, bytes) VALUES ('done', 1, '[\"np\"]', 6);
+            INSERT INTO mcp_call VALUES ('wait', 1, 's', 't', 'ok', 3);",
+        )
+        .unwrap();
+        let before = turn_ids(&tx);
+        migrate(&tx, 15, MIGRATIONS).unwrap();
+        tx.commit().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        assert_eq!(turn_ids(&conn), before);
+        let turn: (String, String, String, String, String, String) = conn
+            .query_row(
+                "SELECT reply, prompt_node_id, reply_node_id, status, anchor, operations FROM conversation_turn WHERE id = 'wait'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            turn,
+            (
+                "Proposal".into(),
+                "nq".into(),
+                "ns".into(),
+                "pending".into(),
+                "{\"x\":1}".into(),
+                "[1]".into()
+            )
+        );
+        // The edited card keeps its own text and geometry, apart from the saved reply.
+        let card: (String, i64, f64, f64) = conn
+            .query_row(
+                "SELECT body, revision, y, height FROM canvas_node JOIN artifact ON artifact.id = artifact_id
+                 JOIN text_content ON text_content.id = content_id WHERE canvas_node.id = 'nr'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(card, ("Edited reply".into(), 4, 160.0, 200.0));
+        let audits: (i64, i64) = conn
+            .query_row(
+                "SELECT (SELECT count(*) FROM conversation_read), (SELECT count(*) FROM mcp_call)",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(audits, (1, 1));
+        assert!(conn
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .query([])
+            .unwrap()
+            .next()
+            .unwrap()
+            .is_none());
+        // One active turn per canvas, panel-only turns, and no reused sequence.
+        let insert =
+            "INSERT INTO conversation_turn (id, canvas_id, model, prompt, anchor, context, status)
+                      VALUES (?1, 'c', 'm', 'Next', '{}', '{}', ?2)";
+        assert!(conn.execute(insert, ("again", "generating")).is_err());
+        conn.execute(insert, ("next", "complete")).unwrap();
+        let next: (i64, Option<String>) = conn
+            .query_row(
+                "SELECT sequence, prompt_node_id FROM conversation_turn WHERE id = 'next'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(next, (5, None));
+        let fresh: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM conversation_turn WHERE new_chat = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(fresh, 0, "upgraded turns never start a new chat");
+        // Every upgraded turn joins the canvas's first chat.
+        let chats: Vec<(String, String)> = conn
+            .prepare(
+                "SELECT id, chat_id FROM conversation_turn WHERE id <> 'next' ORDER BY sequence",
+            )
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert!(chats.iter().all(|(_, chat)| chat == "done"), "{chats:?}");
+        // Deleting a turn still removes its audit rows.
+        conn.execute("DELETE FROM conversation_turn WHERE id = 'done'", [])
+            .unwrap();
+        let reads: i64 = conn
+            .query_row("SELECT count(*) FROM conversation_read", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(reads, 0);
+    }
+
+    fn turn_ids(conn: &Connection) -> Vec<(i64, String)> {
+        conn.prepare("SELECT sequence, id FROM conversation_turn ORDER BY sequence")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    }
+
+    #[test]
     fn v8_upgrade_keeps_text_and_starts_without_tasks() {
         let temp = tempfile::tempdir().unwrap();
         let id = new_id().unwrap();
@@ -1219,10 +1349,12 @@ mod tests {
             .iter()
             .map(|table| {
                 // Later versions add columns; compare the legacy ones.
-                let columns = if *table == "canvas_node" {
-                    "id, canvas_id, kind, artifact_id, x, y, width, height"
-                } else {
-                    "*"
+                let columns = match *table {
+                    "canvas_node" => "id, canvas_id, kind, artifact_id, x, y, width, height",
+                    "conversation_turn" => {
+                        "sequence, id, canvas_id, model, prompt, reply, prompt_node_id, reply_node_id, anchor, context, status, operations, error"
+                    }
+                    _ => "*",
                 };
                 let mut statement = conn
                     .prepare(&format!("SELECT {columns} FROM {table} ORDER BY rowid"))

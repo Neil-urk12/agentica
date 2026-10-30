@@ -114,7 +114,14 @@ export interface EditorState {
   saving: boolean;
   dirty: boolean;
   error: string;
+  /** The chat in the panel; null until the first prompt of a new chat. */
+  chatId: string | null;
+  /** Loaded turns of that chat, newest first. */
   turns: ConversationTurn[];
+  /** `before` cursor for the next older page; 0 once every turn is loaded. */
+  olderTurns: number;
+  historyLoading: boolean;
+  historyError: string;
   canUndo: boolean;
   canRedo: boolean;
 }
@@ -142,6 +149,16 @@ function pickGeometry({ x, y, width, height }: Geometry): Geometry {
   return { x, y, width, height };
 }
 
+/** Union by turn ID, newest first; `recent` holds the latest saved outcomes. */
+export function mergeTurns(
+  loaded: ConversationTurn[],
+  recent: ConversationTurn[],
+): ConversationTurn[] {
+  const byId = new Map(loaded.map((turn) => [turn.id, turn]));
+  for (const turn of recent) byId.set(turn.id, turn);
+  return [...byId.values()].sort((a, b) => b.sequence - a.sequence);
+}
+
 // One buffer and save queue for either transport; acknowledgements never replace drafts.
 export class Editor {
   state: EditorState = {
@@ -152,7 +169,11 @@ export class Editor {
     saving: false,
     dirty: false,
     error: "",
+    chatId: null,
     turns: [],
+    olderTurns: 0,
+    historyLoading: false,
+    historyError: "",
     canUndo: false,
     canRedo: false,
   };
@@ -176,6 +197,8 @@ export class Editor {
   private mutations: Promise<void> = Promise.resolve();
   private savingTask: Promise<void> | null = null;
   private disposed = false;
+  /** A newly opened canvas shows its most recently used chat. */
+  private pickLatest = true;
   private undoStack: HistoryEntry[] = [];
   private redoStack: HistoryEntry[] = [];
   private historyBreak = true;
@@ -575,11 +598,22 @@ export class Editor {
     });
   }
 
-  private load(document: CanvasDocument, turns?: ConversationTurn[]) {
+  private load(
+    document: CanvasDocument,
+    recent?: RuntimeResult<"conversation.list">,
+  ) {
     if (document.canvas.id !== this.state.document?.canvas.id) {
       this.nodeIds.clear();
       this.clearHistory();
-      this.state = { ...this.state, turns: [] };
+      this.pickLatest = true;
+      this.state = {
+        ...this.state,
+        chatId: null,
+        turns: [],
+        olderTurns: 0,
+        historyLoading: false,
+        historyError: "",
+      };
     }
     this.savedArtifacts = new Map(
       document.artifacts.map((artifact) => [artifact.id, content(artifact)]),
@@ -589,7 +623,24 @@ export class Editor {
     this.savedLayout = JSON.stringify(this.layout(document));
     this.savedProjectMetadata = this.projectMetadata(document);
     this.attemptedLayout = "";
-    this.publish({ document, ...(turns ? { turns } : {}) });
+    this.publish({ document, ...(recent ? this.mergeRecent(recent) : {}) });
+  }
+
+  /**
+   * Fold the newest page into loaded history by turn ID: outcomes update in
+   * place and older pages stay. The cursor advances only while no older page
+   * has been loaded.
+   */
+  private mergeRecent({
+    turns,
+    nextBefore,
+  }: RuntimeResult<"conversation.list">) {
+    const oldest = turns.at(-1)?.sequence ?? Infinity;
+    const pagedOlder = this.state.turns.some((turn) => turn.sequence < oldest);
+    return {
+      turns: mergeTurns(this.state.turns, turns),
+      olderTurns: pagedOlder ? this.state.olderTurns : nextBefore,
+    };
   }
 
   private projectMetadata(document: CanvasDocument) {
@@ -1477,20 +1528,118 @@ export class Editor {
     });
   }
 
+  /** The newest page of the panel's chat, choosing the latest chat first if needed. */
+  private async recentPage(workspaceId: string, canvasId: string) {
+    if (this.pickLatest) {
+      const { chats } = await this.call(
+        this.key(),
+        false,
+        "conversation.chats",
+        { workspaceId, canvasId },
+      );
+      if (this.state.document?.canvas.id === canvasId) {
+        this.pickLatest = false;
+        this.state = { ...this.state, chatId: chats[0]?.chatId ?? null };
+      }
+    }
+    const chatId = this.state.chatId;
+    if (!chatId) return { chatId, page: { turns: [], nextBefore: 0 } };
+    const page = await this.call(this.key(), false, "conversation.list", {
+      workspaceId,
+      canvasId,
+      before: 0,
+      chatId,
+    });
+    return { chatId, page };
+  }
+
   async refreshConversation() {
     const canvasId = this.state.document?.canvas.id;
     const workspaceId = this.state.workspace?.workspace.id;
     if (!canvasId || !workspaceId) return;
-    const result = await this.call(this.key(), false, "conversation.list", {
-      workspaceId,
-      canvasId,
-      before: 0,
-    });
+    const { chatId, page } = await this.recentPage(workspaceId, canvasId);
     if (
       this.state.document?.canvas.id === canvasId &&
-      this.state.workspace?.workspace.id === workspaceId
+      this.state.workspace?.workspace.id === workspaceId &&
+      this.state.chatId === chatId
     )
-      this.publish({ turns: result.turns });
+      this.publish(this.mergeRecent(page));
+  }
+
+  /** This canvas's chats, most recently used first, for the history list. */
+  listChats() {
+    const canvasId = this.state.document?.canvas.id;
+    const workspaceId = this.state.workspace?.workspace.id;
+    if (!canvasId || !workspaceId) return Promise.resolve({ chats: [] });
+    return this.call(this.key(), false, "conversation.chats", {
+      workspaceId,
+      canvasId,
+    });
+  }
+
+  /** Show one chat in the panel; null starts a new chat with the next prompt. */
+  async openChat(chatId: string | null) {
+    await this.enqueue(async () => {
+      if (!this.state.document || this.disposed) return;
+      this.pickLatest = false;
+      // Its newest page is "everything older than the maximum cursor", so a
+      // failed first load offers the same retry as an older page.
+      this.publish({
+        chatId,
+        turns: [],
+        olderTurns: chatId ? Number.MAX_SAFE_INTEGER : 0,
+        historyLoading: false,
+        historyError: "",
+      });
+      if (chatId) await this.loadOlderTurns();
+    });
+  }
+
+  /** Reading older turns never changes the canvas or the model's context. */
+  async loadOlderTurns() {
+    const canvasId = this.state.document?.canvas.id;
+    const workspaceId = this.state.workspace?.workspace.id;
+    const before = this.state.olderTurns;
+    const chatId = this.state.chatId;
+    if (
+      !canvasId ||
+      !workspaceId ||
+      !chatId ||
+      !before ||
+      this.state.historyLoading
+    )
+      return;
+    const current = () =>
+      !this.disposed &&
+      this.state.document?.canvas.id === canvasId &&
+      this.state.workspace?.workspace.id === workspaceId &&
+      this.state.chatId === chatId &&
+      this.state.olderTurns === before;
+    this.publish({ historyLoading: true, historyError: "" });
+    try {
+      const page = await this.call(this.key(), false, "conversation.list", {
+        workspaceId,
+        canvasId,
+        before,
+        chatId,
+      });
+      if (current())
+        this.publish({
+          turns: mergeTurns(this.state.turns, page.turns),
+          olderTurns: page.nextBefore,
+          historyLoading: false,
+        });
+    } catch (error) {
+      // The cursor is unchanged, so retry requests the same page.
+      if (current())
+        this.publish({
+          historyLoading: false,
+          historyError:
+            error instanceof Error
+              ? error.message
+              : "Older messages could not be loaded.",
+        });
+    }
   }
 
   /** `clear` only when the server document may differ from the local one. */
@@ -1501,15 +1650,11 @@ export class Editor {
       workspaceId,
       canvasId,
     });
-    const { turns } = await this.call(this.key(), false, "conversation.list", {
-      workspaceId,
-      canvasId,
-      before: 0,
-    });
+    const { page: recent } = await this.recentPage(workspaceId, canvasId);
     // Applied objects must never be rendered with an older pending proposal,
     // nor overwritten by undoing a step recorded before they were applied.
     if (clear) this.clearHistory();
-    this.load(document, turns);
+    this.load(document, recent);
   }
 
   async reloadConversation() {
@@ -1545,6 +1690,13 @@ export class Editor {
           "conversation.start",
           params,
         );
+        // The first prompt of a new chat names the chat the panel now shows.
+        if (result.turn.chatId !== this.state.chatId)
+          this.publish({
+            chatId: result.turn.chatId,
+            turns: [],
+            olderTurns: 0,
+          });
         await this.reloadConversationCanvas();
       });
     });

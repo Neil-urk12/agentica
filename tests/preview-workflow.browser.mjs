@@ -412,10 +412,7 @@ test(
         ),
         1,
       );
-      await clickAt(
-        page,
-        await boxOf(page, "button[aria-label='Canvas tools']"),
-      );
+      // The canvas toolbar is always shown, beside the chat panel too.
       await waitFor(
         page,
         "!!document.querySelector(\"button[aria-label='Add local web preview']\")",

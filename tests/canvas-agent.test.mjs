@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CanvasOperationSchema, MAX_FRAME_BYTES } from "@agentica/protocol";
 import {
-  exchangePosition,
+  proposalAnchor,
   stageOperations,
   checkedToolOperation,
 } from "../apps/desktop/src/lib/canvas-agent.ts";
@@ -167,17 +167,17 @@ test("staging creates stable editable objects and connectors without changing th
   );
 });
 
-test("exchange placement uses selected content and finds open space without moving anything", () => {
+test("proposal anchor uses selected content and finds open space without moving anything", () => {
   const nodes = [
     { ...context.nodes[0] },
     { id: id(5), x: 304, y: 0, width: 200, height: 160 },
   ];
   const before = structuredClone(nodes);
-  assert.deepEqual(exchangePosition(nodes, [id(1)], { x: 0, y: 0 }), {
+  assert.deepEqual(proposalAnchor(nodes, [id(1)], { x: 0, y: 0 }), {
     x: 568,
     y: 0,
   });
-  assert.deepEqual(exchangePosition(nodes, [], { x: 1000, y: 500 }), {
+  assert.deepEqual(proposalAnchor(nodes, [], { x: 1000, y: 500 }), {
     x: 1000,
     y: 500,
   });
@@ -613,6 +613,8 @@ test("canvas_read returns runtime content and recoverable rejections to the mode
         const user = body.messages.at(-1).content;
         assert.equal(user.split("</canvas-data>").length, 2);
         assert.match(user, /"writable":false/);
+        // The stored anchor is the proposal origin; no card space is reserved.
+        assert.match(user, /"proposalAnchor":\{"x":500,"y":0\}/);
         return result(null, [
           readCall(1, [id(50)]),
           readCall(2, ["not-an-id"]),

@@ -148,7 +148,8 @@ review and offer Show and Revert actions, and SHALL be announced to assistive te
 It SHALL cover only the most recent auto-applied turn on the canvas that is still
 revertible, and SHALL disappear when that turn is reverted or no longer revertible, when
 the user dismisses it, or when the user sends the next prompt. Manually applied proposals
-SHALL NOT show the bar.
+SHALL NOT show the bar. Revisiting an applicable turn's actions SHALL use conversation
+history and SHALL NOT require a canvas prompt or reply card.
 
 #### Scenario: Bar after auto-apply
 
@@ -168,7 +169,7 @@ SHALL NOT show the bar.
 #### Scenario: Bar ends with the next prompt
 
 - **WHEN** the user dismisses the bar or sends another prompt
-- **THEN** the bar is gone, and the turn can still be reverted from its conversation card
+- **THEN** the bar is gone, and the turn can still be reverted from conversation history
 
 #### Scenario: No bar after manual apply
 

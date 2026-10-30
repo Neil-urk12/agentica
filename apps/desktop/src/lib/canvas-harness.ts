@@ -164,7 +164,7 @@ export async function runCanvasTurn(
   messages.push({
     role: "user",
     content: `${start.turn.prompt}\n\n<canvas-data>\n${data({
-      proposalAnchor: { x: start.turn.anchor.x + 404, y: start.turn.anchor.y },
+      proposalAnchor: start.turn.anchor,
       writeScope: start.context,
       outline: start.outline,
     })}\n</canvas-data>`,

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { LIMITS } from "@agentica/protocol";
 import {
   CARD,
-  EXCHANGE_RESERVE,
+  PROPOSAL_RESERVE,
   compactSize,
   fitTextHeight,
   fitViewport,
@@ -19,7 +19,7 @@ import {
   ZOOM_IN_FACTOR,
   ZOOM_OUT_FACTOR,
 } from "../apps/desktop/src/lib/canvas-view.ts";
-import { exchangePosition } from "../apps/desktop/src/lib/canvas-agent.ts";
+import { proposalAnchor } from "../apps/desktop/src/lib/canvas-agent.ts";
 import {
   attentionLabel,
   isQueueShortcut,
@@ -140,12 +140,12 @@ test("project status items list non-zero counts separately", () => {
 
 const node = (id, x, y, width, height) => ({ id, x, y, width, height });
 
-test("new conversation cards and their reservation stay bounded", () => {
+test("legacy cards compact and proposals reserve only their own room", () => {
   assert.deepEqual(CARD, { width: 340, height: 220, minHeight: 160, gap: 32 });
-  assert.equal(EXCHANGE_RESERVE.height, 472);
-  // A tall saved reply nearby only pushes the new exchange sideways.
+  assert.deepEqual(PROPOSAL_RESERVE, { width: 400, height: 240 });
+  // A tall saved card nearby only pushes the proposal origin sideways.
   const nodes = [node("a", 0, 0, 340, 1800)];
-  assert.deepEqual(exchangePosition(nodes, [], { x: 0, y: 0 }), {
+  assert.deepEqual(proposalAnchor(nodes, [], { x: 0, y: 0 }), {
     x: 404,
     y: 0,
   });

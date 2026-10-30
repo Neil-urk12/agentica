@@ -120,6 +120,7 @@ pub(crate) const METHODS: &[&str] = &[
     "conversation.resolve",
     "conversation.read",
     "conversation.list",
+    "conversation.chats",
     "artifact.applyBatch",
     "agent.capabilities",
     "agent.start",
@@ -754,7 +755,8 @@ impl Runtime {
             | "conversation.finish"
             | "conversation.resolve"
             | "conversation.read"
-            | "conversation.list" => {
+            | "conversation.list"
+            | "conversation.chats" => {
                 let workspace_id = params
                     .get("workspaceId")
                     .and_then(Value::as_str)

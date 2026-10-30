@@ -14,6 +14,11 @@ struct Start {
     #[serde(default)]
     context_mode: Option<ContextMode>,
     anchor: Anchor,
+    #[serde(default)]
+    new_chat: bool,
+    /// Continue this chat; without it or `newChat`, the canvas's latest chat.
+    #[serde(default)]
+    chat_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -57,7 +62,21 @@ struct List {
     workspace_id: String,
     canvas_id: String,
     before: f64,
+    /// Only this chat's turns; every turn on the canvas when omitted.
+    #[serde(default)]
+    chat_id: Option<String>,
 }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Chats {
+    workspace_id: String,
+    canvas_id: String,
+}
+
+// shortcut: the chat list returns the most recent chats only; add a cursor when
+// a canvas outgrows it (older chats stay saved and reachable through the API).
+const CHAT_LIST: i64 = 100;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -133,7 +152,7 @@ fn agent_visible(state: &Value, node: &Value) -> bool {
 }
 
 /// Canvas map for the model: write scope first, then nearest the stored anchor.
-/// Conversation cards are left out unless writable; the model gets them as history.
+/// Legacy conversation cards are left out unless writable; the model gets them as history.
 fn outline(
     tx: &Transaction,
     canvas_id: &str,
@@ -142,7 +161,7 @@ fn outline(
 ) -> Result<Value, RuntimeError> {
     let state = canvas_state(tx, canvas_id)?;
     let mut stmt = tx.prepare(
-        "SELECT prompt_node_id FROM conversation_turn WHERE canvas_id = ?1
+        "SELECT prompt_node_id FROM conversation_turn WHERE canvas_id = ?1 AND prompt_node_id IS NOT NULL
          UNION SELECT reply_node_id FROM conversation_turn WHERE canvas_id = ?1 AND reply_node_id IS NOT NULL",
     )?;
     let cards = stmt
@@ -261,14 +280,15 @@ fn json(raw: &str) -> Result<Value, RuntimeError> {
 
 fn turn(tx: &Transaction, canvas_id: &str, turn_id: &str) -> Result<Value, RuntimeError> {
     tx.query_row(
-        "SELECT id, sequence, model, prompt, reply, prompt_node_id, reply_node_id, anchor, status, operations, error
+        "SELECT id, sequence, model, prompt, reply, prompt_node_id, reply_node_id, anchor, status, operations, error, new_chat, chat_id
          FROM conversation_turn WHERE canvas_id = ?1 AND id = ?2",
         (canvas_id, turn_id), |r| Ok(json!({
             "id": r.get::<_, String>(0)?, "sequence": r.get::<_, i64>(1)?,
             "model": r.get::<_, String>(2)?, "prompt": r.get::<_, String>(3)?,
-            "reply": r.get::<_, String>(4)?, "promptNodeId": r.get::<_, String>(5)?,
+            "reply": r.get::<_, String>(4)?, "promptNodeId": r.get::<_, Option<String>>(5)?,
             "replyNodeId": r.get::<_, Option<String>>(6)?, "anchor": r.get::<_, String>(7)?,
-            "status": r.get::<_, String>(8)?, "operations": r.get::<_, String>(9)?, "error": r.get::<_, String>(10)?
+            "status": r.get::<_, String>(8)?, "operations": r.get::<_, String>(9)?, "error": r.get::<_, String>(10)?,
+            "newChat": r.get::<_, bool>(11)?, "chatId": r.get::<_, String>(12)?
         })))
         .optional()?.ok_or_else(|| not_found("Conversation turn"))
         .and_then(|mut t| {
@@ -278,10 +298,15 @@ fn turn(tx: &Transaction, canvas_id: &str, turn_id: &str) -> Result<Value, Runti
         })
 }
 
-fn history(tx: &Transaction, canvas_id: &str, before: i64) -> Result<Vec<Value>, RuntimeError> {
-    let mut stmt = tx.prepare("SELECT id FROM conversation_turn WHERE canvas_id = ?1 AND (?2 = 0 OR sequence < ?2) ORDER BY sequence DESC LIMIT 8")?;
+fn history(
+    tx: &Transaction,
+    canvas_id: &str,
+    before: i64,
+    chat_id: Option<&str>,
+) -> Result<Vec<Value>, RuntimeError> {
+    let mut stmt = tx.prepare("SELECT id FROM conversation_turn WHERE canvas_id = ?1 AND (?2 = 0 OR sequence < ?2) AND (?3 IS NULL OR chat_id = ?3) ORDER BY sequence DESC LIMIT 8")?;
     let ids = stmt
-        .query_map((canvas_id, before), |r| r.get::<_, String>(0))?
+        .query_map((canvas_id, before, chat_id), |r| r.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
     ids.iter().map(|id| turn(tx, canvas_id, id)).collect()
 }
@@ -308,47 +333,6 @@ fn insert_node(
         drawing,
         "note",
     )
-}
-
-/// Conversation cards match the frontend layout budget (`CARD` in
-/// `canvas-view.ts`): a fixed width and a bounded height. Long text stays in
-/// the artifact and is read in full through the reader, so cards never grow
-/// with the complete reply.
-const CARD_WIDTH: f64 = 340.0;
-const CARD_MIN_HEIGHT: f64 = 160.0;
-const CARD_MAX_HEIGHT: f64 = 220.0;
-
-fn card_height(body: &str) -> f64 {
-    let lines: usize = body
-        .split('\n')
-        .map(|line| line.encode_utf16().count().div_ceil(36).max(1))
-        .sum();
-    (lines as f64 * 24.0 + 56.0).clamp(CARD_MIN_HEIGHT, CARD_MAX_HEIGHT)
-}
-
-fn open_position(
-    tx: &Transaction,
-    canvas_id: &str,
-    mut g: Geometry,
-) -> Result<Geometry, RuntimeError> {
-    let state = canvas_state(tx, canvas_id)?;
-    let nodes = state["nodes"].as_array().unwrap();
-    for _ in 0..=nodes.len() {
-        g.check()?;
-        if let Some(n) = nodes.iter().find(|n| {
-            n["x"].as_f64().unwrap() < g.x + g.width + 32.0
-                && n["x"].as_f64().unwrap() + n["width"].as_f64().unwrap() > g.x - 32.0
-                && n["y"].as_f64().unwrap() < g.y + g.height + 32.0
-                && n["y"].as_f64().unwrap() + n["height"].as_f64().unwrap() > g.y - 32.0
-        }) {
-            g.x = n["x"].as_f64().unwrap() + n["width"].as_f64().unwrap() + 64.0;
-        } else {
-            return Ok(g);
-        }
-    }
-    Err(invalid(
-        "There is no room for this text. Pan to an open area and retry.",
-    ))
 }
 
 fn shape_body(
@@ -704,27 +688,40 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                     "Canvas context exceeds 16 KiB. Select a smaller set of objects.",
                 ));
             }
-            let mut prior = history(tx, &p.canvas_id, 0)?;
+            // The model sees only this turn's chat: a new chat starts empty.
+            let chat_id = if p.new_chat {
+                p.turn_id.clone()
+            } else if let Some(chat_id) = &p.chat_id {
+                id("chatId", chat_id)?;
+                let known: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM conversation_turn WHERE canvas_id = ?1 AND chat_id = ?2)",
+                    (&p.canvas_id, chat_id),
+                    |r| r.get(0),
+                )?;
+                if !known {
+                    return Err(not_found("Chat"));
+                }
+                chat_id.clone()
+            } else {
+                tx.query_row(
+                    "SELECT chat_id FROM conversation_turn WHERE canvas_id = ?1 ORDER BY sequence DESC LIMIT 1",
+                    [&p.canvas_id],
+                    |r| r.get(0),
+                )
+                .optional()?
+                .unwrap_or_else(|| p.turn_id.clone())
+            };
+            let mut prior = history(tx, &p.canvas_id, 0, Some(&chat_id))?;
             prior.reverse();
             let prior: Vec<_> = prior
                 .iter()
                 .map(|t| json!({"prompt": t["prompt"], "reply": t["reply"], "status": t["status"]}))
                 .collect();
-            let node_id = new_id()?;
-            let g = open_position(
-                tx,
-                &p.canvas_id,
-                Geometry {
-                    x: p.anchor.x,
-                    y: p.anchor.y,
-                    width: CARD_WIDTH,
-                    height: card_height(&p.prompt),
-                },
-            )?;
-            insert_node(tx, &p.canvas_id, &node_id, &new_id()?, &g, &p.prompt, false)?;
-            tx.execute("INSERT INTO conversation_turn(id,canvas_id,model,prompt,prompt_node_id,anchor,context,status) VALUES (?1,?2,?3,?4,?5,?6,?7,'generating')", (&p.turn_id,&p.canvas_id,&p.model,&p.prompt,&node_id,json!({"x":g.x,"y":g.y}).to_string(),context.to_string()))?;
-            bump(tx, &p.canvas_id, canvas_revision(tx, &p.canvas_id)?)?;
-            let outline = outline(tx, &p.canvas_id, &context, (g.x, g.y))?;
+            // The anchor is only the proposal origin; new turns place nothing on the canvas.
+            in_range("anchor.x", p.anchor.x, -MAX_COORDINATE, MAX_COORDINATE)?;
+            in_range("anchor.y", p.anchor.y, -MAX_COORDINATE, MAX_COORDINATE)?;
+            tx.execute("INSERT INTO conversation_turn(id,canvas_id,model,prompt,anchor,context,status,new_chat,chat_id) VALUES (?1,?2,?3,?4,?5,?6,'generating',?7,?8)", (&p.turn_id,&p.canvas_id,&p.model,&p.prompt,json!(p.anchor).to_string(),context.to_string(),chat_id == p.turn_id,&chat_id))?;
+            let outline = outline(tx, &p.canvas_id, &context, (p.anchor.x, p.anchor.y))?;
             Ok(
                 json!({"turn":turn(tx,&p.canvas_id,&p.turn_id)?, "context":context, "outline":outline, "history":prior}),
             )
@@ -867,42 +864,12 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                 tx.execute_batch("ROLLBACK TO proposal_validation; RELEASE proposal_validation")?;
                 validated?;
             }
-            let reply_node_id = if p.status == "complete" {
-                let node_id = new_id()?;
-                let prompt_node: Option<(f64, f64, f64)> = tx
-                    .query_row(
-                        "SELECT x,y,height FROM canvas_node WHERE id = ?1",
-                        [t["promptNodeId"].as_str().unwrap()],
-                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-                    )
-                    .optional()?;
-                let (x, y, height) = prompt_node.unwrap_or((
-                    t["anchor"]["x"].as_f64().unwrap(),
-                    t["anchor"]["y"].as_f64().unwrap(),
-                    CARD_MIN_HEIGHT,
-                ));
-                let g = open_position(
-                    tx,
-                    &p.canvas_id,
-                    Geometry {
-                        x,
-                        y: y + height + 32.0,
-                        width: CARD_WIDTH,
-                        height: card_height(&p.reply),
-                    },
-                )?;
-                insert_node(tx, &p.canvas_id, &node_id, &new_id()?, &g, &p.reply, false)?;
-                bump(tx, &p.canvas_id, canvas_revision(tx, &p.canvas_id)?)?;
-                Some(node_id)
-            } else {
-                None
-            };
             let status = if p.status == "complete" && !p.operations.is_empty() {
                 "pending"
             } else {
                 &p.status
             };
-            tx.execute("UPDATE conversation_turn SET reply = ?2, reply_node_id = ?3, operations = ?4, status = ?5, error = ?6 WHERE id = ?1", (&p.turn_id,&p.reply,&reply_node_id,json!(p.operations).to_string(),status,&p.error))?;
+            tx.execute("UPDATE conversation_turn SET reply = ?2, operations = ?3, status = ?4, error = ?5 WHERE id = ?1", (&p.turn_id,&p.reply,json!(p.operations).to_string(),status,&p.error))?;
             Ok(json!({"turn":turn(tx,&p.canvas_id,&p.turn_id)?}))
         }
         "conversation.resolve" => {
@@ -953,13 +920,36 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
             if p.before.fract() != 0.0 || !(0.0..=MAX_REVISION as f64).contains(&p.before) {
                 return Err(invalid("before must be a nonnegative safe integer."));
             }
-            let turns = history(tx, &p.canvas_id, p.before as i64)?;
+            if let Some(chat_id) = &p.chat_id {
+                id("chatId", chat_id)?;
+            }
+            let turns = history(tx, &p.canvas_id, p.before as i64, p.chat_id.as_deref())?;
             let next = if turns.len() == 8 {
                 turns.last().unwrap()["sequence"].as_i64().unwrap()
             } else {
                 0
             };
             Ok(json!({"turns":turns,"nextBefore":next}))
+        }
+        "conversation.chats" => {
+            let p: Chats = parse(params)?;
+            id("workspaceId", &p.workspace_id)?;
+            let mut stmt = tx.prepare(
+                "SELECT t.chat_id, (SELECT s.prompt FROM conversation_turn AS s WHERE s.id = t.chat_id), count(*), max(t.sequence)
+                 FROM conversation_turn AS t WHERE t.canvas_id = ?1
+                 GROUP BY t.chat_id ORDER BY max(t.sequence) DESC LIMIT ?2",
+            )?;
+            let chats = stmt
+                .query_map((&p.canvas_id, CHAT_LIST), |r| {
+                    Ok(json!({
+                        "chatId": r.get::<_, String>(0)?,
+                        "title": title(&r.get::<_, String>(1)?),
+                        "turns": r.get::<_, i64>(2)?,
+                        "lastSequence": r.get::<_, i64>(3)?,
+                    }))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(json!({ "chats": chats }))
         }
         _ => unreachable!(),
     }
@@ -1023,13 +1013,6 @@ mod tests {
             parse::<Operation>(json!({"op":"createWebPreview","url":"http://localhost:5173"}))
                 .is_err()
         );
-    }
-
-    #[test]
-    fn conversation_cards_stay_bounded_for_long_text() {
-        assert_eq!(card_height("Short"), CARD_MIN_HEIGHT);
-        assert_eq!(card_height(&"word ".repeat(2_000)), CARD_MAX_HEIGHT);
-        assert_eq!(card_height(&"line\n".repeat(400)), CARD_MAX_HEIGHT);
     }
 
     #[test]

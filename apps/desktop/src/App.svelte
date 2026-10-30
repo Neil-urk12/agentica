@@ -53,6 +53,7 @@
   import Composer from "./lib/components/Composer.svelte";
   import Reader from "./lib/components/Reader.svelte";
   import ReviewBar from "./lib/components/ReviewBar.svelte";
+  import ChatPanel from "./lib/components/ChatPanel.svelte";
   import CanvasNavigation from "./lib/components/CanvasNavigation.svelte";
   import AttentionQueue from "./lib/components/AttentionQueue.svelte";
   import {
@@ -63,7 +64,7 @@
   } from "./lib/session-attention";
   import {
     CARD,
-    EXCHANGE_RESERVE,
+    PROPOSAL_RESERVE,
     areaCentre,
     compactSize,
     fitTextHeight,
@@ -96,7 +97,7 @@
     readCanvasFile,
   } from "./lib/files";
   import {
-    exchangePosition,
+    proposalAnchor,
     stageOperations,
     textHeight,
   } from "./lib/canvas-agent";
@@ -270,6 +271,11 @@
   );
   let busy = $state(false);
   let inspectorOpen = $state(false);
+  // Chat and the inspector share the side slot; each canvas opens with chat.
+  // Hiding chat keeps the composer mounted, so drafts and turns continue.
+  let chatOpen = $state(true);
+  let chatPanel: ChatPanel | undefined = $state();
+  let chatToggle: HTMLButtonElement | undefined = $state();
   // The Nodes drawer starts collapsed; opening a canvas also forces it closed
   // (see the canvas-open reset below) so each canvas opens with a clean stage.
   let drawerOpen = $state(false);
@@ -282,14 +288,20 @@
   const COLLAPSED_PROJECT_HEIGHT = 48;
   const DRAWER_MIN_WIDTH = 180;
   const DRAWER_MAX_WIDTH = 480;
-  let drawerWidth = $state(readDrawerWidth());
+  let drawerWidth = $state(
+    readWidth("agentica.drawerWidth", DRAWER_MIN_WIDTH, DRAWER_MAX_WIDTH, 240),
+  );
+  const CHAT_MIN_WIDTH = 320;
+  const CHAT_MAX_WIDTH = 720;
+  let chatWidth = $state(
+    readWidth("agentica.chatWidth", CHAT_MIN_WIDTH, CHAT_MAX_WIDTH, 384),
+  );
   // true opens settings without a section (narrow windows show the category list).
   let settingsOpen = $state<boolean | SettingsSection>(false);
   let theme = $state<Theme>(readTheme());
   let recoveryCopy = $state("");
   let closeNotice = $state("");
   let tool = $state<Tool>("select");
-  let toolbarOpen = $state(false);
   let generating = $state(false);
   let promptError = $state("");
   let toolsNotice = $state("");
@@ -362,6 +374,18 @@
   // stays available when the reply is offscreen or missing.
   const pendingTurn = $derived(
     editorState.turns.find((t) => t.status === "pending"),
+  );
+  const chatState = $derived(
+    pendingReply || promptError
+      ? "error"
+      : pendingTurn
+        ? "review"
+        : generating || activeTurn
+          ? "running"
+          : "",
+  );
+  const chatScope = $derived(
+    editorState.chatId ? "recent conversation" : "new chat",
   );
   const pendingContent = $derived(
     pendingTurn ? proposedContent(pendingTurn.operations) : [],
@@ -522,31 +546,45 @@
   const SELECTED_CLASS = "node--selected";
 
   /** Stored drawer width first, then the default. */
-  function readDrawerWidth(): number {
+  function readWidth(key: string, min: number, max: number, fallback: number) {
     try {
-      const stored = Number(localStorage.getItem("agentica.drawerWidth"));
+      const stored = Number(localStorage.getItem(key));
       if (Number.isFinite(stored) && stored > 0)
-        return Math.min(
-          DRAWER_MAX_WIDTH,
-          Math.max(DRAWER_MIN_WIDTH, Math.round(stored)),
-        );
+        return Math.min(max, Math.max(min, Math.round(stored)));
     } catch {
       // Storage can be unavailable; fall back to the default width.
     }
-    return 240;
+    return fallback;
+  }
+
+  /** Clamp and remember a panel width; returns the applied width. */
+  function storeWidth(key: string, min: number, max: number, next: number) {
+    const width = Math.min(max, Math.max(min, Math.round(next)));
+    try {
+      localStorage.setItem(key, String(width));
+    } catch {
+      // Storage can be unavailable; the width still applies for this session.
+    }
+    return width;
   }
 
   /** Clamp the drawer width and remember it for the next launch. */
   function resizeDrawer(next: number) {
-    drawerWidth = Math.min(
+    drawerWidth = storeWidth(
+      "agentica.drawerWidth",
+      DRAWER_MIN_WIDTH,
       DRAWER_MAX_WIDTH,
-      Math.max(DRAWER_MIN_WIDTH, Math.round(next)),
+      next,
     );
-    try {
-      localStorage.setItem("agentica.drawerWidth", String(drawerWidth));
-    } catch {
-      // Storage can be unavailable; the width still applies for this session.
-    }
+  }
+
+  function resizeChat(next: number) {
+    chatWidth = storeWidth(
+      "agentica.chatWidth",
+      CHAT_MIN_WIDTH,
+      CHAT_MAX_WIDTH,
+      next,
+    );
   }
 
   function bounds(points: Point[]) {
@@ -811,9 +849,9 @@
             x: (340 - viewport.x) / viewport.zoom,
             y: (300 - viewport.y) / viewport.zoom,
           };
-      const anchor = exchangePosition(editorState.document.nodes, nodeIds, {
-        x: centre.x - CARD.width / 2,
-        y: centre.y - EXCHANGE_RESERVE.height / 2,
+      const anchor = proposalAnchor(editorState.document.nodes, nodeIds, {
+        x: centre.x - PROPOSAL_RESERVE.width / 2,
+        y: centre.y - PROPOSAL_RESERVE.height / 2,
       });
       const requestedId = crypto.randomUUID();
       const start = await editor.startConversation({
@@ -824,6 +862,10 @@
         nodeIds,
         contextMode,
         anchor,
+        // Continue the shown chat, or start one when the panel shows a new chat.
+        ...(editorState.chatId
+          ? { chatId: editorState.chatId }
+          : { newChat: true }),
       });
       if (!start)
         throw new Error(
@@ -1090,9 +1132,9 @@
     if (!rect.width || !rect.height) return undefined;
     const obstacles = [
       ...canvasEl.querySelectorAll<HTMLElement>(
-        ".canvas-dock > *, .canvas-nav, .canvas__nodes, .canvas__inspector",
+        ".canvas-dock > *, .canvas-nav, .canvas__nodes, .canvas__side",
       ),
-      ...document.querySelectorAll<HTMLElement>(".drawer, .inspector"),
+      ...document.querySelectorAll<HTMLElement>(".drawer, .inspector, .chat"),
     ].map((element) => element.getBoundingClientRect());
     return usableArea(
       { width: rect.width, height: rect.height },
@@ -1162,7 +1204,12 @@
     );
   }
 
-  function showChanges() {
+  async function showChanges() {
+    // A narrow chat overlay would cover the revealed objects.
+    if (chatOpen && matchMedia("(max-width: 820px)").matches) {
+      chatOpen = false;
+      await tick();
+    }
     const area = usable();
     const target = unionBox(
       nodes
@@ -1267,7 +1314,8 @@
       );
       const turnsByNodeId = new Map<string, (typeof turns)[number]>();
       for (const turn of turns) {
-        if (!turnsByNodeId.has(turn.promptNodeId))
+        // Panel-only turns have no cards to label.
+        if (turn.promptNodeId && !turnsByNodeId.has(turn.promptNodeId))
           turnsByNodeId.set(turn.promptNodeId, turn);
         if (turn.replyNodeId && !turnsByNodeId.has(turn.replyNodeId))
           turnsByNodeId.set(turn.replyNodeId, turn);
@@ -1498,6 +1546,7 @@
           groupViewCanvasId = document.canvas.id;
           expandedGroups = {};
           inspectorOpen = false;
+          chatOpen = true;
           drawerOpen = false;
         }
         const workspaceId = editorState.workspace.workspace.id;
@@ -2555,7 +2604,6 @@
     if (!next) return;
     event.preventDefault();
     selectTool(next);
-    toolbarOpen = true;
   }
 
   onMount(() => {
@@ -3034,7 +3082,8 @@
         </span>
       </div>
     {/if}
-    {#if promptError}
+    <!-- The save banner above already shows an editor error; don't repeat it. -->
+    {#if promptError && promptError !== editorState.error}
       <div class="banner banner--error" role="alert">
         <Icon name="error" size={18} />
         <span>{promptError}</span>
@@ -3197,16 +3246,47 @@
           >
             <Icon name="toc" size={20} />
           </button>
-          <button
-            class="icon-btn canvas__inspector"
-            class:icon-btn--active={inspectorOpen}
-            type="button"
-            title="Toggle inspector"
-            aria-label="Toggle inspector"
-            onclick={() => (inspectorOpen = !inspectorOpen)}
-          >
-            <Icon name="tune" size={20} />
-          </button>
+          <div class="canvas__side">
+            <button
+              class="icon-btn canvas__chat"
+              class:icon-btn--active={chatOpen}
+              type="button"
+              title="Toggle chat"
+              aria-label={chatOpen
+                ? "Hide chat"
+                : `Show chat${chatState === "running" ? " — agent working" : chatState === "review" ? " — changes waiting for review" : chatState === "error" ? " — needs attention" : ""}`}
+              aria-expanded={chatOpen}
+              bind:this={chatToggle}
+              onclick={async () => {
+                chatOpen = !chatOpen;
+                if (!chatOpen) return;
+                inspectorOpen = false;
+                await tick();
+                chatPanel?.focus();
+              }}
+            >
+              <Icon name="forum" size={20} />
+              {#if !chatOpen && chatState}
+                <span
+                  class={`canvas__chat-state canvas__chat-state--${chatState}`}
+                  aria-hidden="true"
+                ></span>
+              {/if}
+            </button>
+            <button
+              class="icon-btn"
+              class:icon-btn--active={inspectorOpen}
+              type="button"
+              title="Toggle inspector"
+              aria-label="Toggle inspector"
+              onclick={() => {
+                inspectorOpen = !inspectorOpen;
+                if (inspectorOpen) chatOpen = false;
+              }}
+            >
+              <Icon name="tune" size={20} />
+            </button>
+          </div>
         {/if}
 
         {#if isDrawingTool}
@@ -3310,7 +3390,7 @@
           />
         {/if}
 
-        <!-- One measured stack: tools, recovery, review, and composer never overlap. -->
+        <!-- One measured stack: selection and drawing tools never overlap. -->
         <div class="canvas-dock">
           {#if editorState.document && (selectedIds.length >= 2 || selectionGrouped)}
             <SelectionBar
@@ -3323,24 +3403,46 @@
               onDelete={deleteSelection}
             />
           {/if}
-          {#if toolbarOpen}
-            <CanvasToolbar
-              {tool}
-              color={strokeColor}
-              width={strokeWidth}
-              fileDisabled={!canEdit || importing}
-              onSelect={selectTool}
-              onColor={(value) => (strokeColor = value)}
-              onWidth={(value) => (strokeWidth = value)}
-              onFile={() => fileInput?.click()}
-              onPreview={canEdit
-                ? () => {
-                    creatingPreview = true;
-                    previewError = "";
-                  }
-                : undefined}
-            />
-          {/if}
+          <!-- Drawing and insert tools stay available whether or not chat is open. -->
+          <CanvasToolbar
+            {tool}
+            color={strokeColor}
+            width={strokeWidth}
+            fileDisabled={!canEdit || importing}
+            onSelect={selectTool}
+            onColor={(value) => (strokeColor = value)}
+            onWidth={(value) => (strokeWidth = value)}
+            onFile={() => fileInput?.click()}
+            onPreview={canEdit
+              ? () => {
+                  creatingPreview = true;
+                  previewError = "";
+                }
+              : undefined}
+          />
+        </div>
+      </main>
+
+      {#if editorState.document}
+        <ChatPanel
+          bind:this={chatPanel}
+          open={chatOpen}
+          turns={editorState.turns}
+          hasOlder={editorState.olderTurns > 0}
+          loadingOlder={editorState.historyLoading}
+          olderError={editorState.historyError}
+          onLoadOlder={() => editor.loadOlderTurns()}
+          chatId={editorState.chatId}
+          canSwitch={!activeTurn && !pendingReply && !generating}
+          onOpenChat={(chatId) => void editor.openChat(chatId)}
+          listChats={() => editor.listChats()}
+          width={chatWidth}
+          onResize={resizeChat}
+          onClose={() => {
+            chatOpen = false;
+            chatToggle?.focus();
+          }}
+        >
           {#if pendingReply || (activeTurn?.status === "generating" && !generating)}
             <div class="conversation-recovery" role="status">
               {#if pendingReply}
@@ -3390,7 +3492,6 @@
             />
           {/if}
           <Composer
-            {toolbarOpen}
             loading={generating}
             disabled={!connected ||
               !editorState.document ||
@@ -3398,9 +3499,9 @@
               !!pendingReply}
             scope={hasSelection
               ? contextIds.length
-                ? `${contextIds.length} selected ${contextIds.length === 1 ? "object" : "objects"} · recent conversation`
-                : "No canvas content selected · recent conversation"
-              : "Current canvas · recent conversation"}
+                ? `${contextIds.length} selected ${contextIds.length === 1 ? "object" : "objects"} · ${chatScope}`
+                : `No canvas content selected · ${chatScope}`
+              : `Current canvas · ${chatScope}`}
             provider={providerLabel}
             details={[
               "Your prompt. Project folders, session tiles, terminal output and web previews are excluded.",
@@ -3409,12 +3510,13 @@
                   ? `The ${contextIds.length} selected ${contextIds.length === 1 ? "object" : "objects"}: position, size, text, extracted file text, and connections between them.`
                   : "No selected notes or drawings. Native sessions are excluded."
                 : "Canvas notes, drawings, files, and conversation cards: position, size, text, extracted file text, and connections.",
-              "Up to 8 earlier prompts and replies from this canvas, with their outcomes.",
+              !editorState.chatId
+                ? "No earlier prompts or replies: this starts a new chat."
+                : "Up to 8 earlier prompts and replies from this chat, with their outcomes.",
               "Select objects before sending to limit what is shared.",
             ]}
             notice={toolsNotice}
             onCancel={() => conversationAbort?.abort()}
-            onToggleToolbar={() => (toolbarOpen = !toolbarOpen)}
             onAddFile={() => fileInput?.click()}
             addFileDisabled={!canEdit || importing}
             onSubmit={handlePromptSubmit}
@@ -3432,8 +3534,8 @@
                 else onStage?.({ label: "Transcribing your voice…" });
               })}
           />
-        </div>
-      </main>
+        </ChatPanel>
+      {/if}
 
       {#if inspectorOpen && editorState.document}
         <aside class="inspector" aria-label="Inspector">

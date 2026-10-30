@@ -2030,7 +2030,7 @@ test("box selection groups, moves, ungroups, and deletes canvas objects", async 
   }
 });
 
-test("canvas conversation previews, keyboard edits, review and cancellation work in the rendered app", async () => {
+test("chat panel history, reviewed canvas edits, recovery and cancellation work in the rendered app", async () => {
   const backend = await startBackend();
   key = backend.connectionKey;
   let browser;
@@ -2058,6 +2058,65 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
       title: "Conversation UI",
     });
     const ref = { workspaceId, canvasId: canvas.id };
+    // A legacy exchange kept prompt and reply cards and the reply card was
+    // edited by hand; nine later turns make history longer than one page.
+    const legacyPrompt = await rpc("node.createText", {
+      ...ref,
+      expectedRevision: 1,
+      x: 0,
+      y: 0,
+      width: 340,
+      height: 160,
+      text: "Legacy prompt",
+    });
+    const legacyReply = await rpc("node.createText", {
+      ...ref,
+      expectedRevision: 2,
+      x: 0,
+      y: 200,
+      width: 340,
+      height: 160,
+      text: "Original legacy reply",
+    });
+    await rpc("artifact.saveText", {
+      workspaceId,
+      artifactId: legacyReply.artifact.id,
+      expectedRevision: 1,
+      text: "Edited legacy reply",
+    });
+    const database = join(
+      dataDir,
+      "workspaces",
+      workspaceId,
+      "workspace.sqlite3",
+    );
+    const seed = new DatabaseSync(database);
+    const insert = seed.prepare(
+      `INSERT INTO conversation_turn (id, canvas_id, model, prompt, reply, prompt_node_id, reply_node_id, anchor, context, status, chat_id)
+       VALUES (?, ?, 'openrouter/free', ?, ?, ?, ?, '{"x":0,"y":0}', '{"nodes":[],"artifacts":[],"edges":[]}', 'complete', ?)`,
+    );
+    // Like the storage migration, every legacy turn joins the canvas's first chat.
+    const legacyChat = crypto.randomUUID();
+    insert.run(
+      legacyChat,
+      canvas.id,
+      "Legacy prompt",
+      "Original legacy reply",
+      legacyPrompt.node.id,
+      legacyReply.node.id,
+      legacyChat,
+    );
+    for (let i = 1; i <= 9; i++)
+      insert.run(
+        crypto.randomUUID(),
+        canvas.id,
+        `Earlier question ${i}`,
+        `Earlier answer ${i}`,
+        null,
+        null,
+        legacyChat,
+      );
+    seed.close();
     browser = await launchBrowser();
     await browser.send(
       "Page.addScriptToEvaluateOnNewDocument",
@@ -2089,6 +2148,7 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
         if (window.__slow) return new Promise((resolve, reject) => {
           options.signal.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), {once: true});
         });
+        if (window.__delay) await new Promise((resolve) => setTimeout(resolve, window.__delay));
         if (body.messages.at(-1).role === 'user') {
           const content = body.messages.at(-1).content;
           const input = JSON.parse(content.slice(content.indexOf('<canvas-data>') + 14, content.lastIndexOf('</canvas-data>')));
@@ -2152,26 +2212,67 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
         `(async () => { const input = document.querySelector('#canvas-prompt'); input.value = ${JSON.stringify(prompt)}; input.dispatchEvent(new Event('input', {bubbles:true})); await new Promise(requestAnimationFrame); document.querySelector('.composer__send').click(); })()`,
       );
     };
+    const chatTexts = (selector) =>
+      evaluate(
+        browser,
+        `JSON.stringify([...document.querySelectorAll(${JSON.stringify(selector)})].map((e) => e.textContent.trim()))`,
+      ).then(JSON.parse);
+    const lastAgent = `[...document.querySelectorAll('.chat__msg--agent')].at(-1)?.textContent`;
+    const toggleChat = () =>
+      evaluate(browser, `document.querySelector('.canvas__chat').click()`);
+
+    // History: the newest page first, then every saved turn once, in order.
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.chat__turn').length === 8 && !!document.querySelector('.chat__older button')`,
+      "the newest history page",
+    );
+    await evaluate(
+      browser,
+      `document.querySelector('.chat__older button').click()`,
+    );
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.chat__turn').length === 10 && !document.querySelector('.chat__older')`,
+      "the complete history",
+    );
+    assert.deepEqual(await chatTexts(".chat__msg--you .chat__text"), [
+      "Legacy prompt",
+      ...Array.from({ length: 9 }, (_, i) => `Earlier question ${i + 1}`),
+    ]);
+    // The panel shows the saved reply; the edited legacy card keeps its own text.
+    assert.match(
+      (await chatTexts(".chat__msg--agent"))[0],
+      /Original legacy reply/,
+    );
+    assert.match(
+      await evaluate(
+        browser,
+        `document.querySelector('[data-id="${legacyReply.node.id}"]').textContent`,
+      ),
+      /Edited legacy reply/,
+    );
+    assert.notEqual(
+      await evaluate(
+        browser,
+        `getComputedStyle(document.querySelector('.chat__msg--agent')).userSelect`,
+      ),
+      "none",
+      "messages allow normal text selection",
+    );
+    const seeded = await rpc("canvas.open", ref);
+
     await submit("Draw an idea");
     await waitFor(
       browser,
-      `document.querySelectorAll('.drawing.preview').length === 1 && !!document.querySelector('.review-bar')`,
-      "the diagram preview and review controls",
-    );
-    assert.equal(
-      await countOf(browser, ".svelte-flow__node-default"),
-      0,
-      "text is rendered directly, without default node cards",
+      `document.querySelectorAll('.drawing.preview').length === 1 && !!document.querySelector('.chat .review-bar') && ${lastAgent}.includes('A diagram you can edit.')`,
+      "the reply in chat with the diagram preview and review controls",
     );
     const before = await rpc("canvas.open", ref);
-    assert.equal(
-      before.nodes.length,
-      2,
-      "only prompt and reply are saved before approval",
-    );
     assert.deepEqual(
-      before.artifacts.map((a) => a.text),
-      ["Draw an idea", "A diagram you can edit."],
+      [before.nodes, before.artifacts, before.edges],
+      [seeded.nodes, seeded.artifacts, seeded.edges],
+      "a new exchange adds no prompt or reply cards before approval",
     );
     assert.equal(
       await evaluate(browser, `window.__providerRequests.length`),
@@ -2198,8 +2299,31 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
     await reopen();
     await waitFor(
       browser,
-      `document.querySelectorAll('.drawing.preview').length === 1`,
-      "the restored pending proposal",
+      `document.querySelectorAll('.drawing.preview').length === 1 && !document.querySelector('.chat').hidden && ${lastAgent}.includes('Changes pending review')`,
+      "the restored pending proposal in the open chat",
+    );
+    // Collapsed chat still announces the waiting review, and reopening focuses it.
+    await toggleChat();
+    await waitFor(
+      browser,
+      `document.querySelector('.chat').hidden && !!document.querySelector('.canvas__chat-state--review') && document.querySelector('.canvas__chat').getAttribute('aria-label').includes('waiting for review')`,
+      "the collapsed review state",
+    );
+    await toggleChat();
+    await waitFor(
+      browser,
+      `!document.querySelector('.chat').hidden && document.activeElement === document.querySelector('.chat')`,
+      "keyboard focus entering the reopened chat",
+    );
+    // Show reveals proposed objects beside the panel, not under it.
+    await evaluate(
+      browser,
+      `[...document.querySelectorAll('.review-bar button')].find(b => b.textContent.includes('Show changes')).click()`,
+    );
+    await waitFor(
+      browser,
+      `document.querySelector('.drawing.preview').getBoundingClientRect().right <= document.querySelector('.chat').getBoundingClientRect().left`,
+      "proposed objects shown in usable canvas space",
     );
     const review = async (action) => {
       const expression = `[...document.querySelectorAll('.review-bar button')].find(b => b.textContent.trim() === ${JSON.stringify(action)})`;
@@ -2230,11 +2354,11 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
     await review("Apply");
     await waitFor(
       browser,
-      `document.querySelectorAll('.preview').length === 0 && document.querySelectorAll('.drawing').length === 1`,
-      "the applied shape",
+      `document.querySelectorAll('.preview').length === 0 && document.querySelectorAll('.drawing').length === 1 && ${lastAgent}.includes('Changes applied')`,
+      "the applied shape and outcome",
     );
     const applied = await rpc("canvas.open", ref);
-    assert.equal(applied.nodes.length, 3);
+    assert.equal(applied.nodes.length, 3, "only the accepted shape is added");
     assert.equal(applied.artifacts.at(-1).drawing.shapes[0].label, "Idea");
     assert.equal(
       await evaluate(
@@ -2244,76 +2368,9 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
       false,
       "successful approval must not leave a stale-preview warning",
     );
-    const replyNode = applied.nodes[1];
-    assert.ok(replyNode.height <= 220, "new reply cards stay bounded");
-    await waitFor(
-      browser,
-      `document.querySelector('[data-id="${replyNode.id}"] .card-head')?.textContent.includes('Changes applied')`,
-      "the applied status in the reply header",
-    );
-    assert.match(
-      await evaluate(
-        browser,
-        `document.querySelector('[data-id="${replyNode.id}"] .card-body').textContent`,
-      ),
-      /A diagram you can edit\./,
-      "status presentation leaves reply prose unchanged",
-    );
-    const readButton = `[data-id="${replyNode.id}"] .card-action`;
-    await evaluate(
-      browser,
-      `(() => { const b = document.querySelector(${JSON.stringify(readButton)}); b.focus(); b.click(); })()`,
-    );
-    await waitFor(
-      browser,
-      `document.querySelector('dialog[open] .reader__content')?.textContent.includes('A diagram you can edit.')`,
-      "the full-content reader",
-    );
-    for (const type of ["keyDown", "keyUp"])
-      await browser.send(
-        "Input.dispatchKeyEvent",
-        { type, key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 },
-        browser.sessionId,
-      );
-    await waitFor(
-      browser,
-      `!document.querySelector('dialog[open]') && document.activeElement === document.querySelector(${JSON.stringify(readButton)})`,
-      "the closed reader restoring focus",
-    );
-    const selector = `[data-id="${replyNode.id}"] .card-body`;
-    await evaluate(
-      browser,
-      `document.querySelector(${JSON.stringify(selector)}).focus()`,
-    );
-    await browser.send(
-      "Input.dispatchKeyEvent",
-      {
-        type: "keyDown",
-        key: "Enter",
-        code: "Enter",
-        windowsVirtualKeyCode: 13,
-      },
-      browser.sessionId,
-    );
-    await waitFor(
-      browser,
-      `document.activeElement === document.querySelector('textarea.card-body') && !!document.activeElement`,
-      "keyboard inline editing",
-    );
-    await evaluate(
-      browser,
-      `(() => { const input = document.querySelector('textarea.card-body'); input.value = 'Human revision'; input.dispatchEvent(new Event('input', {bubbles:true})); input.blur(); })()`,
-    );
-    await waitFor(
-      browser,
-      `document.querySelector('.save-status')?.textContent.trim() === 'Saved'`,
-      "the manual text save",
-    );
-    const edited = await rpc("canvas.open", ref);
-    assert.equal(
-      edited.artifacts.find((a) => a.id === replyNode.artifactId).text,
-      "Human revision",
-    );
+
+    // A selected legacy card is ordinary writable text.
+    const selector = `[data-id="${legacyReply.node.id}"] .card-body`;
     await clickAt(browser, await boxOf(browser, selector));
     await waitFor(
       browser,
@@ -2326,29 +2383,32 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
       `document.querySelectorAll('.canvas-text.preview').length === 1 && !!document.querySelector('.review-bar')`,
       "a targeted text preview",
     );
-    assert.equal(
+    const legacyText = async () =>
       (await rpc("canvas.open", ref)).artifacts.find(
-        (a) => a.id === replyNode.artifactId,
-      ).text,
-      "Human revision",
-    );
+        (a) => a.id === legacyReply.artifact.id,
+      ).text;
+    assert.equal(await legacyText(), "Edited legacy reply");
     await review("Discard");
     await waitFor(
       browser,
-      `document.querySelectorAll('.preview').length === 0 && !document.querySelector('#canvas-prompt').disabled`,
+      `document.querySelectorAll('.preview').length === 0 && !document.querySelector('#canvas-prompt').disabled && ${lastAgent}.includes('Changes discarded')`,
       "discarded proposal",
     );
-    const discarded = await rpc("canvas.open", ref);
-    assert.equal(
-      discarded.artifacts.find((a) => a.id === replyNode.artifactId).text,
-      "Human revision",
-    );
+    assert.equal(await legacyText(), "Edited legacy reply");
+
     await evaluate(browser, `window.__slow = true`);
     await submit("Wait for cancellation");
     await waitFor(
       browser,
       `window.__providerRequests.some(r => r.messages.at(-1).role === 'user' && r.messages.at(-1).content.includes('Wait for cancellation'))`,
       "the in-flight provider request",
+    );
+    // Hiding chat neither cancels the turn nor hides the manual tools.
+    await toggleChat();
+    await waitFor(
+      browser,
+      `!!document.querySelector('.canvas__chat-state--running') && !!document.querySelector('.canvas-dock [aria-label="Rectangle"]')`,
+      "the running state and manual tools while chat is hidden",
     );
     await evaluate(
       browser,
@@ -2373,6 +2433,7 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
       browser,
       `(() => { const input = document.querySelector('textarea.card-body'); input.value = 'Human edit while generating'; input.dispatchEvent(new Event('input', {bubbles:true})); input.blur(); })()`,
     );
+    await toggleChat();
     await evaluate(
       browser,
       `[...document.querySelectorAll('.composer button')].find(b => b.textContent === 'Cancel').click()`,
@@ -2386,90 +2447,66 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
     assert.equal(turns.turns[0].status, "cancelled");
     assert.equal(turns.turns[1].status, "discarded");
     assert.equal(turns.turns[2].status, "applied");
-    assert.equal(
-      (await rpc("canvas.open", ref)).artifacts.find(
-        (a) => a.id === replyNode.artifactId,
-      ).text,
-      "Human edit while generating",
+    assert.equal(await legacyText(), "Human edit while generating");
+
+    // A turn that finishes while chat is hidden waits there for review.
+    await evaluate(browser, `window.__slow = false; window.__delay = 400`);
+    await evaluate(
+      browser,
+      `(() => { const input = document.querySelector('#canvas-prompt'); input.value = 'Unsent draft'; input.dispatchEvent(new Event('input', {bubbles:true})); })()`,
     );
-    await evaluate(browser, `window.__slow = false`);
-    for (const action of ["Apply", "Discard"]) {
-      await submit(
-        `Draw an idea before deleting the reply and choosing ${action}`,
+    await toggleChat();
+    await toggleChat();
+    assert.equal(
+      await evaluate(browser, `document.querySelector('#canvas-prompt').value`),
+      "Unsent draft",
+      "hiding chat keeps the draft without sending it",
+    );
+    await submit("Draw an idea while chat is hidden");
+    await toggleChat();
+    await waitFor(
+      browser,
+      `!!document.querySelector('.canvas__chat-state--review') && document.querySelectorAll('.drawing.preview').length === 1`,
+      "a proposal finished while chat was hidden",
+    );
+    await evaluate(browser, `window.__delay = 0`);
+    await toggleChat();
+    await waitFor(
+      browser,
+      `!!document.querySelector('.chat .review-bar') && ${lastAgent}.includes('A diagram you can edit.')`,
+      "the hidden result in reopened chat",
+    );
+    // At narrow widths chat overlays the canvas; Show dismisses it.
+    const metrics = (width, height) =>
+      browser.send(
+        "Emulation.setDeviceMetricsOverride",
+        { width, height, deviceScaleFactor: 1, mobile: false },
+        browser.sessionId,
       );
-      await waitFor(
-        browser,
-        `document.querySelectorAll('.drawing.preview').length === 1 && !!document.querySelector('.review-bar')`,
-        `the pending proposal for ${action}`,
-      );
-      const {
-        turns: [pending],
-      } = await rpc("conversation.list", {
-        ...ref,
-        before: 0,
-      });
-      const deletedIds =
-        action === "Apply"
-          ? [pending.replyNodeId]
-          : [pending.replyNodeId, pending.promptNodeId];
-      for (const nodeId of deletedIds) {
-        // The nodes drawer is collapsed by default, so its rows only exist
-        // once it is open.
-        await evaluate(
-          browser,
-          `!!document.querySelector('.drawer') || document.querySelector('[aria-label="Toggle nodes"]')?.click()`,
-        );
-        const document = await rpc("canvas.open", ref);
-        const index = document.nodes.findIndex((node) => node.id === nodeId);
-        assert.notEqual(index, -1);
-        const deletion = `.drawer__row:nth-child(${index + 1}) .drawer__delete`;
-        await waitFor(
-          browser,
-          `document.querySelector(${JSON.stringify(deletion)})?.disabled === false`,
-          "the enabled node delete button",
-        );
-        await evaluate(
-          browser,
-          `document.querySelector(${JSON.stringify(deletion)}).click()`,
-        );
-        await waitFor(
-          browser,
-          `!document.querySelector('[data-id="${nodeId}"]')`,
-          "the deleted conversation node",
-        );
-      }
-      await waitFor(
-        browser,
-        `!!document.querySelector('.review-bar')`,
-        "proposal controls after deleting the reply",
-      );
-      await reopen();
-      await waitFor(
-        browser,
-        `!!document.querySelector('.review-bar') && document.querySelector('#canvas-prompt').disabled`,
-        "proposal controls restored without the conversation nodes",
-      );
-      assert.equal(
-        (await rpc("conversation.list", { ...ref, before: 0 })).turns[0].status,
-        "pending",
-      );
-      await review(action);
-      await waitFor(
-        browser,
-        `document.querySelectorAll('.preview').length === 0 && !document.querySelector('#canvas-prompt').disabled && !document.querySelector('.review-bar')`,
-        `${action} clears the proposal and restores the composer`,
-      );
-      assert.equal(
-        (await rpc("conversation.list", { ...ref, before: 0 })).turns[0].status,
-        action === "Apply" ? "applied" : "discarded",
-      );
-      assert.equal(
-        (await rpc("canvas.open", ref)).nodes.some(
-          (node) => node.id === pending.operations[0].nodeId,
-        ),
-        action === "Apply",
-      );
-    }
+    await metrics(360, 800);
+    await waitFor(
+      browser,
+      `getComputedStyle(document.querySelector('.chat')).position === 'absolute' && document.documentElement.scrollWidth <= 360 && !!document.querySelector('.chat__head button')?.checkVisibility()`,
+      "the narrow chat overlay with a reachable close control",
+    );
+    await evaluate(
+      browser,
+      `[...document.querySelectorAll('.review-bar button')].find(b => b.textContent.includes('Show changes')).click()`,
+    );
+    await waitFor(
+      browser,
+      `document.querySelector('.chat').hidden && (() => { const r = document.querySelector('.drawing.preview').getBoundingClientRect(); return r.left >= 0 && r.right <= 360; })()`,
+      "Show dismissing the narrow overlay",
+    );
+    await metrics(1600, 1000);
+    await toggleChat();
+    await review("Discard");
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.preview').length === 0 && !document.querySelector('#canvas-prompt').disabled`,
+      "the discarded hidden-turn proposal",
+    );
+
     // The runtime saves the proposal, but its acknowledgement and the follow-up
     // reload are lost, so the reply stays buffered until it is reconciled.
     await evaluate(browser, `window.__loseFinish = true`);
@@ -2480,6 +2517,14 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
       `!!(${textOnly}) && document.querySelector('#canvas-prompt').disabled`,
       "the buffered reply after a lost acknowledgement",
     );
+    // Hiding chat keeps the buffered reply and flags it on the toggle.
+    await toggleChat();
+    await waitFor(
+      browser,
+      `!!document.querySelector('.canvas__chat-state--error')`,
+      "the collapsed save-recovery state",
+    );
+    await toggleChat();
     const {
       turns: [saved],
     } = await rpc("conversation.list", { ...ref, before: 0 });
@@ -2506,6 +2551,19 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
       (await rpc("conversation.list", { ...ref, before: 0 })).turns[0].status,
       "discarded",
     );
+    // Neither copy of the legacy exchange overwrote the other.
+    const legacyTurn = new DatabaseSync(database, { readOnly: true });
+    assert.deepEqual(
+      {
+        ...legacyTurn
+          .prepare(
+            "SELECT reply, reply_node_id FROM conversation_turn WHERE prompt = 'Legacy prompt'",
+          )
+          .get(),
+      },
+      { reply: "Original legacy reply", reply_node_id: legacyReply.node.id },
+    );
+    legacyTurn.close();
     await reopen();
     const customRequests = [];
     customServer = createServer(async (req, res) => {
@@ -2580,6 +2638,13 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
       true,
       "the canvas stays mounted under the settings page",
     );
+    // A new chat clears the panel and the model's context; History keeps the old one.
+    await evaluate(browser, `document.querySelector('.chat__new').click()`);
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.chat__turn').length === 0 && document.querySelector('.composer__scope').textContent.includes('new chat')`,
+      "the empty new chat",
+    );
     await submit("Use the custom endpoint");
     await waitFor(
       browser,
@@ -2594,6 +2659,35 @@ test("canvas conversation previews, keyboard edits, review and cancellation work
     );
     assert.equal(customRequests[0].headers["http-referer"], undefined);
     assert.equal(customRequests[0].body.model, "local-model");
+    assert.deepEqual(
+      customRequests[0].body.messages.map((m) => m.role),
+      ["system", "user"],
+      "a new chat sends no earlier exchanges",
+    );
+    assert.equal(
+      await evaluate(
+        browser,
+        `document.querySelectorAll('.chat__turn').length`,
+      ),
+      1,
+      "the new chat shows only its own exchange",
+    );
+    await evaluate(
+      browser,
+      `document.querySelector('[aria-label="Chat history"]').click()`,
+    );
+    const pastChat = `[...document.querySelectorAll('.chat__history-item')].find(b => b.textContent.includes('Legacy prompt'))`;
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.chat__history-item').length === 2 && document.querySelector('.chat__history-item[aria-current="true"]').textContent.includes('Use the custom endpoint') && !!(${pastChat})`,
+      "both chats in History, the new one current",
+    );
+    await evaluate(browser, `(${pastChat}).click()`);
+    await waitFor(
+      browser,
+      `!document.querySelector('.chat__history') && [...document.querySelectorAll('.chat__msg--you')].some(m => m.textContent.includes('Draw an idea')) && !document.body.innerText.includes('Reply from custom provider.')`,
+      "the reopened earlier chat",
+    );
     assert.equal(customRequests[0].body.tools, undefined);
     assert.equal(customRequests[0].body.provider, undefined);
     await evaluate(

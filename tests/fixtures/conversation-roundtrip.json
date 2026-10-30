@@ -74,7 +74,8 @@
       "expect": {
         "turn": {
           "id": "10000000-0000-4000-8000-000000000001",
-          "status": "generating"
+          "status": "generating",
+          "promptNodeId": null
         },
         "context": {
           "nodes": [
@@ -103,9 +104,6 @@
           "truncated": false
         },
         "history": []
-      },
-      "save": {
-        "cp1": "/turn/promptNodeId"
       }
     },
     {
@@ -207,11 +205,9 @@
       "expect": {
         "turn": {
           "id": "10000000-0000-4000-8000-000000000001",
-          "status": "pending"
+          "status": "pending",
+          "replyNodeId": null
         }
-      },
-      "save": {
-        "cr1": "/turn/replyNodeId"
       }
     },
     {
@@ -263,7 +259,7 @@
         "turn": {
           "id": "10000000-0000-4000-8000-000000000001",
           "status": "pending",
-          "replyNodeId": "$cr1"
+          "replyNodeId": null
         }
       }
     },
@@ -280,12 +276,6 @@
           },
           {
             "id": "$cn2"
-          },
-          {
-            "id": "$cp1"
-          },
-          {
-            "id": "$cr1"
           }
         ],
         "edges": [],
@@ -297,12 +287,6 @@
           {
             "id": "$ca2",
             "text": "Unrelated"
-          },
-          {
-            "text": "Make a useful diagram"
-          },
-          {
-            "text": "Here is the proposed change."
           }
         ]
       }
@@ -389,12 +373,6 @@
             "id": "$cn2"
           },
           {
-            "id": "$cp1"
-          },
-          {
-            "id": "$cr1"
-          },
-          {
             "id": "10000000-0000-4000-8000-000000000007"
           },
           {
@@ -417,12 +395,6 @@
           {
             "id": "$ca2",
             "text": "Unrelated"
-          },
-          {
-            "text": "Make a useful diagram"
-          },
-          {
-            "text": "Here is the proposed change."
           },
           {
             "id": "10000000-0000-4000-8000-000000000008",
@@ -458,11 +430,9 @@
       },
       "expect": {
         "turn": {
-          "status": "generating"
+          "status": "generating",
+          "promptNodeId": null
         }
-      },
-      "save": {
-        "cp2": "/turn/promptNodeId"
       }
     },
     {
@@ -545,11 +515,9 @@
       },
       "expect": {
         "turn": {
-          "status": "pending"
+          "status": "pending",
+          "replyNodeId": null
         }
-      },
-      "save": {
-        "cr2": "/turn/replyNodeId"
       }
     },
     {
@@ -587,22 +555,10 @@
             "id": "$cn2"
           },
           {
-            "id": "$cp1"
-          },
-          {
-            "id": "$cr1"
-          },
-          {
             "id": "10000000-0000-4000-8000-000000000007"
           },
           {
             "id": "10000000-0000-4000-8000-000000000009"
-          },
-          {
-            "id": "$cp2"
-          },
-          {
-            "id": "$cr2"
           }
         ],
         "edges": [
@@ -621,22 +577,10 @@
             "text": "Unrelated"
           },
           {
-            "text": "Make a useful diagram"
-          },
-          {
-            "text": "Here is the proposed change."
-          },
-          {
             "id": "10000000-0000-4000-8000-000000000008"
           },
           {
             "id": "10000000-0000-4000-8000-000000000010"
-          },
-          {
-            "text": "Make a useful diagram"
-          },
-          {
-            "text": "Here is the proposed change."
           }
         ]
       }

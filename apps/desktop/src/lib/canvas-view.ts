@@ -10,17 +10,11 @@ export type Insets = {
   left: number;
 };
 
-/**
- * Starting layout budget for new conversation cards, in canvas units. The
- * runtime uses the same width and maximum height when it creates turn nodes.
- */
+/** Layout budget for legacy conversation cards, in canvas units. */
 export const CARD = { width: 340, height: 220, minHeight: 160, gap: 32 };
 
-/** Room reserved for a prompt, its reply, and a nearby proposal. */
-export const EXCHANGE_RESERVE = {
-  width: 760,
-  height: CARD.height * 2 + CARD.gap,
-};
+/** Open room sought for a turn's proposed objects. */
+export const PROPOSAL_RESERVE = { width: 400, height: 240 };
 
 /** Dimensions applied by the explicit Compact conversation action. */
 export function compactSize(node: Pick<Box, "width" | "height">) {

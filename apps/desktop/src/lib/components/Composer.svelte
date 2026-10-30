@@ -9,10 +9,8 @@
 
   interface Props {
     placeholder?: string;
-    toolbarOpen: boolean;
     loading?: boolean;
     disabled?: boolean;
-    onToggleToolbar: () => void;
     onAddFile?: () => void;
     addFileDisabled?: boolean;
     onSubmit?: (prompt: string) => boolean | Promise<boolean>;
@@ -38,11 +36,9 @@
   }
 
   let {
-    placeholder = "Ask anything, or describe what you want to add…",
-    toolbarOpen,
+    placeholder = "Ask, or describe a change…",
     loading = false,
     disabled = false,
-    onToggleToolbar,
     onAddFile,
     addFileDisabled = false,
     onSubmit,
@@ -55,6 +51,23 @@
   }: Props = $props();
 
   let promptText = $state("");
+  let input: HTMLTextAreaElement | undefined = $state();
+
+  // WebKitGTK (the Linux desktop webview) lacks `field-sizing: content`, so
+  // grow the box with its text there; CSS max-height still caps it.
+  $effect(() => {
+    if (!input || CSS.supports("field-sizing", "content")) return;
+    const box = input;
+    const fit = () => {
+      box.style.height = "auto";
+      box.style.height = `${box.scrollHeight}px`;
+    };
+    void promptText;
+    fit();
+    const resized = new ResizeObserver(fit);
+    resized.observe(box);
+    return () => resized.disconnect();
+  });
   let detailsOpen = $state(false);
 
   // -------------------------------------------------------------- voice input
@@ -386,17 +399,6 @@
     </div>
   {/if}
   <div class="composer__row">
-    <button
-      class="composer__lead"
-      class:composer__lead--active={toolbarOpen}
-      type="button"
-      title="Canvas tools"
-      aria-label="Canvas tools"
-      aria-expanded={toolbarOpen}
-      onclick={onToggleToolbar}
-    >
-      <Icon name="build" size={20} />
-    </button>
     {#if onAddFile}
       <button
         class="composer__lead"
@@ -415,6 +417,7 @@
       id="canvas-prompt"
       class="composer__input"
       rows="1"
+      bind:this={input}
       bind:value={promptText}
       onkeydown={onKeydown}
       {disabled}
