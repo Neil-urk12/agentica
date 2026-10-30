@@ -55,18 +55,21 @@
 
   // WebKitGTK (the Linux desktop webview) lacks `field-sizing: content`, so
   // grow the box with its text there; CSS max-height still caps it.
+  const fit = (box: HTMLTextAreaElement) => {
+    box.style.height = "auto";
+    box.style.height = `${box.scrollHeight}px`;
+  };
   $effect(() => {
     if (!input || CSS.supports("field-sizing", "content")) return;
     const box = input;
-    const fit = () => {
-      box.style.height = "auto";
-      box.style.height = `${box.scrollHeight}px`;
-    };
-    void promptText;
-    fit();
-    const resized = new ResizeObserver(fit);
+    const resized = new ResizeObserver(() => fit(box));
     resized.observe(box);
     return () => resized.disconnect();
+  });
+  // Separate from the observer so typing refits without rebuilding it.
+  $effect(() => {
+    void promptText;
+    if (input && !CSS.supports("field-sizing", "content")) fit(input);
   });
   let detailsOpen = $state(false);
 

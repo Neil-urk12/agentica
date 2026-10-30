@@ -46,15 +46,23 @@ build the installers and publish the release. Keep validation evidence in the
   model context holds only its own turns (still at most eight). History in the
   panel header lists the canvas's chats, most recent first, by first prompt
   and exchange count; choosing one shows it and the next prompt continues it.
-  Storage v17 marks a chat's first turn (`new_chat`) and v18 adds `chat_id`
-  (the first turn's ID), backfilling existing turns into the canvas's first
-  chat or the chat begun by an earlier New chat. `conversation.start` takes
-  `newChat` or `chatId` (default: the latest chat), `conversation.list` takes
+  The v16 rebuild also adds `chat_id` (the first turn's ID), backfilling
+  existing turns into the canvas's first chat. `conversation.start` takes
+  `newChat` or `chatId`, not both (default: the latest chat), `conversation.list` takes
   an optional `chatId`, and `conversation.chats` lists chats. Switching chats
   is disabled while a turn runs, waits for review, or holds an unsaved reply,
   since the runtime allows one active turn per canvas.
   Shortcut: History shows the 100 most recent chats; add a cursor if a canvas
   outgrows it.
+- Review fixes: the unreleased v16–v18 migrations are folded into v16 and the
+  `new_chat` column and `ConversationTurn.newChat` are gone, since a chat's
+  first turn is the one whose `chatId` equals its `id` and the flag disagreed
+  between new and upgraded canvases. Development data directories already at
+  v17 or v18 report a newer storage version and need a reset.
+  `conversation.start` rejects `newChat` with `chatId` (`INVALID_PARAMS`) in
+  the runtime and the Zod schema, and `conversation.chats` titles are bounded
+  to the runtime's 80 UTF-16 units. On WebKitGTK the composer refits on input
+  without rebuilding its ResizeObserver each keystroke.
 - The Chat panel resizes from its left edge by drag or arrow keys (Shift for
   larger steps), between 320 and 720px and at most 60% of the stage, and
   remembers its width per browser like the Nodes drawer. Both panels now share

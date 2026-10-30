@@ -31,8 +31,6 @@ const MIGRATIONS: &[&str] = &[
     include_str!("schema_v14.sql"),
     include_str!("schema_v15.sql"),
     include_str!("schema_v16.sql"),
-    include_str!("schema_v17.sql"),
-    include_str!("schema_v18.sql"),
 ];
 pub const STORAGE_VERSION: i64 = MIGRATIONS.len() as i64;
 
@@ -1252,14 +1250,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(next, (5, None));
-        let fresh: i64 = conn
-            .query_row(
-                "SELECT count(*) FROM conversation_turn WHERE new_chat = 1",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(fresh, 0, "upgraded turns never start a new chat");
         // Every upgraded turn joins the canvas's first chat.
         let chats: Vec<(String, String)> = conn
             .prepare(

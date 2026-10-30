@@ -318,7 +318,7 @@ fn chat_turns_leave_the_canvas_alone_and_legacy_cards_stay_flagged() {
     )
     .unwrap()
     .execute(
-        // The chat ID is what the v18 migration backfills for such a turn.
+        // The chat ID is what the v16 migration backfills for such a turn.
         "INSERT INTO conversation_turn (id, canvas_id, model, prompt, reply, prompt_node_id, reply_node_id, anchor, context, status, chat_id)
          VALUES (?1, ?2, 'm', 'Old prompt', 'Original reply', ?3, ?4, '{}', '{}', 'complete', ?1)",
         [TURN, canvas.id.as_str().unwrap(), prompt_card.as_str().unwrap(), reply_card.as_str().unwrap()],
@@ -438,7 +438,6 @@ fn chats_keep_separate_model_context_and_can_be_resumed() {
     let fresh = start(&mut runtime, 3, json!({"newChat": true}));
     assert_eq!(fresh["history"], json!([]));
     assert_eq!(fresh["turn"]["chatId"], id(3));
-    assert_eq!(fresh["turn"]["newChat"], true);
     canvas.finish(&mut runtime, &id(3), "complete", "Reply 3");
     let latest = start(&mut runtime, 4, json!({}));
     assert_eq!(replies(&latest), [json!("Reply 3")]);
@@ -455,6 +454,14 @@ fn chats_keep_separate_model_context_and_can_be_resumed() {
             "prompt":"x","model":"m","nodeIds":[],"anchor":{"x":0,"y":0},"chatId":MISSING}),
     );
     assert_eq!(code, "NOT_FOUND");
+    let (code, _) = error(
+        &mut runtime,
+        "conversation.start",
+        json!({"workspaceId":canvas.workspace,"canvasId":canvas.id,"turnId":id(6),
+            "prompt":"x","model":"m","nodeIds":[],"anchor":{"x":0,"y":0},
+            "chatId":id(1),"newChat":true}),
+    );
+    assert_eq!(code, "INVALID_PARAMS");
 
     let list = |runtime: &mut Runtime, chat: Option<String>| -> Vec<Value> {
         let mut params = json!({"workspaceId":canvas.workspace,"canvasId":canvas.id,"before":0});

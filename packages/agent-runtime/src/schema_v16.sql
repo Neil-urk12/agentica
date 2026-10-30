@@ -2,6 +2,9 @@
 -- becomes nullable. SQLite cannot drop NOT NULL in place, so rebuild the table.
 -- Migrations run with foreign keys off, so conversation_read and mcp_call rows
 -- that reference turns by id are kept.
+-- Each turn belongs to a chat named by the ID of the chat's first turn, so a
+-- past chat can be reopened and continued. Existing turns join the canvas's
+-- first chat.
 CREATE TABLE conversation_turn_v16 (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
@@ -16,14 +19,18 @@ CREATE TABLE conversation_turn_v16 (
     status TEXT NOT NULL CHECK (status IN
       ('generating', 'pending', 'complete', 'applied', 'discarded', 'failed', 'cancelled', 'interrupted')),
     operations TEXT NOT NULL DEFAULT '[]',
-    error TEXT NOT NULL DEFAULT ''
+    error TEXT NOT NULL DEFAULT '',
+    chat_id TEXT
 ) STRICT;
 
 INSERT INTO conversation_turn_v16
     (sequence, id, canvas_id, model, prompt, reply, prompt_node_id, reply_node_id,
-     anchor, context, status, operations, error)
+     anchor, context, status, operations, error, chat_id)
     SELECT sequence, id, canvas_id, model, prompt, reply, prompt_node_id, reply_node_id,
-           anchor, context, status, operations, error FROM conversation_turn;
+           anchor, context, status, operations, error,
+           (SELECT f.id FROM conversation_turn AS f WHERE f.canvas_id = t.canvas_id
+            ORDER BY f.sequence LIMIT 1)
+    FROM conversation_turn AS t;
 
 -- Keep the AUTOINCREMENT high-water mark, which can exceed the largest kept
 -- sequence after deletions: DROP removes the old table's counter, and RENAME
@@ -35,3 +42,4 @@ DROP TABLE conversation_turn;
 ALTER TABLE conversation_turn_v16 RENAME TO conversation_turn;
 CREATE UNIQUE INDEX conversation_active ON conversation_turn(canvas_id)
     WHERE status IN ('generating', 'pending');
+CREATE INDEX conversation_chat ON conversation_turn(canvas_id, chat_id, sequence);

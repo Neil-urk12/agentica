@@ -280,7 +280,7 @@ fn json(raw: &str) -> Result<Value, RuntimeError> {
 
 fn turn(tx: &Transaction, canvas_id: &str, turn_id: &str) -> Result<Value, RuntimeError> {
     tx.query_row(
-        "SELECT id, sequence, model, prompt, reply, prompt_node_id, reply_node_id, anchor, status, operations, error, new_chat, chat_id
+        "SELECT id, sequence, model, prompt, reply, prompt_node_id, reply_node_id, anchor, status, operations, error, chat_id
          FROM conversation_turn WHERE canvas_id = ?1 AND id = ?2",
         (canvas_id, turn_id), |r| Ok(json!({
             "id": r.get::<_, String>(0)?, "sequence": r.get::<_, i64>(1)?,
@@ -288,7 +288,7 @@ fn turn(tx: &Transaction, canvas_id: &str, turn_id: &str) -> Result<Value, Runti
             "reply": r.get::<_, String>(4)?, "promptNodeId": r.get::<_, Option<String>>(5)?,
             "replyNodeId": r.get::<_, Option<String>>(6)?, "anchor": r.get::<_, String>(7)?,
             "status": r.get::<_, String>(8)?, "operations": r.get::<_, String>(9)?, "error": r.get::<_, String>(10)?,
-            "newChat": r.get::<_, bool>(11)?, "chatId": r.get::<_, String>(12)?
+            "chatId": r.get::<_, String>(11)?
         })))
         .optional()?.ok_or_else(|| not_found("Conversation turn"))
         .and_then(|mut t| {
@@ -688,6 +688,9 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                     "Canvas context exceeds 16 KiB. Select a smaller set of objects.",
                 ));
             }
+            if p.new_chat && p.chat_id.is_some() {
+                return Err(invalid("Send newChat or chatId, not both."));
+            }
             // The model sees only this turn's chat: a new chat starts empty.
             let chat_id = if p.new_chat {
                 p.turn_id.clone()
@@ -720,7 +723,7 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
             // The anchor is only the proposal origin; new turns place nothing on the canvas.
             in_range("anchor.x", p.anchor.x, -MAX_COORDINATE, MAX_COORDINATE)?;
             in_range("anchor.y", p.anchor.y, -MAX_COORDINATE, MAX_COORDINATE)?;
-            tx.execute("INSERT INTO conversation_turn(id,canvas_id,model,prompt,anchor,context,status,new_chat,chat_id) VALUES (?1,?2,?3,?4,?5,?6,'generating',?7,?8)", (&p.turn_id,&p.canvas_id,&p.model,&p.prompt,json!(p.anchor).to_string(),context.to_string(),chat_id == p.turn_id,&chat_id))?;
+            tx.execute("INSERT INTO conversation_turn(id,canvas_id,model,prompt,anchor,context,status,chat_id) VALUES (?1,?2,?3,?4,?5,?6,'generating',?7)", (&p.turn_id,&p.canvas_id,&p.model,&p.prompt,json!(p.anchor).to_string(),context.to_string(),&chat_id))?;
             let outline = outline(tx, &p.canvas_id, &context, (p.anchor.x, p.anchor.y))?;
             Ok(
                 json!({"turn":turn(tx,&p.canvas_id,&p.turn_id)?, "context":context, "outline":outline, "history":prior}),

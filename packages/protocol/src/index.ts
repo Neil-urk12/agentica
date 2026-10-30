@@ -525,8 +525,6 @@ export const ConversationTurnSchema = z.strictObject({
   status: ConversationStatus,
   operations: Operations,
   error: Text,
-  /** This turn started a new chat; the model saw no earlier exchange. */
-  newChat: z.boolean(),
   /** The chat this turn belongs to: the ID of the chat's first turn. */
   chatId: IdSchema,
 });
@@ -644,16 +642,21 @@ const ParamSchemas = {
       deleteId: ReviewId.optional(),
     })
     .refine((p) => !!p.record || !!p.deleteId, "Provide a record or deleteId"),
-  "conversation.start": z.strictObject({
-    ...TurnRef,
-    prompt: Text.refine((s) => s.trim().length > 0),
-    model: Label,
-    nodeIds: UniqueIds,
-    contextMode: z.enum(["canvas", "selection"]).optional(),
-    anchor: Anchor,
-    newChat: z.boolean().optional(),
-    chatId: IdSchema.optional(),
-  }),
+  "conversation.start": z
+    .strictObject({
+      ...TurnRef,
+      prompt: Text.refine((s) => s.trim().length > 0),
+      model: Label,
+      nodeIds: UniqueIds,
+      contextMode: z.enum(["canvas", "selection"]).optional(),
+      anchor: Anchor,
+      newChat: z.boolean().optional(),
+      chatId: IdSchema.optional(),
+    })
+    .refine(
+      (p) => !(p.newChat && p.chatId),
+      "Send newChat or chatId, not both",
+    ),
   "conversation.finish": z.strictObject({
     ...TurnRef,
     reply: Text,
@@ -1099,7 +1102,7 @@ export const ResultSchemas = {
       .array(
         z.strictObject({
           chatId: IdSchema,
-          title: z.string(),
+          title: z.string().max(CONVERSATION_READ.title),
           turns: z.number().int().positive(),
           lastSequence: z.number().int().positive(),
         }),

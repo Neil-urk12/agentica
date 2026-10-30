@@ -889,3 +889,32 @@ test("conversation reads and outline items stay bounded", () => {
       false,
     );
 });
+
+test("conversation chats contracts match the runtime", () => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const start = (chat) =>
+    RuntimeRequestSchema.safeParse({
+      protocolVersion: 1,
+      id: "chat",
+      method: "conversation.start",
+      params: {
+        workspaceId: id,
+        canvasId: id,
+        turnId: id,
+        prompt: "Hi",
+        model: "m",
+        nodeIds: [],
+        anchor: { x: 0, y: 0 },
+        ...chat,
+      },
+    }).success;
+  assert.equal(start({ newChat: true }), true);
+  assert.equal(start({ chatId: id }), true);
+  assert.equal(start({ newChat: true, chatId: id }), false);
+  const chats = (title) =>
+    ResultSchemas["conversation.chats"].safeParse({
+      chats: [{ chatId: id, title, turns: 1, lastSequence: 1 }],
+    }).success;
+  assert.equal(chats("😀".repeat(CONVERSATION_READ.title / 2)), true);
+  assert.equal(chats("x".repeat(CONVERSATION_READ.title + 1)), false);
+});
