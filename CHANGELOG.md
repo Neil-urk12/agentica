@@ -22,6 +22,16 @@ build the installers and publish the release. Keep validation evidence in the
   `unspecified` driver from absent/reset attributes. When an `unset` driver is
   configured, review conservatively blocks the value Git also uses for `-filter`.
 
+### Async recovery (2026-11-01)
+
+- Microphone prewarming and recording share pending acquisition. Releasing the
+  microphone invalidates late permission results, which are stopped immediately;
+  cancelled recording starts cannot resume after a later start or teardown.
+- Provider checks keep their timeout and cancellation active through response
+  decoding, including error bodies, so partial responses cannot hang the check.
+- Speech initialization drops a failed cached promise, allowing the next
+  dictation attempt to retry a temporary model-download or backend failure.
+
 ### Text that fits one request, and browser voice input (2026-10-31)
 
 - Note fields now also stop at what one 16 KiB `artifact.saveText` request

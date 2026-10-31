@@ -192,9 +192,57 @@ export async function checkProvider(
   const stop = () => timer.abort(signal.reason);
   signal.addEventListener("abort", stop, { once: true });
   const timeout = setTimeout(() => timer.abort(), CHECK_TIMEOUT_MS);
-  let response: Response;
   try {
-    response = await postChat(provider, provider.apiKey, body, timer.signal);
+    signal.throwIfAborted();
+    const response = await postChat(
+      provider,
+      provider.apiKey,
+      body,
+      timer.signal,
+    );
+    signal.throwIfAborted();
+    timer.signal.throwIfAborted();
+    if (response.status === 401 || response.status === 403)
+      return { result: "key" };
+    if (!response.ok) {
+      // The provider's own message names retired or unknown models.
+      const reason = redact(
+        errorDetail(
+          await response.text().catch((error) => {
+            if (timer.signal.aborted) throw error;
+            return "";
+          }),
+        ),
+        provider.apiKey,
+      );
+      signal.throwIfAborted();
+      timer.signal.throwIfAborted();
+      return {
+        result: "other",
+        detail: `The AI service returned error ${response.status}${reason ? `: ${reason}` : ""}. Check the model in Advanced.`,
+      };
+    }
+    try {
+      const data = (await response.json()) as OpenRouterChatResponse | null;
+      signal.throwIfAborted();
+      timer.signal.throwIfAborted();
+      const choice = Array.isArray(data?.choices) ? data.choices[0] : undefined;
+      const content = choice?.message?.content;
+      if (!data?.error && typeof content === "string" && content.trim())
+        return { result: "ok" };
+      // Reasoning models can spend the probe's tiny token budget before writing
+      // an answer. A truncated completion still proves the endpoint, key, and
+      // model work, so the check should not call a working provider broken.
+      if (!data?.error && choice?.message && choice.finish_reason === "length")
+        return { result: "ok" };
+    } catch (error) {
+      if (timer.signal.aborted) throw error;
+    }
+    return {
+      result: "other",
+      detail:
+        "The AI service did not return a valid answer. Check the model in Advanced and your API key.",
+    };
   } catch (error) {
     if (signal.aborted) throw error;
     if (timer.signal.aborted)
@@ -207,39 +255,6 @@ export async function checkProvider(
     clearTimeout(timeout);
     signal.removeEventListener("abort", stop);
   }
-  if (response.status === 401 || response.status === 403)
-    return { result: "key" };
-  if (!response.ok) {
-    // The provider's own message names retired or unknown models.
-    const reason = redact(
-      errorDetail(await response.text().catch(() => "")),
-      provider.apiKey,
-    );
-    return {
-      result: "other",
-      detail: `The AI service returned error ${response.status}${reason ? `: ${reason}` : ""}. Check the model in Advanced.`,
-    };
-  }
-  try {
-    const data = (await response.json()) as OpenRouterChatResponse | null;
-    signal.throwIfAborted();
-    const choice = Array.isArray(data?.choices) ? data.choices[0] : undefined;
-    const content = choice?.message?.content;
-    if (!data?.error && typeof content === "string" && content.trim())
-      return { result: "ok" };
-    // Reasoning models can spend the probe's tiny token budget before writing
-    // an answer. A truncated completion still proves the endpoint, key, and
-    // model work, so the check should not call a working provider broken.
-    if (!data?.error && choice?.message && choice.finish_reason === "length")
-      return { result: "ok" };
-  } catch (error) {
-    if (signal.aborted) throw error;
-  }
-  return {
-    result: "other",
-    detail:
-      "The AI service did not return a valid answer. Check the model in Advanced and your API key.",
-  };
 }
 
 /** Bind the canvas agent harness to the configured provider's transport. */

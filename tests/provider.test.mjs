@@ -455,6 +455,89 @@ test("settings check preserves cancellation while reading the response body", as
   await assert.rejects(checkProvider(custom(), controller.signal), error);
 });
 
+for (const status of [200, 503]) {
+  for (const cancellation of ["timeout", "caller"]) {
+    test(`settings check keeps ${cancellation} active while reading HTTP ${status}`, async (t) => {
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      const controller = new AbortController();
+      const remove = t.mock.method(controller.signal, "removeEventListener");
+      let requestSignal;
+      t.mock.method(globalThis, "fetch", async (_url, { signal }) => {
+        requestSignal = signal;
+        return new Response(
+          new ReadableStream({
+            start(stream) {
+              signal.addEventListener("abort", () =>
+                stream.error(signal.reason),
+              );
+            },
+          }),
+          { status },
+        );
+      });
+      const pending = checkProvider(custom(), controller.signal);
+      // Avoid an unhandled rejection when cancellation settles during the tick.
+      const settled = pending.then(
+        (value) => ({ value }),
+        (error) => ({ error }),
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(
+        remove.mock.callCount(),
+        0,
+        "keep forwarding through body reads",
+      );
+      if (cancellation === "timeout") t.mock.timers.tick(30_000);
+      else controller.abort(new DOMException("Settings changed", "AbortError"));
+      assert.equal(requestSignal.aborted, true);
+      const result = await settled;
+      if (cancellation === "timeout") {
+        assert.equal(result.value?.result, "other");
+        assert.match(result.value.detail, /No answer within 30 seconds/);
+      } else assert.equal(result.error, controller.signal.reason);
+      assert.equal(remove.mock.callCount(), 1);
+    });
+  }
+}
+
+test("settings check cleans up timers and abort forwarding after body decoding", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let requestSignal;
+  let reply = () => response({ content: "OK" });
+  t.mock.method(globalThis, "fetch", async (_url, { signal }) => {
+    requestSignal = signal;
+    return reply();
+  });
+  for (const answer of [
+    () => response({ content: "OK" }),
+    () => new Response("Invalid model", { status: 404 }),
+    () => new Response("Invalid JSON"),
+    () => new Response("Unauthorized", { status: 401 }),
+  ]) {
+    reply = answer;
+    const controller = new AbortController();
+    const remove = t.mock.method(controller.signal, "removeEventListener");
+    await checkProvider(custom(), controller.signal);
+    assert.equal(remove.mock.callCount(), 1);
+    t.mock.timers.tick(30_000);
+    controller.abort();
+    assert.equal(requestSignal.aborted, false);
+  }
+});
+
+test("settings check rejects an already cancelled request before sending", async (t) => {
+  const send = t.mock.method(globalThis, "fetch", async () =>
+    response({ content: "OK" }),
+  );
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    checkProvider(custom(), controller.signal),
+    controller.signal.reason,
+  );
+  assert.equal(send.mock.callCount(), 0);
+});
+
 test("named provider presets keep separate endpoints, keys, and models", (t) => {
   assert.deepEqual(
     PROVIDER_PRESETS.map((preset) => preset.id),

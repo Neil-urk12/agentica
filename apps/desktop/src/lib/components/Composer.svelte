@@ -124,6 +124,10 @@
   let micName = $state("");
   let recorder: MediaRecorder | null = null;
   let micStream: MediaStream | null = null;
+  let micRequest: Promise<MediaStream> | null = null;
+  let micGeneration = 0;
+  let voiceAttempt = 0;
+  let destroyed = false;
   let chunks: Blob[] = [];
   let voiceFormat: AudioFormat = "webm";
   let transcribeAbort: AbortController | null = null;
@@ -172,35 +176,53 @@
     const existing = micStream?.getAudioTracks()[0];
     if (micStream && existing && existing.readyState === "live")
       return micStream;
+    if (micRequest) return micRequest;
+    const generation = micGeneration;
     // Whisper was trained on clean speech, so ask the OS for the cleanups it
     // can do at capture time and hint the 16 kHz mono it expects. Browsers
     // honour what they support and ignore the rest.
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        sampleRate: 16000,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
-    micStream = stream;
-    // The live track names the device actually in use — the most reliable
-    // source once permission is granted.
-    const trackLabel = stream.getAudioTracks()[0]?.label;
-    if (trackLabel) micName = cleanMicName(trackLabel);
-    else void refreshMicName();
-    return stream;
+    const request = navigator.mediaDevices
+      .getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: 16000,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      })
+      .then((stream) => {
+        // Permission can resolve after the stream's owner has gone away.
+        if (generation !== micGeneration || destroyed || disabled || loading) {
+          stream.getTracks().forEach((track) => track.stop());
+          throw new Error("Microphone acquisition cancelled.");
+        }
+        micStream = stream;
+        // The live track names the device actually in use — the most reliable
+        // source once permission is granted.
+        const trackLabel = stream.getAudioTracks()[0]?.label;
+        if (trackLabel) micName = cleanMicName(trackLabel);
+        else void refreshMicName();
+        return stream;
+      });
+    micRequest = request;
+    try {
+      return await request;
+    } finally {
+      if (micRequest === request) micRequest = null;
+    }
   }
 
   /** Pre-acquire the mic on hover/focus so even the first click is instant. */
   function prewarmMic() {
     if (
       !voiceSupported ||
+      destroyed ||
       disabled ||
       loading ||
       voiceState !== "idle" ||
-      micStream
+      micStream ||
+      micRequest
     )
       return;
     void warmMic().catch(() => {
@@ -211,6 +233,8 @@
 
   /** Stop and drop the warm stream, clearing the OS mic-in-use indicator. */
   function releaseWarmStream() {
+    micGeneration++;
+    micRequest = null;
     if (warmTimer) {
       clearTimeout(warmTimer);
       warmTimer = null;
@@ -232,7 +256,8 @@
   }
 
   async function startVoice() {
-    if (!voiceSupported || disabled || loading) return;
+    if (!voiceSupported || destroyed || disabled || loading) return;
+    const attempt = ++voiceAttempt;
     voiceError = "";
     // Show a "starting" state right away. Acquiring the mic (permission +
     // device init) can take up to a second or two, and the recorder only
@@ -244,13 +269,21 @@
     try {
       stream = await warmMic();
     } catch {
+      if (attempt !== voiceAttempt || destroyed || disabled || loading) return;
       voiceState = "error";
       voiceError =
         "Microphone unavailable. Grant microphone access and try again.";
       return;
     }
     // The user may have cancelled while the permission/device was resolving.
-    if (voiceState !== "preparing") return;
+    if (
+      attempt !== voiceAttempt ||
+      destroyed ||
+      disabled ||
+      loading ||
+      voiceState !== "preparing"
+    )
+      return;
     const { mime, format } = pickRecorderType(
       typeof MediaRecorder.isTypeSupported === "function"
         ? (type) => MediaRecorder.isTypeSupported(type)
@@ -339,6 +372,7 @@
   }
 
   function cancelVoice() {
+    voiceAttempt++;
     // Stop recording or an in-flight transcription without inserting text.
     // The stream is kept warm (releaseRecorder) for a quick restart.
     transcribeAbort?.abort();
@@ -371,6 +405,8 @@
   $effect(() => {
     // Release the microphone fully when the composer is destroyed.
     return () => {
+      destroyed = true;
+      voiceAttempt++;
       transcribeAbort?.abort();
       if (recorder && recorder.state !== "inactive") {
         recorder.onstop = null;

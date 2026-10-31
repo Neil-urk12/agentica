@@ -106,7 +106,10 @@ async function getTranscriber(): Promise<AutomaticSpeechRecognitionPipeline> {
         }
         throw error;
       }
-    })();
+    })().catch((error) => {
+      transcriberPromise = null;
+      throw error;
+    });
   }
   return transcriberPromise;
 }
