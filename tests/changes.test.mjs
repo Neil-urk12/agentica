@@ -726,6 +726,25 @@ function view(state, layout) {
 }
 
 for (const layout of ["tile", "overlay"]) {
+  test(`${layout}: filtered files explain why review is unsupported`, async () => {
+    const { state } = await setup({
+      status: {
+        state: "ready",
+        entries: [{ ...entry("filtered.txt"), unsupported: "filter" }],
+      },
+      diff: { kind: "filtered" },
+    });
+    await state.select("unstaged:filtered.txt");
+    const html = view(state, layout);
+    assert.match(
+      html,
+      /Review is unavailable for files with Git conversion filters/,
+    );
+    assert.match(html, /Filters\s+are disabled during review/);
+    assert.match(html, /filter unsupported/);
+    state.dispose();
+  });
+
   test(`${layout}: a clean refresh preserves drafts, preview, and paste controls`, async () => {
     const { state, disk } = await setup();
     save(state, "Keep this feedback");

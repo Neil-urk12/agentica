@@ -254,6 +254,11 @@
         <p class="notice">Binary file; no text diff.</p>
       {:else if diff.kind === "tooLarge"}
         <p class="notice">This diff is too large to show (over 1 MiB).</p>
+      {:else if diff.kind === "filtered"}
+        <p class="notice">
+          Review is unavailable for files with Git conversion filters. Filters
+          are disabled during review.
+        </p>
       {:else if diff.kind === "missing"}
         <p class="notice">This file is no longer listed. Refresh.</p>
       {:else if diff.kind === "notRepository"}
@@ -361,7 +366,10 @@
               <optgroup label={`${section.label} (${items.length})`}>
                 {#each items as entry (entryKey(entry))}
                   <option value={entryKey(entry)}
-                    >{entry.status} {entry.path}</option
+                    >{entry.status}
+                    {entry.path}{entry.unsupported === "filter"
+                      ? " (filter unsupported)"
+                      : ""}</option
                   >
                 {/each}
               </optgroup>
@@ -437,7 +445,9 @@
                   title={entry.path}
                   onclick={() => void state.select(entryKey(entry))}
                   ><span class="status">{entry.status}</span
-                  >{entry.path}</button
+                  >{entry.path}{entry.unsupported === "filter"
+                    ? " (filter unsupported)"
+                    : ""}</button
                 >
               </li>
             {/each}

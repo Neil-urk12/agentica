@@ -12,6 +12,16 @@ build the installers and publish the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Review safety (2026-11-01)
+
+- Changes reads disable configured Git clean/process filters, including during
+  status, so opening review cannot launch those commands. Files with filter
+  attributes are marked unsupported rather than showing an unfiltered diff as
+  if it represented Git's stored content.
+- Attribute checks use Git's defined-attribute listing to distinguish a literal
+  `unspecified` driver from absent/reset attributes. When an `unset` driver is
+  configured, review conservatively blocks the value Git also uses for `-filter`.
+
 ### Text that fits one request, and browser voice input (2026-10-31)
 
 - Note fields now also stop at what one 16 KiB `artifact.saveText` request

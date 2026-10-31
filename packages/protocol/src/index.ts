@@ -536,6 +536,7 @@ export const ChangeEntrySchema = z.strictObject({
   status: z.string().length(1),
   path: z.string(),
   origPath: z.string().nullable(),
+  unsupported: z.literal("filter").nullable().optional(),
 });
 export type ChangeEntry = z.infer<typeof ChangeEntrySchema>;
 const Message = z.strictObject({ message: z.string() });
@@ -572,6 +573,7 @@ export const ChangesDiffSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("binary"), notes: Notes }),
   z.strictObject({ kind: z.literal("empty"), notes: Notes }),
   z.strictObject({ kind: z.literal("tooLarge") }),
+  z.strictObject({ kind: z.literal("filtered") }),
   z.strictObject({ kind: z.literal("missing") }),
   z.strictObject({ kind: z.literal("notRepository") }),
   z.strictObject({ kind: z.literal("folderUnavailable") }),

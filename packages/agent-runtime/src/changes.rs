@@ -5,6 +5,7 @@
 //! `GIT_OPTIONAL_LOCKS=0`, and a deadline. Unstaged diffs use `diff-files`,
 //! which never refreshes or rewrites `.git/index`.
 use std::{
+    collections::BTreeSet,
     ffi::OsString,
     io::Read,
     path::{Path, PathBuf},
@@ -183,28 +184,90 @@ const GIT_MISSING: &str =
 /// Run Git with fixed global options, a byte cap on stdout, and a deadline.
 fn git(
     cwd: &Path,
-    args: &[OsString],
+    argv: &[OsString],
     cap: usize,
     deadline: Instant,
 ) -> Result<GitOutput, Unavailable> {
+    // Status and diff-files also invoke conversion filters while hashing files.
+    // Read configuration without touching worktree content, then disable every
+    // configured driver, including required filters, for all review commands.
+    let mut overrides = Vec::new();
+    for driver in filter_drivers(cwd, deadline)? {
+        for (setting, value) in [("clean", ""), ("process", ""), ("required", "false")] {
+            overrides.push((format!("{driver}.{setting}"), value));
+        }
+    }
+    git_raw(cwd, argv, cap, deadline, &overrides)
+}
+
+fn filter_drivers(cwd: &Path, deadline: Instant) -> Result<BTreeSet<String>, Unavailable> {
+    let config = git_raw(
+        cwd,
+        &args([
+            "config",
+            "--null",
+            "--name-only",
+            "--get-regexp",
+            "^filter\\.",
+        ]),
+        SMALL_CAP,
+        deadline,
+        &[],
+    )?;
+    if config.overflow || !matches!(config.code, Some(0 | 1)) {
+        return Err(Unavailable::Failed(
+            "Cannot read Git filter configuration.".into(),
+        ));
+    }
+    let mut drivers = BTreeSet::new();
+    for key in config
+        .stdout
+        .split(|b| *b == 0)
+        .filter(|key| !key.is_empty())
+    {
+        let key = std::str::from_utf8(key)
+            .map_err(|_| Unavailable::Failed("Cannot read Git filter configuration.".into()))?;
+        // `git -c` separates its key and value at the first equals sign.
+        if key.contains('=') {
+            return Err(Unavailable::Failed(
+                "Cannot safely disable Git filters.".into(),
+            ));
+        }
+        if let Some((driver, _)) = key.rsplit_once('.') {
+            drivers.insert(driver.to_owned());
+        }
+    }
+    Ok(drivers)
+}
+
+fn git_raw(
+    cwd: &Path,
+    args: &[OsString],
+    cap: usize,
+    deadline: Instant,
+    overrides: &[(String, &str)],
+) -> Result<GitOutput, Unavailable> {
     let mut command = Command::new("git");
+    command.args([
+        "--no-pager",
+        "--no-optional-locks",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.quotePath=false",
+        "-c",
+        "color.ui=never",
+        "-c",
+        "diff.noprefix=false",
+        "-c",
+        "diff.mnemonicPrefix=false",
+        "-c",
+        "diff.relative=false",
+    ]);
+    for (key, value) in overrides {
+        command.args(["-c", &format!("{key}={value}")]);
+    }
     command
-        .args([
-            "--no-pager",
-            "--no-optional-locks",
-            "-c",
-            "core.fsmonitor=false",
-            "-c",
-            "core.quotePath=false",
-            "-c",
-            "color.ui=never",
-            "-c",
-            "diff.noprefix=false",
-            "-c",
-            "diff.mnemonicPrefix=false",
-            "-c",
-            "diff.relative=false",
-        ])
         .args(args)
         .current_dir(cwd)
         .stdin(Stdio::null())
@@ -371,17 +434,66 @@ fn status(root: &Path) -> Value {
     };
     let parsed = parse_status(&output.stdout);
     let truncated = output.overflow || parsed.entries.len() > MAX_ENTRIES;
+    let paths: Vec<&str> = parsed
+        .entries
+        .iter()
+        .take(MAX_ENTRIES)
+        .flat_map(|entry| std::iter::once(entry.path.as_str()).chain(entry.orig_path.as_deref()))
+        .collect();
+    let filtered = match filtered_paths(&top, &paths, deadline) {
+        Ok(paths) => paths,
+        Err(state) => return unavailable(state),
+    };
     let entries: Vec<Value> = parsed
         .entries
         .into_iter()
         .take(MAX_ENTRIES)
         .map(|entry| {
+            let unsupported = filtered.contains(&entry.path)
+                || entry
+                    .orig_path
+                    .as_ref()
+                    .is_some_and(|path| filtered.contains(path));
             json!({"section": entry.section, "status": entry.status,
-            "path": entry.path, "origPath": entry.orig_path})
+            "path": entry.path, "origPath": entry.orig_path,
+            "unsupported": if unsupported { Some("filter") } else { None }})
         })
         .collect();
     json!({"state": "ready", "branch": parsed.branch, "prefix": prefix,
         "entries": entries, "truncated": truncated})
+}
+
+/// Attribute reads do not run drivers. Bound argv size while checking status entries.
+fn filtered_paths(
+    top: &Path,
+    paths: &[&str],
+    deadline: Instant,
+) -> Result<BTreeSet<String>, Unavailable> {
+    let mut filtered = BTreeSet::new();
+    let unset_driver_configured = filter_drivers(top, deadline)?.contains("filter.unset");
+    for batch in paths.chunks(64) {
+        // --all omits absent/reset attributes, but includes the literal driver
+        // named `unspecified`. A literal `unset` and `-filter` still look alike;
+        // refuse both conservatively when that driver is configured.
+        let mut argv = args(["check-attr", "-z", "--all", "--"]);
+        argv.extend(batch.iter().map(OsString::from));
+        let output = git(top, &argv, STATUS_CAP, deadline)?;
+        if output.code != Some(0) || output.overflow {
+            return Err(failure(&output));
+        }
+        let fields: Vec<_> = output.stdout.split(|b| *b == 0).collect();
+        if fields.last() != Some(&&b""[..]) || (fields.len() - 1) % 3 != 0 {
+            return Err(Unavailable::Failed(
+                "Git returned unexpected attributes.".into(),
+            ));
+        }
+        for record in fields[..fields.len() - 1].chunks_exact(3) {
+            if record[1] == b"filter" && (record[2] != b"unset" || unset_driver_configured) {
+                filtered.insert(String::from_utf8_lossy(record[0]).into_owned());
+            }
+        }
+    }
+    Ok(filtered)
 }
 
 #[derive(Debug, PartialEq)]
@@ -498,6 +610,14 @@ fn diff(root: &Path, p: &DiffParams) -> Result<Value, RuntimeError> {
             return Err(invalid("origPath is only valid for staged renames."));
         }
         check_path(orig, &prefix)?;
+    }
+    let paths: Vec<&str> = std::iter::once(p.path.as_str())
+        .chain(p.orig_path.as_deref())
+        .collect();
+    match filtered_paths(&top, &paths, deadline) {
+        Ok(paths) if !paths.is_empty() => return Ok(json!({"kind": "filtered"})),
+        Ok(_) => {}
+        Err(state) => return Ok(unavailable(state)),
     }
     let mut argv = match p.section {
         Section::Untracked => {
