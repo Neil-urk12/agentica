@@ -93,6 +93,12 @@ build the installers and publish the release. Keep validation evidence in the
   whose popup the Linux webview draws with unthemed system colours. Choosing
   "A specific model" still opens Advanced and focuses the model field, and
   stays on Free until a model is entered.
+- Review fixes: the model button's tools note now applies only to the provider,
+  model, and tools flag that produced it, so switching models no longer shows
+  the previous model's note. A blank OpenRouter model field reads as the free
+  model in the Quality cards, as it is saved, instead of "Using .". The user
+  guide now lists what each request sends and excludes, which the removed
+  Context details disclosure used to show.
 
 ## 0.2.0 — 2026-10-29
 

@@ -133,9 +133,12 @@ them a model can reply but cannot propose changes.
 ### Ask and review
 
 Select objects to focus a request, or clear the selection to use the whole
-canvas. The composer shows what will be sent: object text and geometry, plus up
-to eight recent exchanges. Prompts and replies are placed on the canvas as
-editable text.
+canvas. The chip above the prompt shows the scope. Each request sends the
+provider your prompt; the position, size, text, extracted file text, and
+connections of the selected objects, or of every note, drawing, file, and
+conversation card on the canvas; and up to eight earlier prompts and replies
+from the current chat, with their outcomes. Project folders, session tiles,
+terminal output, and web previews are never sent.
 
 A tool-capable model can propose text, labeled rectangles and ellipses,
 placement, and connectors. Proposed changes have dashed outlines and a
@@ -146,7 +149,7 @@ reply and changes nothing.
 - If you edited a target after the proposal was made, applying it reports a
   conflict instead of overwriting your edit.
 - One generation or unresolved proposal can be active per canvas.
-- **Cancel** stops generation. An interrupted request needs an explicit retry.
+- The stop button that replaces send while a reply generates stops generation. An interrupted request needs an explicit retry.
 - Requests that exceed size limits fail visibly; nothing is silently truncated.
 - If saving a reply fails, keep the canvas open to retry, or copy the reply.
 

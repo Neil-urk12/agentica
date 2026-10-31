@@ -83,6 +83,8 @@
   );
   let custom = $state(getCustomProvider());
   let model = $state(initialProvider.model);
+  // What setOpenRouterModel saves: a blank field means the free model.
+  const openRouterModel = $derived(model.trim() || DEFAULT_MODEL);
   let showKey = $state(false);
   let savedMessage = $state("");
   let saveTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -139,7 +141,7 @@
       };
     return {
       ok: true,
-      text: `Ready to use with ${model === DEFAULT_MODEL ? "free models" : model}.`,
+      text: `Ready to use with ${openRouterModel === DEFAULT_MODEL ? "free models" : openRouterModel}.`,
     };
   });
 
@@ -192,7 +194,8 @@
 
   async function chooseSpecificModel() {
     // The model only changes once one is typed in Advanced.
-    if (model === DEFAULT_MODEL && freeChoice) freeChoice.checked = true;
+    if (openRouterModel === DEFAULT_MODEL && freeChoice)
+      freeChoice.checked = true;
     openSection("advanced");
     await tick();
     modelInput?.focus();
@@ -372,7 +375,7 @@
                     name="ai-quality"
                     value="free"
                     bind:this={freeChoice}
-                    checked={model === DEFAULT_MODEL}
+                    checked={openRouterModel === DEFAULT_MODEL}
                     onchange={() => onModelChange(DEFAULT_MODEL)}
                   />
                   <span>
@@ -389,15 +392,15 @@
                     type="radio"
                     name="ai-quality"
                     value="specific"
-                    checked={model !== DEFAULT_MODEL}
+                    checked={openRouterModel !== DEFAULT_MODEL}
                     onclick={() => void chooseSpecificModel()}
                   />
                   <span>
                     <strong>A specific model</strong>
                     <span class="setting__hint"
-                      >{model === DEFAULT_MODEL
+                      >{openRouterModel === DEFAULT_MODEL
                         ? "Choose any OpenRouter model in Advanced."
-                        : `Using ${model}. Change it in Advanced.`}</span
+                        : `Using ${openRouterModel}. Change it in Advanced.`}</span
                     >
                   </span>
                 </label>

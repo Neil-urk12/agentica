@@ -308,7 +308,8 @@
   let tool = $state<Tool>("select");
   let generating = $state(false);
   let promptError = $state("");
-  let toolsNotice = $state("");
+  /** Whether the last request could propose edits, for the provider settings that sent it. */
+  let toolsNotice = $state.raw<{ source: string; text: string } | null>(null);
   /** Tokens the latest reply's last request used, for the chat and model that sent it. */
   let contextUsage = $state.raw<{
     chatId: string;
@@ -431,6 +432,8 @@
       ? contextUsage.tokens
       : undefined,
   );
+  // The custom tools flag changes tool support without changing the model.
+  const noticeSource = $derived(`${providerSource} ${providerConfig.tools}`);
   // Only OpenRouter publishes context windows; look it up once a key shows the user uses it.
   const catalogModel = $derived(
     providerConfig.kind === "openrouter" && providerConfig.apiKey
@@ -870,6 +873,7 @@
     promptError = "";
     generating = true;
     const source = providerSource;
+    const toolsSource = noticeSource;
     const controller = new AbortController();
     conversationAbort = controller;
     try {
@@ -879,9 +883,12 @@
         provider.kind === "custom"
           ? provider.tools
           : await canvasToolSupport(model, controller.signal);
-      toolsNotice = tools
-        ? "Canvas edits will appear as proposals for review."
-        : "This model supports text replies only. Choose a tool-capable model in Settings to propose canvas edits.";
+      toolsNotice = {
+        source: toolsSource,
+        text: tools
+          ? "Canvas edits will appear as proposals for review."
+          : "This model supports text replies only. Choose a tool-capable model in Settings to propose canvas edits.",
+      };
       controller.signal.throwIfAborted();
       const area = usable();
       const centre = area
@@ -3547,7 +3554,9 @@
               : `Current canvas · ${chatScope}`}
             provider={providerName}
             model={providerConfig.model}
-            modelNote={toolsNotice}
+            modelNote={toolsNotice?.source === noticeSource
+              ? toolsNotice.text
+              : ""}
             onModelClick={() => (settingsOpen = "ai")}
             {contextUsed}
             contextWindow={modelContext}
