@@ -2,6 +2,7 @@ import {
   CONVERSATION_READ,
   IdSchema,
   LIMITS,
+  MAX_FRAME_BYTES,
   type CanvasOperation,
   type RuntimeResult,
 } from "@agentica/protocol";
@@ -15,6 +16,32 @@ import { mcpToolSpecs, offeredMcpTools, type McpTool } from "./agent-tools.ts";
 
 /** Room left in a 16 KiB runtime frame for the request envelope around MCP arguments. */
 const MCP_ARG_BYTES = 12 * 1024;
+
+const ZERO_ID = "00000000-0000-4000-8000-000000000000";
+
+/**
+ * Whether one `conversation.finish` request can save this reply and these
+ * edits. Characters are not bytes: CJK text fills the frame three times sooner.
+ */
+function finishFits(reply: string, operations: CanvasOperation[]) {
+  const request = {
+    protocolVersion: 1,
+    id: ZERO_ID,
+    method: "conversation.finish",
+    params: {
+      workspaceId: ZERO_ID,
+      canvasId: ZERO_ID,
+      turnId: ZERO_ID,
+      reply,
+      operations,
+      status: "complete",
+      error: "",
+    },
+  };
+  return (
+    new TextEncoder().encode(JSON.stringify(request)).length <= MAX_FRAME_BYTES
+  );
+}
 
 /** Settle with `work`, or reject as soon as `signal` aborts; the work itself is not stopped. */
 function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -236,6 +263,10 @@ export async function runCanvasTurn(
           throw new Error(
             "The reply exceeds the text limit. Ask for a shorter answer; nothing was truncated.",
           );
+        if (!finishFits(text, operations))
+          throw new Error(
+            "The reply and its proposed edits are too large to save. Ask for a shorter answer or fewer changes; nothing was applied.",
+          );
         return withTokens({ reply: text, operations });
       }
       if (!deps.tools)
@@ -369,6 +400,10 @@ export async function runCanvasTurn(
       const operation = checkedToolOperation(args);
       const next = [...operations, operation];
       stageOperations(start.context, next);
+      if (!finishFits("", next))
+        throw new Error(
+          "This edit would make the proposal too large to save. Stage fewer or shorter edits.",
+        );
       operations = next;
       lastToolError = "";
       return { status: "preview-only", operation };
@@ -392,12 +427,12 @@ export async function runCanvasTurn(
     if (!(exhausted instanceof Exhausted)) throw error;
     if (!operations.length) throw exhausted;
     const note = `Partial proposal: the agent stopped at its ${BUDGET_NAMES[exhausted.budget]} limit before finishing. Review what it staged.`;
-    const reply = lastText ? `${note}\n\n${lastText}` : note;
-    return withTokens({
-      reply: reply.length > LIMITS.text ? note : reply,
-      operations,
-      partial: exhausted.budget,
-    });
+    const full = lastText ? `${note}\n\n${lastText}` : note;
+    const reply =
+      full.length <= LIMITS.text && finishFits(full, operations) ? full : note;
+    // Staged edits always fit without a reply; keep nothing if the note tips them over.
+    if (!finishFits(reply, operations)) throw exhausted;
+    return withTokens({ reply, operations, partial: exhausted.budget });
   } finally {
     clearTimeout(timer);
     deps.signal.removeEventListener("abort", cancel);

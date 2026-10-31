@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { LIMITS } from "@agentica/protocol";
+  import { fitTextField } from "../canvas-view";
   import Modal from "./Modal.svelte";
   import Markdown from "./Markdown.svelte";
 
@@ -69,7 +70,8 @@
       value={text}
       maxlength={LIMITS.text}
       disabled={editDisabled}
-      oninput={(event) => onEdit?.(event.currentTarget.value)}></textarea>
+      oninput={(event) => onEdit?.(fitTextField(event.currentTarget))}
+    ></textarea>
   {:else}
     <div class="reader__content" tabindex="-1">
       {#if !text.trim()}

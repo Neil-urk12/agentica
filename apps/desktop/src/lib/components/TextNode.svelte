@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Handle, NodeResizer, Position } from "@xyflow/svelte";
   import { LIMITS, type Task } from "@agentica/protocol";
-  import { turnStatus } from "../canvas-view";
+  import { fitTextField, turnStatus } from "../canvas-view";
   import Icon from "./Icon.svelte";
   import Markdown from "./Markdown.svelte";
 
@@ -144,7 +144,7 @@
       value={data.text}
       maxlength={LIMITS.text}
       readonly={!data.editable}
-      oninput={(event) => data.onEdit?.(event.currentTarget.value)}
+      oninput={(event) => data.onEdit?.(fitTextField(event.currentTarget))}
       onblur={() => (editing = false)}
       onkeydown={(event) => {
         event.stopPropagation();

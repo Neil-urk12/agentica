@@ -1,4 +1,53 @@
-import { LIMITS } from "@agentica/protocol";
+import { LIMITS, MAX_FRAME_BYTES } from "@agentica/protocol";
+
+const encoder = new TextEncoder();
+const jsonBytes = (value: unknown) =>
+  encoder.encode(JSON.stringify(value)).length;
+const ZERO_ID = "00000000-0000-4000-8000-000000000000";
+/** JSON bytes of note text that one `artifact.saveText` request carries at any revision. */
+const TEXT_BYTES =
+  MAX_FRAME_BYTES -
+  jsonBytes({
+    protocolVersion: 1,
+    id: ZERO_ID,
+    method: "artifact.saveText",
+    params: {
+      workspaceId: ZERO_ID,
+      artifactId: ZERO_ID,
+      expectedRevision: Number.MAX_SAFE_INTEGER,
+      text: "",
+    },
+  }) +
+  2; // the empty text's quotes are counted again with the text
+
+/**
+ * Trim a note field to what one save request can carry, as `maxlength` does
+ * for characters: the text typed or pasted before the caret goes, not the end
+ * of the note. The frame counts UTF-8 bytes of the JSON string, which CJK,
+ * Cyrillic, and escaped characters fill sooner than 10,000 characters.
+ */
+export function fitTextField(field: {
+  value: string;
+  selectionEnd?: number | null;
+  setSelectionRange?(start: number, end: number): void;
+}): string {
+  const value = field.value;
+  if (jsonBytes(value) <= TEXT_BYTES) return value;
+  let caret = field.selectionEnd ?? value.length;
+  // Text after the caret that cannot fit on its own is trimmed from the end.
+  if (jsonBytes(value.slice(caret)) > TEXT_BYTES) caret = value.length;
+  const after = value.slice(caret);
+  let bytes = jsonBytes(after);
+  let end = 0;
+  for (const char of value.slice(0, caret)) {
+    bytes += jsonBytes(char) - 2;
+    if (bytes > TEXT_BYTES) break;
+    end += char.length;
+  }
+  field.value = value.slice(0, end) + after;
+  field.setSelectionRange?.(end, end);
+  return field.value;
+}
 
 export type Box = { x: number; y: number; width: number; height: number };
 export type Rect = { left: number; top: number; right: number; bottom: number };

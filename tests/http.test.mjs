@@ -256,6 +256,11 @@ test("browser RPC enforces localhost, authentication, CORS, limits, and the shar
       frontend.headers["content-security-policy"],
       /frame-ancestors 'none'/,
     );
+    // Local speech-to-text compiles WebAssembly and imports a blob: loader.
+    assert.match(
+      frontend.headers["content-security-policy"],
+      /script-src 'self' 'wasm-unsafe-eval' blob:/,
+    );
     assert.equal(frontend.headers["x-content-type-options"], "nosniff");
     assert.equal(frontend.headers["referrer-policy"], "no-referrer");
     assert.equal(frontend.headers["cache-control"], "no-store");
@@ -2135,6 +2140,8 @@ test("chat panel history, reviewed canvas edits, recovery and cancellation work 
             window.__failOpen -= 1;
             throw new TypeError('Canvas reload lost');
           }
+          if (method === 'conversation.finish' && window.__refuseReply && JSON.parse(options.body).params.reply)
+            throw new TypeError('Reply refused');
           const response = await realFetch(url, options);
           if (method === 'conversation.finish' && window.__loseFinish) {
             window.__loseFinish = false;
@@ -2550,6 +2557,33 @@ test("chat panel history, reviewed canvas edits, recovery and cancellation work 
     assert.equal(
       (await rpc("conversation.list", { ...ref, before: 0 })).turns[0].status,
       "discarded",
+    );
+
+    // A reply that can never be saved is discarded: the turn is saved as
+    // failed without it, and the reply stays in the recovery copy.
+    await evaluate(browser, `window.__refuseReply = true`);
+    await submit("Draw an idea whose reply cannot be saved");
+    const discard = `[...document.querySelectorAll('.conversation-recovery button')].find(b => b.textContent.trim() === 'Discard response')`;
+    await waitFor(
+      browser,
+      `!!(${discard}) && document.body.innerText.includes('Reply refused')`,
+      "the reply that cannot be saved",
+    );
+    await evaluate(browser, `(${discard}).click()`);
+    await waitFor(
+      browser,
+      `!document.querySelector('.conversation-recovery') && !document.querySelector('#canvas-prompt').disabled && document.querySelector('#recovery-copy')?.value.includes('A diagram you can edit.')`,
+      "the discarded reply in the recovery copy",
+    );
+    const [refused] = (await rpc("conversation.list", { ...ref, before: 0 }))
+      .turns;
+    assert.deepEqual(
+      [refused.status, refused.reply, refused.operations, refused.error],
+      ["failed", "", [], "The response could not be saved and was discarded."],
+    );
+    await evaluate(
+      browser,
+      `window.__refuseReply = false; [...document.querySelectorAll('.recovery button')].find(b => b.textContent.includes('Hide')).click()`,
     );
     // Neither copy of the legacy exchange overwrote the other.
     const legacyTurn = new DatabaseSync(database, { readOnly: true });

@@ -561,6 +561,65 @@ test("request budget replaces the 16 KiB frame limit for model requests", async 
   assert.equal(bodies.length, 1, "an oversized request is never sent");
 });
 
+test("replies and proposals stay within what one finish request can save", async (t) => {
+  // 6,000 CJK characters pass the character limit but not the 16 KiB frame.
+  const long = t.mock.method(globalThis, "fetch", async () =>
+    result("中".repeat(6000)),
+  );
+  await assert.rejects(runCanvasAgent(start(), options()), /too large to save/);
+  long.mock.restore();
+
+  // An edit that would overflow the proposal goes back to the model.
+  let requests = 0;
+  const edits = t.mock.method(globalThis, "fetch", async (_url, request) => {
+    const body = JSON.parse(request.body);
+    requests++;
+    if (requests === 1)
+      return result(null, [
+        tool(1, { op: "updateText", nodeId: id(1), text: "中".repeat(5000) }),
+      ]);
+    if (requests === 2)
+      return result(null, [
+        tool(2, {
+          op: "createText",
+          x: 500,
+          y: 0,
+          width: 240,
+          height: 160,
+          text: "中".repeat(2000),
+        }),
+      ]);
+    const feedback = JSON.parse(body.messages.at(-1).content);
+    assert.equal(feedback.status, "rejected");
+    assert.match(feedback.error, /too large to save/);
+    return result("Updated the note.");
+  });
+  const response = await runCanvasAgent(start(), options());
+  assert.equal(requests, 3);
+  assert.equal(response.operations.length, 1);
+  assert.equal(response.reply, "Updated the note.");
+  edits.mock.restore();
+
+  // A partial proposal drops the model's text when it would not fit with the edits.
+  let rounds = 0;
+  t.mock.method(globalThis, "fetch", async () =>
+    result(rounds === 0 ? "中".repeat(4000) : null, [
+      tool(++rounds, {
+        op: "updateText",
+        nodeId: id(1),
+        text: rounds === 1 ? "中".repeat(3000) : "Draft",
+      }),
+    ]),
+  );
+  const partial = await runCanvasAgent(start(), {
+    ...options(),
+    budget: { ...BUDGET, rounds: 2 },
+  });
+  assert.equal(partial.partial, "rounds");
+  assert.equal(partial.operations.length, 2);
+  assert.match(partial.reply, /^Partial proposal: [^中]*$/);
+});
+
 test("the time budget aborts the request and keeps staged edits; a user cancel keeps nothing", async (t) => {
   const budget = { ...BUDGET, ms: 50 };
   let requests = 0;

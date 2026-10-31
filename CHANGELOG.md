@@ -12,6 +12,27 @@ build the installers and publish the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Text that fits one request, and browser voice input (2026-10-31)
+
+- Note fields now also stop at what one 16 KiB `artifact.saveText` request
+  can carry, not only at 10,000 characters. CJK and Cyrillic text fills the
+  frame first: a 5,500-character Chinese note used to be accepted, then fail
+  every save and hold back later edits and the layout.
+- The canvas agent checks that its reply and staged edits fit one
+  `conversation.finish` request. An edit that would overflow goes back to the
+  model; a reply that would not fit ends the turn with an error instead of
+  leaving a buffered reply that can never be saved.
+- The response recovery bar adds Discard response: the turn is saved as
+  failed without its reply, which always fits, and the reply moves to the
+  recovery copy. Before, a reply the runtime could not accept blocked leaving
+  the canvas and closing the desktop window.
+- The bundled backend's CSP allows `'wasm-unsafe-eval'` and `blob:` scripts,
+  so voice input works in browser mode: the speech worker's ONNX runtime
+  compiles WebAssembly and imports its loader from a blob: URL. The desktop app
+  was unaffected because Tauri sends its CSP only with HTML documents.
+- The shared protocol `Text` limit stays 10,000 characters: it also checks
+  stored turns in responses, and a byte cap there could reject saved history.
+
 ### Canvas agent chat panel (2026-10-30)
 
 - Move the main agent's conversation into a Chat panel in the canvas side slot,

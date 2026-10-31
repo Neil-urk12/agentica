@@ -87,8 +87,10 @@ async fn dispatch(State(state): State<Arc<HttpState>>, request: Request) -> Resp
         header::REFERRER_POLICY,
         HeaderValue::from_static("no-referrer"),
     );
+    // Every response carries this policy, the speech worker included: its ONNX
+    // runtime compiles WebAssembly and imports its loader from a blob: URL.
     headers.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(
-                    "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws://127.0.0.1:1421 https: http://localhost:* http://127.0.0.1:*; frame-src 'self' http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:*; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+                    "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws://127.0.0.1:1421 https: http://localhost:* http://127.0.0.1:*; frame-src 'self' http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:*; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
     ));
     if let Some(origin) = cors_origin {
         headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);

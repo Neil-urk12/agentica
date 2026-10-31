@@ -67,6 +67,7 @@
     PROPOSAL_RESERVE,
     areaCentre,
     compactSize,
+    fitTextField,
     fitTextHeight,
     fitViewport,
     overlayInsets,
@@ -827,9 +828,9 @@
     return true;
   }
 
-  async function saveReply(textOnly = false) {
+  async function saveReply(fallback?: "text" | "discard") {
     if (!pendingReply) return;
-    if (textOnly) {
+    if (fallback) {
       // Reconcile first: a saved proposal resent without operations always conflicts.
       if (await adoptFinishedTurn()) return;
       if (!pendingReply) return;
@@ -837,7 +838,20 @@
         promptError = editorState.error;
         return;
       }
-      pendingReply = { ...pendingReply, operations: [] };
+      if (fallback === "text")
+        pendingReply = { ...pendingReply, operations: [] };
+      else {
+        // A failed turn without a reply always fits one request, so this is the
+        // way out when the reply itself cannot be saved. It stays copyable.
+        recoveryCopy = JSON.stringify(pendingReply, null, 2);
+        pendingReply = {
+          ...pendingReply,
+          reply: "",
+          operations: [],
+          status: "failed",
+          error: "The response could not be saved and was discarded.",
+        };
+      }
     }
     const saved = await editor.finishConversation(pendingReply);
     if (saved && !editorState.error) {
@@ -3513,9 +3527,16 @@
                   <button
                     type="button"
                     class="btn btn--soft"
-                    onclick={() => void saveReply(true)}>Save text only</button
+                    onclick={() => void saveReply("text")}
+                    >Save text only</button
                   >
                 {/if}
+                <button
+                  type="button"
+                  class="btn btn--soft"
+                  onclick={() => void saveReply("discard")}
+                  >Discard response</button
+                >
               {:else}
                 <span
                   >This turn was interrupted or is running in another tab.</span
@@ -3679,8 +3700,10 @@
                     ? "Describe the task and the result you want…"
                     : "Write something…"}
                   oninput={(event) =>
-                    editor.editText(textArtifact.id, event.currentTarget.value)}
-                ></textarea>
+                    editor.editText(
+                      textArtifact.id,
+                      fitTextField(event.currentTarget),
+                    )}></textarea>
               </div>
               {#if textArtifact.purpose === "instruction"}
                 <div class="field">

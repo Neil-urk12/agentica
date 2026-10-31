@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { LIMITS } from "@agentica/protocol";
+import { LIMITS, MAX_FRAME_BYTES } from "@agentica/protocol";
 import {
   CARD,
   PROPOSAL_RESERVE,
   compactSize,
+  fitTextField,
   fitTextHeight,
   fitViewport,
   overlayInsets,
@@ -323,4 +324,48 @@ test("zoom keyboard shortcuts identify zoom in, zoom out, and reset factors", ()
   assert.equal(isZoomResetShortcut({ ctrlKey: true, code: "Numpad0" }), true);
   assert.equal(isZoomResetShortcut({ ctrlKey: true, key: "1" }), false);
   assert.equal(isZoomResetShortcut({ ctrlKey: false, key: "0" }), false);
+});
+
+test("note fields keep only what one save request can carry", () => {
+  const zero = "00000000-0000-4000-8000-000000000000";
+  const saveBytes = (text) =>
+    Buffer.byteLength(
+      JSON.stringify({
+        protocolVersion: 1,
+        id: zero,
+        method: "artifact.saveText",
+        params: {
+          workspaceId: zero,
+          artifactId: zero,
+          expectedRevision: Number.MAX_SAFE_INTEGER,
+          text,
+        },
+      }),
+    );
+  const ascii = { value: "a".repeat(LIMITS.text) };
+  assert.equal(fitTextField(ascii), "a".repeat(LIMITS.text));
+  for (const char of ["中", "ж", "\n", "😀"]) {
+    const typed = char.repeat(LIMITS.text);
+    const field = { value: typed };
+    const kept = fitTextField(field);
+    assert.equal(field.value, kept, `${char}: the field shows what is kept`);
+    assert.ok(typed.startsWith(kept) && kept.length % char.length === 0);
+    assert.ok(saveBytes(kept) <= MAX_FRAME_BYTES, `${char}: fits one request`);
+    assert.ok(
+      saveBytes(kept + char) > MAX_FRAME_BYTES,
+      `${char}: nothing that fits is trimmed`,
+    );
+  }
+  // Typing into the middle of a full note drops the new text, not the note's end.
+  const full = fitTextField({ value: "中".repeat(LIMITS.text) });
+  const middle = {
+    value: `${full.slice(0, 100)}中中${full.slice(100)}`,
+    selectionEnd: 102,
+    setSelectionRange(start, end) {
+      this.selectionStart = start;
+      this.selectionEnd = end;
+    },
+  };
+  assert.equal(fitTextField(middle), full);
+  assert.equal(middle.selectionEnd, 100, "the caret stays at the typed text");
 });
