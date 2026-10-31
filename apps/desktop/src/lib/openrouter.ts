@@ -87,6 +87,26 @@ export async function canvasToolSupport(
   return entry.supported_parameters?.includes("tools") ?? false;
 }
 
+/** The model's context window in tokens from OpenRouter's public catalog, if listed. */
+export async function contextWindow(
+  model: string,
+  signal?: AbortSignal,
+): Promise<number | undefined> {
+  const response = await fetch("https://openrouter.ai/api/v1/models", {
+    signal,
+  });
+  if (!response.ok) return undefined;
+  const catalog = (await response.json()) as {
+    data?: { id: string; context_length?: unknown }[];
+  };
+  const size = catalog.data?.find(
+    (entry) => entry.id === model,
+  )?.context_length;
+  return Number.isSafeInteger(size) && (size as number) > 0
+    ? (size as number)
+    : undefined;
+}
+
 async function postChat(
   provider: ProviderConfig | undefined,
   apiKey: string,

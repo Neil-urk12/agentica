@@ -2436,7 +2436,7 @@ test("chat panel history, reviewed canvas edits, recovery and cancellation work 
     await toggleChat();
     await evaluate(
       browser,
-      `[...document.querySelectorAll('.composer button')].find(b => b.textContent === 'Cancel').click()`,
+      `document.querySelector('.composer__send--stop').click()`,
     );
     await waitFor(
       browser,

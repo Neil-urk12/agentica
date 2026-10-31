@@ -78,6 +78,21 @@ build the installers and publish the release. Keep validation evidence in the
   fill the row, centring the message and splitting button icons from their
   labels. Only the message grows now. Error banners use body text with a red
   accent edge and icon, and compact neutral buttons.
+- The composer clears as soon as a prompt is sent and puts it back only if no
+  turn was created. While a reply generates, the send button becomes a stop
+  button that cancels it, replacing the separate Cancel button and spinner.
+- The composer drops its Context details disclosure for an editor-style
+  toolbar: the scope becomes a chip above the prompt, and a model button beside
+  attach shows the provider over the model and opens AI settings. A ring by the
+  mic shows the last request's tokens against the model's context window. The
+  harness reports the provider's `usage.total_tokens`, and the window comes
+  from OpenRouter's public catalog, fetched only once an OpenRouter key is set;
+  custom providers show tokens without a window. Usage is per chat and model,
+  in memory only.
+- Settings' Quality choice is two radio cards instead of a two-option select,
+  whose popup the Linux webview draws with unthemed system colours. Choosing
+  "A specific model" still opens Advanced and focuses the model field, and
+  stays on Free until a model is entered.
 
 ## 0.2.0 — 2026-10-29
 

@@ -27,11 +27,14 @@
     ) => Promise<string>;
     /** Short scope line, such as "2 selected objects · recent conversation". */
     scope?: string;
-    /** Provider name and model shown in the disclosure. */
+    /** Provider and model shown on the model button, which opens AI settings. */
     provider?: string;
-    /** What the next request actually transmits. */
-    details?: string[];
-    notice?: string;
+    model?: string;
+    modelNote?: string;
+    onModelClick?: () => void;
+    /** Tokens the last request used, and the model's context window, when known. */
+    contextUsed?: number;
+    contextWindow?: number;
     onCancel?: () => void;
   }
 
@@ -45,8 +48,11 @@
     onTranscribe,
     scope = "",
     provider = "",
-    details = [],
-    notice = "",
+    model = "",
+    modelNote = "",
+    onModelClick,
+    contextUsed,
+    contextWindow,
     onCancel,
   }: Props = $props();
 
@@ -71,7 +77,26 @@
     void promptText;
     if (input && !CSS.supports("field-sizing", "content")) fit(input);
   });
-  let detailsOpen = $state(false);
+
+  const compact = new Intl.NumberFormat(undefined, {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  });
+  const contextShare = $derived(
+    contextWindow && contextUsed !== undefined
+      ? Math.min(contextUsed / contextWindow, 1)
+      : undefined,
+  );
+  const contextLabel = $derived(
+    contextWindow === undefined
+      ? `The last request used ${compact.format(contextUsed ?? 0)} tokens. This provider doesn't report a context window.`
+      : contextShare === undefined
+        ? `Context window: ${compact.format(contextWindow)} tokens. Usage shows after the next reply.`
+        : `Context window: ${compact.format(contextUsed ?? 0)} of ${compact.format(contextWindow)} tokens (${Math.round(contextShare * 100)}%) used by the last request.`,
+  );
+  const modelLabel = $derived(
+    `${provider ? `${provider} · ` : ""}${model || "No model selected"}. Change the provider or model in Settings.${modelNote ? ` ${modelNote}` : ""}`,
+  );
 
   // -------------------------------------------------------------- voice input
   // The Web Speech API (SpeechRecognition) is unreliable inside the WebView2 /
@@ -360,9 +385,9 @@
     const submittedText = promptText;
     const trimmed = promptText.trim();
     if (!trimmed || loading || disabled) return;
-    if ((await onSubmit?.(trimmed)) && promptText === submittedText) {
-      promptText = "";
-    }
+    promptText = "";
+    // Put the prompt back if it never became a turn, unless the user typed again.
+    if (!(await onSubmit?.(trimmed)) && !promptText) promptText = submittedText;
   }
 
   function onKeydown(event: KeyboardEvent) {
@@ -374,34 +399,23 @@
 </script>
 
 <div class="composer" role="group" aria-label="Canvas prompt">
-  <div class="composer__context">
-    <span class="composer__scope" aria-live="polite">
+  {#if scope}
+    <p class="composer__scope" aria-live="polite">
       <span class="sr-only">Context:</span>{scope}
-    </span>
-    <button
-      class="composer__disclose"
-      type="button"
-      aria-expanded={detailsOpen}
-      aria-controls="composer-details"
-      onclick={() => (detailsOpen = !detailsOpen)}
-    >
-      <Icon name={detailsOpen ? "expand_more" : "info"} size={16} />
-      Context details
-    </button>
-  </div>
-  {#if detailsOpen}
-    <div id="composer-details" class="composer__details">
-      <p>
-        <strong>Provider:</strong>
-        {provider || "Not configured — choose one in Settings"}
-      </p>
-      <ul>
-        {#each details as line}<li>{line}</li>{/each}
-      </ul>
-      {#if notice}<p>{notice}</p>{/if}
-    </div>
+    </p>
   {/if}
-  <div class="composer__row">
+  <label class="sr-only" for="canvas-prompt">Prompt</label>
+  <textarea
+    id="canvas-prompt"
+    class="composer__input"
+    rows="1"
+    bind:this={input}
+    bind:value={promptText}
+    onkeydown={onKeydown}
+    {disabled}
+    maxlength={LIMITS.text}
+    {placeholder}></textarea>
+  <div class="composer__bar">
     {#if onAddFile}
       <button
         class="composer__lead"
@@ -414,20 +428,55 @@
         <Icon name="attach_file" size={20} />
       </button>
     {/if}
-
-    <label class="sr-only" for="canvas-prompt">Prompt</label>
-    <textarea
-      id="canvas-prompt"
-      class="composer__input"
-      rows="1"
-      bind:this={input}
-      bind:value={promptText}
-      onkeydown={onKeydown}
-      {disabled}
-      maxlength={LIMITS.text}
-      {placeholder}></textarea>
+    {#if onModelClick}
+      <button
+        class="composer__model"
+        type="button"
+        title={modelLabel}
+        aria-label={modelLabel}
+        onclick={onModelClick}
+      >
+        <span class="composer__model-text">
+          {#if provider}<span class="composer__provider">{provider}</span>{/if}
+          <!-- Vendor prefixes like "anthropic/" crowd a narrow panel; the title keeps the full ID. -->
+          <span class="composer__model-name"
+            >{model.slice(model.lastIndexOf("/") + 1) || "Choose a model"}</span
+          >
+        </span>
+        <Icon name="expand_more" size={16} />
+      </button>
+    {/if}
 
     <div class="composer__tools">
+      {#if contextWindow !== undefined || contextUsed !== undefined}
+        <span
+          class="composer__gauge"
+          class:composer__gauge--full={(contextShare ?? 0) >= 0.9}
+          role="img"
+          title={contextLabel}
+          aria-label={contextLabel}
+        >
+          {#if contextWindow !== undefined}
+            <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+              <circle class="composer__gauge-track" cx="8" cy="8" r="6" />
+              <circle
+                class="composer__gauge-fill"
+                cx="8"
+                cy="8"
+                r="6"
+                pathLength="100"
+                stroke-dasharray="{(contextShare ?? 0) * 100} 100"
+                transform="rotate(-90 8 8)"
+              />
+            </svg>
+          {/if}
+          {#if contextWindow === undefined}
+            <span aria-hidden="true"
+              >{compact.format(contextUsed ?? 0)} tokens</span
+            >
+          {/if}
+        </span>
+      {/if}
       {#if voiceSupported && !loading}
         {@const micAction =
           voiceState === "recording"
@@ -462,24 +511,16 @@
           {/if}
         </button>
       {/if}
-      {#if loading}<button
-          type="button"
-          class="btn btn--soft"
-          onclick={onCancel}>Cancel</button
-        >{/if}
       <button
         class="composer__send"
+        class:composer__send--stop={loading}
         type="button"
-        title={loading ? "Generating response…" : "Send prompt (Enter)"}
-        aria-label="Send prompt"
-        disabled={disabled || loading || !promptText.trim()}
-        onclick={submit}
+        title={loading ? "Stop generating" : "Send prompt (Enter)"}
+        aria-label={loading ? "Stop generating" : "Send prompt"}
+        disabled={loading ? !onCancel : disabled || !promptText.trim()}
+        onclick={loading ? onCancel : submit}
       >
-        {#if loading}
-          <span class="spinner" aria-hidden="true"></span>
-        {:else}
-          <Icon name="arrow_upward" size={20} />
-        {/if}
+        <Icon name={loading ? "stop" : "arrow_upward"} size={20} />
       </button>
     </div>
   </div>
@@ -517,11 +558,92 @@
     color: var(--muted);
   }
 
-  .composer__send .spinner {
-    width: 14px;
-    height: 14px;
-    border: 2px solid var(--line-strong);
-    border-top-color: var(--accent);
+  .composer__model {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    min-width: 0;
+    height: 2.2rem;
+    padding: 0 0.3rem 0 0.5rem;
+    font: inherit;
+    font-size: var(--type-meta);
+    color: var(--ink-soft);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    transition:
+      border-color 0.16s ease,
+      color 0.16s ease;
+  }
+
+  .composer__model:hover {
+    color: var(--ink);
+    border-color: var(--line-strong);
+  }
+
+  /* Provider over model, so both fit a narrow chat panel. */
+  .composer__model-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    line-height: 1.2;
+    text-align: left;
+  }
+
+  .composer__provider,
+  .composer__model-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .composer__provider {
+    font-size: 0.68rem;
+    color: var(--muted);
+  }
+
+  .composer__model-name {
+    font-weight: 500;
+  }
+
+  .composer__gauge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0 0.35rem;
+    font-size: var(--type-meta);
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .composer__gauge circle {
+    fill: none;
+    stroke-width: 2.5;
+  }
+
+  .composer__gauge-track {
+    stroke: var(--line-strong);
+  }
+
+  .composer__gauge-fill {
+    stroke: var(--accent);
+    transition: stroke-dasharray 0.3s ease;
+  }
+
+  .composer__gauge--full {
+    color: var(--bad);
+  }
+
+  .composer__gauge--full .composer__gauge-fill {
+    stroke: var(--bad);
+  }
+
+  .composer__send--stop {
+    color: var(--accent-strong);
+    background: var(--accent-soft);
+    border-color: var(--accent);
   }
 
   .composer__mic {
@@ -610,6 +732,9 @@
     }
     .composer__mic .spinner {
       animation-duration: 1.6s;
+    }
+    .composer__gauge-fill {
+      transition: none;
     }
   }
 </style>

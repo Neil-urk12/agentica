@@ -105,7 +105,11 @@
   import Settings, {
     type SettingsSection,
   } from "./lib/components/Settings.svelte";
-  import { runCanvasAgent, canvasToolSupport } from "./lib/openrouter";
+  import {
+    runCanvasAgent,
+    canvasToolSupport,
+    contextWindow,
+  } from "./lib/openrouter";
   import {
     getActivePreset,
     getProviderConfig,
@@ -305,6 +309,13 @@
   let generating = $state(false);
   let promptError = $state("");
   let toolsNotice = $state("");
+  /** Tokens the latest reply's last request used, for the chat and model that sent it. */
+  let contextUsage = $state.raw<{
+    chatId: string;
+    source: string;
+    tokens: number;
+  } | null>(null);
+  let modelContext = $state<number>();
   let conversationAbort: AbortController | undefined;
   let generationTask: Promise<boolean> | undefined;
   let pendingReply = $state.raw<RuntimeParams<"conversation.finish"> | null>(
@@ -397,20 +408,49 @@
       : undefined;
     return source?.type === "text" ? source.text : reader.text;
   });
-  const providerLabel = $derived.by(() => {
+  const providerConfig = $derived.by(() => {
     void settingsOpen;
-    const config = getProviderConfig();
-    let host = config.baseUrl;
+    return getProviderConfig();
+  });
+  const providerName = $derived.by(() => {
+    if (providerConfig.kind !== "custom") return "OpenRouter";
+    let host = providerConfig.baseUrl;
     try {
-      host = new URL(config.baseUrl).host;
+      host = new URL(providerConfig.baseUrl).host;
     } catch {
       /* Shown as entered; validation reports it on submit. */
     }
-    const name =
-      config.kind === "custom"
-        ? `${getActivePreset()?.name ?? "Custom provider"} (${host})`
-        : "OpenRouter";
-    return `${name} · ${config.model || "no model selected"}`;
+    return getActivePreset()?.name ?? host;
+  });
+  const providerSource = $derived(
+    `${providerConfig.baseUrl} ${providerConfig.model}`,
+  );
+  const contextUsed = $derived(
+    contextUsage?.chatId === editorState.chatId &&
+      contextUsage.source === providerSource
+      ? contextUsage.tokens
+      : undefined,
+  );
+  // Only OpenRouter publishes context windows; look it up once a key shows the user uses it.
+  const catalogModel = $derived(
+    providerConfig.kind === "openrouter" && providerConfig.apiKey
+      ? providerConfig.model
+      : "",
+  );
+  $effect(() => {
+    const model = catalogModel;
+    modelContext = undefined;
+    if (!model) return;
+    const controller = new AbortController();
+    contextWindow(model, controller.signal).then(
+      (size) => {
+        if (!controller.signal.aborted) modelContext = size;
+      },
+      () => {
+        /* The gauge omits the window; sending reports catalog errors. */
+      },
+    );
+    return () => controller.abort();
   });
   let canvasEl = $state<HTMLElement>();
   let drawSurface = $state<HTMLDivElement>();
@@ -829,6 +869,7 @@
     let turnId: string | undefined;
     promptError = "";
     generating = true;
+    const source = providerSource;
     const controller = new AbortController();
     conversationAbort = controller;
     try {
@@ -883,7 +924,7 @@
           ).tools
         : [];
       controller.signal.throwIfAborted();
-      const { reply, operations } = await runCanvasAgent(start, {
+      const { reply, operations, tokens } = await runCanvasAgent(start, {
         signal: controller.signal,
         tools,
         provider,
@@ -908,6 +949,8 @@
           : undefined,
       });
       controller.signal.throwIfAborted();
+      if (tokens !== undefined)
+        contextUsage = { chatId: start.turn.chatId, source, tokens };
       pendingReply = {
         ...origin,
         turnId,
@@ -3502,20 +3545,12 @@
                 ? `${contextIds.length} selected ${contextIds.length === 1 ? "object" : "objects"} · ${chatScope}`
                 : `No canvas content selected · ${chatScope}`
               : `Current canvas · ${chatScope}`}
-            provider={providerLabel}
-            details={[
-              "Your prompt. Project folders, session tiles, terminal output and web previews are excluded.",
-              hasSelection
-                ? contextIds.length
-                  ? `The ${contextIds.length} selected ${contextIds.length === 1 ? "object" : "objects"}: position, size, text, extracted file text, and connections between them.`
-                  : "No selected notes or drawings. Native sessions are excluded."
-                : "Canvas notes, drawings, files, and conversation cards: position, size, text, extracted file text, and connections.",
-              !editorState.chatId
-                ? "No earlier prompts or replies: this starts a new chat."
-                : "Up to 8 earlier prompts and replies from this chat, with their outcomes.",
-              "Select objects before sending to limit what is shared.",
-            ]}
-            notice={toolsNotice}
+            provider={providerName}
+            model={providerConfig.model}
+            modelNote={toolsNotice}
+            onModelClick={() => (settingsOpen = "ai")}
+            {contextUsed}
+            contextWindow={modelContext}
             onCancel={() => conversationAbort?.abort()}
             onAddFile={() => fileInput?.click()}
             addFileDisabled={!canEdit || importing}

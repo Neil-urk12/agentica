@@ -8,6 +8,7 @@ import {
 } from "../apps/desktop/src/lib/canvas-agent.ts";
 import {
   canvasToolSupport,
+  contextWindow,
   runCanvasAgent,
 } from "../apps/desktop/src/lib/openrouter.ts";
 import { BUDGET } from "../apps/desktop/src/lib/canvas-harness.ts";
@@ -329,6 +330,41 @@ test("text-only models retain conversation replies and never receive canvas tool
     reply: "A plain canvas reply.",
     operations: [],
   });
+});
+
+test("replies report the last request's token total and catalog context windows", async (t) => {
+  const usage = (reply, total_tokens) => ({
+    ...reply,
+    json: async () => ({ ...(await reply.json()), usage: { total_tokens } }),
+  });
+  let requests = 0;
+  t.mock.method(globalThis, "fetch", async (url) => {
+    if (String(url).endsWith("/models"))
+      return {
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: "big/model", context_length: 200000 },
+            { id: "odd/model", context_length: "lots" },
+          ],
+        }),
+      };
+    requests++;
+    return requests === 1
+      ? usage(result(null, [readCall(1, [id(1)])]), 1200)
+      : usage(result("Done."), 1500);
+  });
+  const response = await runCanvasAgent(start(), {
+    ...options(),
+    read: async () => unselected,
+  });
+  assert.equal(response.tokens, 1500);
+  assert.equal(await contextWindow("big/model"), 200000);
+  assert.equal(await contextWindow("odd/model"), undefined);
+  assert.equal(await contextWindow("missing/model"), undefined);
+
+  t.mock.method(globalThis, "fetch", async () => usage(result("Hi."), -1));
+  assert.equal((await runCanvasAgent(start(), options())).tokens, undefined);
 });
 
 test("invalid canvas fields are returned to the model for correction without staging the rejected edit", async (t) => {

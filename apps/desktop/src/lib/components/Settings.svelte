@@ -188,10 +188,11 @@
     flashSaved();
   }
 
-  async function onQualityChange(select: HTMLSelectElement) {
-    if (select.value === "free") return onModelChange(DEFAULT_MODEL);
+  let freeChoice: HTMLInputElement | undefined = $state();
+
+  async function chooseSpecificModel() {
     // The model only changes once one is typed in Advanced.
-    if (model === DEFAULT_MODEL) select.value = "free";
+    if (model === DEFAULT_MODEL && freeChoice) freeChoice.checked = true;
     openSection("advanced");
     await tick();
     modelInput?.focus();
@@ -360,22 +361,46 @@
             >
             <div class="setting__text">
               <h3 id="ai-quality-label">Quality</h3>
-              <div class="setting__body">
-                <select
-                  id="ai-quality"
-                  aria-labelledby="ai-quality-label"
-                  value={model === DEFAULT_MODEL ? "free" : "specific"}
-                  onchange={(event) =>
-                    void onQualityChange(event.currentTarget)}
-                >
-                  <option value="free">Free, good for trying things out</option>
-                  <option value="specific">A specific model…</option>
-                </select>
-                <p class="setting__hint">
-                  {model === DEFAULT_MODEL
-                    ? "A free model is picked for you automatically."
-                    : `Using ${model}. Change it in Advanced.`}
-                </p>
+              <div
+                class="setting__body setting__choices"
+                role="radiogroup"
+                aria-labelledby="ai-quality-label"
+              >
+                <label class="setting__choice">
+                  <input
+                    type="radio"
+                    name="ai-quality"
+                    value="free"
+                    bind:this={freeChoice}
+                    checked={model === DEFAULT_MODEL}
+                    onchange={() => onModelChange(DEFAULT_MODEL)}
+                  />
+                  <span>
+                    <strong>Free</strong>
+                    <span class="setting__hint"
+                      >Good for trying things out. A free model is picked for
+                      you.</span
+                    >
+                  </span>
+                </label>
+                <!-- Click, not change, so choosing it again still opens Advanced. -->
+                <label class="setting__choice">
+                  <input
+                    type="radio"
+                    name="ai-quality"
+                    value="specific"
+                    checked={model !== DEFAULT_MODEL}
+                    onclick={() => void chooseSpecificModel()}
+                  />
+                  <span>
+                    <strong>A specific model</strong>
+                    <span class="setting__hint"
+                      >{model === DEFAULT_MODEL
+                        ? "Choose any OpenRouter model in Advanced."
+                        : `Using ${model}. Change it in Advanced.`}</span
+                    >
+                  </span>
+                </label>
               </div>
             </div>
           </section>
@@ -725,6 +750,63 @@
     align-items: center;
     gap: 0.5rem;
     font-size: 0.8rem;
+  }
+
+  .setting__choices {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+    gap: 0.5rem;
+  }
+
+  .setting__choice {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.7rem 0.8rem;
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition:
+      border-color 0.16s ease,
+      background 0.16s ease;
+  }
+
+  .setting__choice:hover,
+  .setting__choice:has(input:checked) {
+    border-color: var(--accent);
+  }
+
+  .setting__choice:has(input:checked) {
+    background: var(--accent-soft);
+  }
+
+  .setting__choice:has(input:focus-visible) {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .setting__choice input {
+    width: auto;
+    margin: 0.2rem 0 0;
+    padding: 0;
+    flex: none;
+    accent-color: var(--accent);
+    box-shadow: none;
+  }
+
+  .setting__choice strong {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  .setting__choice .setting__hint {
+    display: block;
+    margin-top: 0.15rem;
+    font-weight: 400;
+    overflow-wrap: anywhere;
   }
 
   .setting__checkbox input {

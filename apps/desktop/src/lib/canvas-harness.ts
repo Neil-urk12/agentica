@@ -96,6 +96,8 @@ export type TurnResult = {
   operations: CanvasOperation[];
   /** The budget that ran out before the model finished, if any. */
   partial?: keyof Budget;
+  /** Tokens the last model request used, when the provider reports them. */
+  tokens?: number;
 };
 
 class Exhausted extends Error {
@@ -173,7 +175,10 @@ export async function runCanvasTurn(
   let toolCalls = 0;
   let lastToolError = "";
   let lastText = "";
+  let tokens: number | undefined;
   const callIds = new Set<string>();
+  const withTokens = (result: TurnResult): TurnResult =>
+    tokens === undefined ? result : { ...result, tokens };
 
   async function loop(): Promise<TurnResult> {
     for (let round = 0; round < budget.rounds; round++) {
@@ -197,6 +202,7 @@ export async function runCanvasTurn(
         );
       const reply = (await response.json()) as {
         error?: { message?: string };
+        usage?: { total_tokens?: unknown };
         choices?: {
           finish_reason?: string;
           message?: { content?: string | null; tool_calls?: ToolCall[] };
@@ -206,6 +212,9 @@ export async function runCanvasTurn(
         throw new Error(
           `${label} could not complete this request. Check model availability and your API key in Settings.`,
         );
+      const used = reply?.usage?.total_tokens;
+      if (Number.isSafeInteger(used) && (used as number) >= 0)
+        tokens = used as number;
       const choice = reply?.choices?.[0];
       const message = choice?.message;
       if (
@@ -227,7 +236,7 @@ export async function runCanvasTurn(
           throw new Error(
             "The reply exceeds the text limit. Ask for a shorter answer; nothing was truncated.",
           );
-        return { reply: text, operations };
+        return withTokens({ reply: text, operations });
       }
       if (!deps.tools)
         throw new Error("The model called canvas tools it was not offered.");
@@ -384,11 +393,11 @@ export async function runCanvasTurn(
     if (!operations.length) throw exhausted;
     const note = `Partial proposal: the agent stopped at its ${BUDGET_NAMES[exhausted.budget]} limit before finishing. Review what it staged.`;
     const reply = lastText ? `${note}\n\n${lastText}` : note;
-    return {
+    return withTokens({
       reply: reply.length > LIMITS.text ? note : reply,
       operations,
       partial: exhausted.budget,
-    };
+    });
   } finally {
     clearTimeout(timer);
     deps.signal.removeEventListener("abort", cancel);
