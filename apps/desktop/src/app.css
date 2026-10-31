@@ -893,6 +893,24 @@ button.home__brand:disabled {
   cursor: pointer;
 }
 
+.tile__open::after {
+  /* Stretch the open hit area over the whole tile; tools sit above it. */
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius);
+}
+
+/* Ring the whole tile, matching the stretched hit area. */
+.tile__open:focus-visible {
+  outline: none;
+}
+
+.tile:has(.tile__open:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
 .tile__open:disabled {
   opacity: 0.55;
   cursor: not-allowed;
@@ -915,6 +933,8 @@ button.home__brand:disabled {
 }
 
 .tile__tools {
+  position: relative;
+  align-self: flex-end;
   display: flex;
   justify-content: flex-end;
   gap: 0.25rem;

@@ -12,6 +12,13 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Whole canvas card opens the canvas (2026-11-01)
+
+- The open button's hit area only covered the title row, so clicks lower on a
+  card did nothing. A stretched `::after` now covers the whole tile, with the
+  delete tool layered above it. The keyboard focus ring moved to the tile too,
+  so it outlines the same area a click opens.
+
 ### GitLab CI removed (2026-11-01)
 
 - Dropped `.gitlab-ci.yml`. The GitHub `Release` workflow already builds and
