@@ -112,3 +112,30 @@ test("deep nesting and long tokens are bounded", () => {
   assert.equal(plainText(parseMarkdown(long)[0].c), long);
   assert.equal(plainText(parseInline("\\*not emphasis\\*")), "*not emphasis*");
 });
+
+test("checklist items parse as read-only checked state without markers", () => {
+  const [list] = parseMarkdown(
+    "- [ ] Draft outline\n- [x] Collect sources\n- [X] Review\n- plain bullet\n  - [ ] nested",
+  );
+  assert.equal(list.t, "list");
+  assert.deepEqual(
+    list.items.map((item) => item.checked),
+    [false, true, true, undefined, false],
+  );
+  assert.equal(plainText(list.items[0].c), "Draft outline");
+  assert.equal(plainText(list.items[1].c), "Collect sources");
+  assert.equal(list.items[4].depth, 1);
+});
+
+test("checklist markers only count at the start of unordered items", () => {
+  const [ordered] = parseMarkdown("1. [ ] not a checkbox");
+  assert.equal(ordered.items[0].checked, undefined);
+  assert.equal(plainText(ordered.items[0].c), "[ ] not a checkbox");
+  const [later] = parseMarkdown("- keep [ ] literal\n- [x]no space");
+  assert.deepEqual(
+    later.items.map((item) => item.checked),
+    [undefined, undefined],
+  );
+  assert.equal(plainText(later.items[0].c), "keep [ ] literal");
+  assert.equal(plainText(later.items[1].c), "[x]no space");
+});

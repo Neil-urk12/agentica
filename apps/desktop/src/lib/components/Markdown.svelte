@@ -1,6 +1,6 @@
 <script lang="ts">
   import { desktopMode } from "../runtime";
-  import { parseMarkdown, type Inline } from "../markdown";
+  import { parseMarkdown, type Inline, type ListItem } from "../markdown";
 
   interface Props {
     source: string;
@@ -37,6 +37,22 @@
   {/each}
 {/snippet}
 
+{#snippet listItems(items: ListItem[])}
+  {#each items as item}
+    <li
+      class:md-task={item.checked !== undefined}
+      style:margin-inline-start={`${item.depth * 1.25}em`}
+    >
+      {#if item.checked !== undefined}<!-- Read-only: ticking means editing the source. --><span
+          class="md-check"
+          class:md-checked={item.checked}
+          role="img"
+          aria-label={item.checked ? "checked" : "unchecked"}
+        ></span>{/if}{@render inline(item.c)}
+    </li>
+  {/each}
+{/snippet}
+
 <div class="md">
   {#each blocks as block}
     {#if block.t === "p"}
@@ -54,19 +70,11 @@
       <pre><code>{block.v}</code></pre>
     {:else if block.ordered}
       <ol start={block.start}>
-        {#each block.items as item}
-          <li style:margin-inline-start={`${item.depth * 1.25}em`}>
-            {@render inline(item.c)}
-          </li>
-        {/each}
+        {@render listItems(block.items)}
       </ol>
     {:else}
       <ul>
-        {#each block.items as item}
-          <li style:margin-inline-start={`${item.depth * 1.25}em`}>
-            {@render inline(item.c)}
-          </li>
-        {/each}
+        {@render listItems(block.items)}
       </ul>
     {/if}
   {/each}

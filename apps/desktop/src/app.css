@@ -2676,6 +2676,38 @@ span.card-more {
   white-space: pre-line;
 }
 
+.md li.md-task {
+  list-style: none;
+}
+
+/* Drawn with currentColor so it follows both themes. */
+.md .md-check {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 0.9em;
+  height: 0.9em;
+  margin: 0 0.4em 0 -1.3em;
+  vertical-align: -0.1em;
+  border: 1.5px solid currentColor;
+  border-radius: 0.2em;
+  opacity: 0.75;
+}
+
+.md .md-check.md-checked {
+  opacity: 1;
+}
+
+.md .md-check.md-checked::after {
+  content: "";
+  display: block;
+  width: 0.22em;
+  height: 0.42em;
+  margin: 0.04em auto 0;
+  border: solid currentColor;
+  border-width: 0 0.12em 0.12em 0;
+  transform: rotate(45deg);
+}
+
 .md .md-h {
   font-weight: 700;
   line-height: 1.3;

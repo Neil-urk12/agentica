@@ -3,8 +3,9 @@
  * tree rendered through escaped Svelte interpolation; no HTML is produced or
  * trusted, and images are never turned into resource requests.
  *
- * Supported: paragraphs, ATX headings, ordered and unordered lists, strong
- * and emphasis, inline code, fenced code blocks, and links. Anything else
+ * Supported: paragraphs, ATX headings, ordered and unordered lists,
+ * read-only checklist items (`- [ ]`, `- [x]`), strong and emphasis, inline
+ * code, fenced code blocks, and links. Anything else
  * (HTML, images, tables, quotes) stays visible as literal text.
  */
 
@@ -16,7 +17,8 @@ export type Inline =
   /** `href` is null when the destination is not plain HTTP(S). */
   | { t: "link"; href: string | null; c: Inline[] };
 
-export type ListItem = { depth: number; c: Inline[] };
+/** `checked` is set only on unordered items that start with `[ ]` or `[x]`. */
+export type ListItem = { depth: number; c: Inline[]; checked?: boolean };
 
 export type Block =
   | { t: "p"; c: Inline[] }
@@ -33,6 +35,7 @@ const FENCE = /^ {0,3}(`{3,}|~{3,})\s*([^`\s]*)[^`]*$/;
 const HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/;
 const BULLET = /^(\s*)[-*+][ \t]+(.*)$/;
 const ORDERED = /^(\s*)(\d{1,9})[.)][ \t]+(.*)$/;
+const CHECK = /^\[([ xX])\][ \t]+/;
 
 /** Only explicit HTTP(S) destinations are actionable. */
 export function safeHref(raw: string): string | null {
@@ -127,7 +130,7 @@ export function parseMarkdown(source: string): Block[] {
         start: marker.start,
         items: [],
       };
-      const texts: { depth: number; lines: string[] }[] = [];
+      const texts: { depth: number; ordered: boolean; lines: string[] }[] = [];
       while (index < lines.length) {
         const current = lines[index]!;
         const item = listMarker(current);
@@ -135,17 +138,28 @@ export function parseMarkdown(source: string): Block[] {
           // A different top-level marker type starts a new list.
           if (item.depth === 0 && item.ordered !== list.ordered && texts.length)
             break;
-          texts.push({ depth: item.depth, lines: [item.text] });
+          texts.push({
+            depth: item.depth,
+            ordered: item.ordered,
+            lines: [item.text],
+          });
         } else if (current.trim() && /^\s+/.test(current) && texts.length) {
           texts.at(-1)!.lines.push(current.trim());
         } else break;
         index++;
       }
       index--;
-      list.items = texts.map((item) => ({
-        depth: item.depth,
-        c: parseInline(item.lines.join("\n")),
-      }));
+      list.items = texts.map((item) => {
+        const text = item.lines.join("\n");
+        const check = item.ordered ? null : CHECK.exec(text);
+        return check
+          ? {
+              depth: item.depth,
+              c: parseInline(text.slice(check[0].length)),
+              checked: check[1] !== " ",
+            }
+          : { depth: item.depth, c: parseInline(text) };
+      });
       blocks.push(list);
       continue;
     }

@@ -5,6 +5,8 @@ import {
   proposalAnchor,
   stageOperations,
   checkedToolOperation,
+  systemPrompt,
+  textHeight,
 } from "../apps/desktop/src/lib/canvas-agent.ts";
 import {
   canvasToolSupport,
@@ -950,4 +952,33 @@ test("cancel ends a turn without waiting for a pending MCP call", async (t) => {
   ]);
   release();
   assert.equal(settled, "rejected");
+});
+
+test("the prompt names the rendered Markdown subset and prefers one structured note", () => {
+  for (const tools of [true, false]) {
+    const prompt = systemPrompt(tools);
+    assert.match(prompt, /checklist items \(- \[ \] and - \[x\]\)/);
+    assert.match(prompt, /headings, ordered and unordered lists/);
+    assert.match(
+      prompt,
+      /one structured text object rather than many small ones/,
+    );
+  }
+});
+
+test("textHeight gives headings and nested list items more room", () => {
+  const structured = [
+    "# Launch plan",
+    "## This week",
+    "- [ ] Draft the outline for the announcement post",
+    "    - [ ] Collect quotes from the beta testers we spoke to",
+    "    - [x] Confirm the launch date with the release owners",
+    "## Next week",
+    "- [ ] Publish and share the announcement in every channel",
+  ];
+  const plain = structured.map((line) => line.replace(/^\s*#*\s*/, ""));
+  assert.ok(
+    textHeight(structured.join("\n"), 340) > textHeight(plain.join("\n"), 340),
+  );
+  assert.equal(textHeight("short"), 160);
 });

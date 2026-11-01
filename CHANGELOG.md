@@ -12,6 +12,26 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Structured agent notes and checklist items (2026-11-01)
+
+- Implemented: unordered list items starting with `[ ]`, `[x]`, or `[X]` and a
+  space render as read-only checklist items with a checkbox glyph drawn in the
+  text color, so it works in both themes. The glyph is not an `<input>`: a
+  disabled control would still look clickable, and ticking an item means
+  editing the source or applying an agent proposal. Ordered items and brackets
+  elsewhere stay literal. Checklist items are not tasks and do not affect a
+  text node's task state.
+- Ordered and unordered lists share item rendering so nested checklist items
+  retain their checkbox glyph and checked state under either parent list type.
+  Component rendering tests cover both parent types and keep ordered markers
+  literal.
+- The canvas agent prompt now names the Markdown subset text objects render and
+  asks for one structured note for outlines, plans, and checklists instead of
+  many small text objects. No tool schema or protocol change.
+- `textHeight` weights `#`–`###` heading lines at 1.5 lines and narrows the
+  wrap width for nested list items. It remains an estimate; the overflow
+  indicator and fit action cover the rest.
+
 ### Chat attachments: document coverage and selected images (2026-11-01)
 
 - Implemented: document imports record a `textStatus` (`complete`,
