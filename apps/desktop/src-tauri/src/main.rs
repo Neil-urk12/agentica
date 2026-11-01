@@ -152,7 +152,8 @@ fn backup_file_name(name: &str) -> String {
 }
 
 /// Write a copied canvas file to a temp path and open it with the system app.
-/// The filename is sanitized so artifact names cannot choose a directory.
+/// The filename is sanitized so artifact names cannot choose a directory, and
+/// its extension comes from the stored type so a name cannot choose the program.
 #[tauri::command]
 async fn open_file(
     workspace_id: String,
@@ -165,18 +166,21 @@ async fn open_file(
     }
     let backend = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let (name, _mime, bytes) = backend
+        let (name, extension, bytes) = backend
             .lock()
             .map_err(|_| "Backend state is unavailable.".to_owned())?
             .file_bytes(&workspace_id, &artifact_id)
             .map_err(|error| error.to_string())?;
         let dir = std::env::temp_dir().join("agentica-files");
         std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-        let base = std::path::Path::new(&name)
-            .file_name()
-            .and_then(|name| name.to_str())
+        let stem = std::path::Path::new(&name)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
             .unwrap_or("file");
-        let path = dir.join(format!("{artifact_id}-{}", safe_file_name(base)));
+        let path = dir.join(format!(
+            "{artifact_id}-{}.{extension}",
+            safe_file_name(stem)
+        ));
         std::fs::write(&path, bytes).map_err(|error| error.to_string())?;
         tauri_plugin_opener::open_path(&path, None::<&str>).map_err(|error| error.to_string())
     })

@@ -1,5 +1,5 @@
 //! Desktop-transport contract tests and mixed-mode writer contention with the
-//! real detached executable. tests/http.test.mjs runs the same fixture over HTTP.
+//! real detached executable. tests/http.browser.mjs runs the same fixture over HTTP.
 
 use std::{
     collections::HashMap,
@@ -337,13 +337,40 @@ fn files_are_copied_in_order_and_stay_out_of_canvas_metadata() {
     );
     assert_eq!(code(&read), "ok", "{read}");
     assert_eq!(read["result"]["data"], "aGVsbG8gd29ybGQ=");
-    let (name, mime, bytes) = backend
-        .file_bytes(workspace.as_str().unwrap(), artifact_id.as_str().unwrap())
-        .unwrap();
+    let file_bytes = |backend: &mut DesktopBackend| {
+        backend.file_bytes(workspace.as_str().unwrap(), artifact_id.as_str().unwrap())
+    };
+    let (name, extension, bytes) = file_bytes(&mut backend).unwrap();
     assert_eq!(
-        (name.as_str(), mime.as_str(), bytes.as_slice()),
-        ("notes.txt", "text/plain", b"hello world".as_slice())
+        (name.as_str(), extension, bytes.as_slice()),
+        ("notes.txt", "txt", b"hello world".as_slice())
     );
+
+    // A restored backup can pair any name with any type: the opened copy's
+    // extension follows the type, and an unknown type is refused.
+    let stored = rusqlite::Connection::open(
+        temp.path()
+            .join("workspaces")
+            .join(workspace.as_str().unwrap())
+            .join("workspace.sqlite3"),
+    )
+    .unwrap();
+    stored
+        .execute("UPDATE file_content SET name = 'notes.txt.cmd'", [])
+        .unwrap();
+    let (name, extension, _) = file_bytes(&mut backend).unwrap();
+    assert_eq!((name.as_str(), extension), ("notes.txt.cmd", "txt"));
+    stored
+        .execute(
+            "UPDATE file_content SET name = 'notes.txt', mime = 'application/x-msdownload'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(file_bytes(&mut backend).unwrap_err().code, "INVALID_PARAMS");
+    stored
+        .execute("UPDATE file_content SET mime = 'text/plain'", [])
+        .unwrap();
+    drop(stored);
 
     // Deleting the node removes the copied bytes with its artifact.
     let node_id = finished["result"]["node"]["id"].clone();

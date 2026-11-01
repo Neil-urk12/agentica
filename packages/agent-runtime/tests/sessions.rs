@@ -24,7 +24,7 @@ struct Host {
     task: tokio::task::JoinHandle<std::io::Result<()>>,
     port: u16,
     owner: SessionOwner,
-    _data: tempfile::TempDir,
+    data: tempfile::TempDir,
     project: tempfile::TempDir,
 }
 impl Drop for Host {
@@ -101,7 +101,7 @@ impl Host {
                 canvas_id: canvas,
                 tile_id: tile,
             },
-            _data: data,
+            data,
             project,
         }
     }
@@ -675,12 +675,26 @@ async fn shared_desktop_validation_rejects_invalid_requests_and_keeps_the_sessio
         )
         .is_err());
     }
-    // The valid attachment still controls the same running process.
+    // The valid attachment still controls the same running process, without
+    // rereading storage: a writer holding the workspace database cannot stall
+    // it, while saved-owner checks such as status still read storage.
+    let writer = rusqlite::Connection::open(
+        host.data
+            .path()
+            .join("workspaces")
+            .join(&host.owner.workspace_id)
+            .join("workspace.sqlite3"),
+    )
+    .unwrap();
+    writer.execute_batch("BEGIN EXCLUSIVE").unwrap();
     execute(
         json!({"op": "resize", "owner": host.owner, "sessionId": identity,
         "attachmentId": first, "rows": 20, "cols": 60}),
     )
     .unwrap();
+    assert!(execute(json!({"op": "status", "owner": host.owner})).is_err());
+    writer.execute_batch("ROLLBACK").unwrap();
+    drop(writer);
     execute(
         json!({"op": "detach", "owner": host.owner, "sessionId": identity,
         "attachmentId": first}),

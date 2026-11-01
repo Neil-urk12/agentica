@@ -21,7 +21,10 @@ use std::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::{commands::mcp_store::MAX_TOOLS, store::RuntimeError};
+use crate::{
+    commands::{mcp_store::MAX_TOOLS, parse},
+    store::RuntimeError,
+};
 
 pub const METHODS: &[&str] = &[
     "mcp.server.list",
@@ -873,12 +876,6 @@ struct CallParams {
     server: String,
     tool: String,
     arguments: Value,
-}
-
-fn parse<T: serde::de::DeserializeOwned>(params: Value) -> Result<T, RuntimeError> {
-    serde_json::from_value(params).map_err(|error| {
-        RuntimeError::new("INVALID_PARAMS", format!("Invalid parameters: {error}."))
-    })
 }
 
 type Db<'a> = &'a mut dyn FnMut(&str, Value) -> Result<Value, RuntimeError>;

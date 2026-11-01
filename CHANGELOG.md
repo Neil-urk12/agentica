@@ -12,6 +12,29 @@ build the installers and publish the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Review follow-ups (2026-11-01)
+
+- Opening a canvas file names its temp copy from the stored type
+  (`notes.txt.cmd` stored as text opens as `notes.txt.txt`) and refuses unknown
+  types. Restore validates the schema but not file rows, so a shared backup
+  could otherwise pick the extension Windows runs.
+- Terminal input, paste, resize, focus, acknowledgement, and detach no longer
+  reopen the workspace database on each call. Subscribe already checked the
+  owner, and deleting or relocating a live session's record is refused in the
+  same process, so the extra read only let a long canvas write (up to the 200 ms
+  read timeout) detach a busy terminal. A delete from the other launch mode is
+  seen at the next owner-checked command (status, list, start).
+- One `store::open_read_only` now holds the read-only open, timeout, and
+  storage-version check shared by Changes and sessions, and one `parse` serves
+  every RPC handler. The two version-mismatch messages became one.
+- `pnpm test:unit` and its coverage command run every `tests/*.test.mjs`, which
+  adds the file-type, node-group, and preview-URL tests to CI. Tests needing the
+  real backend or a browser are named `*.browser.mjs` (`http`, `landing-stats`)
+  and still run in `pnpm test`.
+- Removed the ClickUp backlog export (`docs/development/clickup-backlog.md` and
+  its CSV import). It was a dated task snapshot; `SCOPE.md` carries product
+  direction.
+
 ### Review safety (2026-11-01)
 
 - Changes reads disable configured Git clean/process filters, including during

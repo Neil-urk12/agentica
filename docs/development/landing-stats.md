@@ -84,13 +84,13 @@ Run:
 
 ```sh
 node --test tests/landing-stats.test.mjs tests/landing-camera.test.mjs
-node --test tests/landing-stats-browser.test.mjs
+node --test tests/landing-stats.browser.mjs
 pnpm --filter @agentica/landing check
 pnpm build:landing
 ```
 
 The focused tests also run in `pnpm test:unit` and its coverage command. The browser
-test runs in the full `node --test` suite, builds the landing app itself, and uses
+test runs in `pnpm test`, builds the landing app itself, and uses
 the repository's Chrome/Edge helper (`CHROME_PATH` can select a binary).
 
 Production deployment and real Cloudflare edge cache hits have **not** been

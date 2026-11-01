@@ -147,12 +147,12 @@ impl DesktopBackend {
         self.connected.clone()
     }
 
-    /// Copied file bytes for the desktop's open-with-system-app action.
+    /// Name, extension, and copied bytes for the desktop's open-with-system-app action.
     pub fn file_bytes(
         &mut self,
         workspace_id: &str,
         artifact_id: &str,
-    ) -> Result<(String, String, Vec<u8>), RuntimeError> {
+    ) -> Result<(String, &'static str, Vec<u8>), RuntimeError> {
         if !self.connected.load(Ordering::SeqCst) {
             return Err(RuntimeError::new(
                 "BACKPRESSURE",

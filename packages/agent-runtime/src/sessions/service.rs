@@ -1,6 +1,6 @@
 //! Shared validation for desktop IPC and authenticated detached connections.
 use super::{wire::*, *};
-use rusqlite::{Connection, OpenFlags, OptionalExtension};
+use rusqlite::OptionalExtension;
 use serde_json::{json, Value};
 use std::{
     path::PathBuf,
@@ -42,40 +42,21 @@ impl SessionService {
         owner: &SessionOwner,
     ) -> Result<(String, String, String, Option<String>), RuntimeError> {
         owner.validate()?;
-        let root = self.data_root.as_ref().ok_or_else(|| {
-            RuntimeError::new("STORAGE_ERROR", "No backend data directory is available.")
-        })?;
-        let database = root
-            .join("workspaces")
-            .join(&owner.workspace_id)
-            .join("workspace.sqlite3");
-        let conn = Connection::open_with_flags(
-            database,
-            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
-        conn.busy_timeout(std::time::Duration::from_millis(200))?;
-        let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        let application: i64 = conn.pragma_query_value(None, "application_id", |row| row.get(0))?;
-        if application != crate::store::APPLICATION_ID || version != crate::STORAGE_VERSION {
-            return Err(RuntimeError::new(
-                "UNSUPPORTED_STORAGE",
-                "Open this workspace with the current backend before using its sessions.",
-            ));
-        }
-        conn.query_row(
-            "SELECT g.id, g.root, t.kind, t.preset FROM session_tile t
+        crate::store::open_read_only(self.data_root.as_deref(), &owner.workspace_id)?
+            .query_row(
+                "SELECT g.id, g.root, t.kind, t.preset FROM session_tile t
             JOIN project_group g ON g.id = t.project_id AND g.canvas_id = t.canvas_id
             WHERE t.id = ?1 AND t.canvas_id = ?2 AND EXISTS(SELECT 1 FROM workspace WHERE id = ?3)",
-            (&owner.tile_id, &owner.canvas_id, &owner.workspace_id),
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
-        .optional()?
-        .ok_or_else(|| {
-            RuntimeError::new(
-                "SCOPE_DENIED",
-                "This saved tile does not belong to the named workspace and canvas.",
+                (&owner.tile_id, &owner.canvas_id, &owner.workspace_id),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
-        })
+            .optional()?
+            .ok_or_else(|| {
+                RuntimeError::new(
+                    "SCOPE_DENIED",
+                    "This saved tile does not belong to the named workspace and canvas.",
+                )
+            })
     }
 
     fn launch_spec(&self, owner: &SessionOwner) -> Result<LaunchSpec, RuntimeError> {
@@ -156,7 +137,11 @@ impl SessionService {
             );
         }
         let supervisor = self.supervisor()?;
-        if let Some(owner) = command.owner() {
+        // Attachment commands (input, acknowledgements) are too frequent to
+        // reopen storage: Subscribe checked the owner, and this process refuses
+        // deleting or relocating a live session (`guard_metadata`). A delete from
+        // the other launch mode is not seen until the next owner-checked command.
+        if let (Some(owner), None) = (command.owner(), command.attachment()) {
             self.saved(owner)?;
         }
         match command {

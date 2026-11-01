@@ -199,6 +199,33 @@ fn header(conn: &Connection) -> rusqlite::Result<(i64, i64)> {
     ))
 }
 
+/// Open a workspace database read-only beside its writer, for requests served
+/// outside the runtime lock. Only a store at this build's version is read, and
+/// a writer holding the lock fails the read quickly instead of stalling it.
+pub(crate) fn open_read_only(
+    data_root: Option<&Path>,
+    workspace_id: &str,
+) -> Result<Connection, RuntimeError> {
+    crate::commands::id("workspaceId", workspace_id)?;
+    let root = data_root.ok_or_else(|| {
+        RuntimeError::new("STORAGE_ERROR", "No backend data directory is available.")
+    })?;
+    let conn = Connection::open_with_flags(
+        root.join("workspaces")
+            .join(workspace_id)
+            .join(DATABASE_FILE),
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    conn.busy_timeout(Duration::from_millis(200))?;
+    if header(&conn)? != (APPLICATION_ID, STORAGE_VERSION) {
+        return Err(RuntimeError::new(
+            "UNSUPPORTED_STORAGE",
+            "Open this workspace with the current backend first.",
+        ));
+    }
+    Ok(conn)
+}
+
 /// An open workspace. Fields drop in order, so the connection closes before
 /// the writer lock is released.
 pub(crate) struct Workspace {

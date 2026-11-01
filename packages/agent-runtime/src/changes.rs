@@ -13,10 +13,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rusqlite::{Connection, OpenFlags, OptionalExtension};
+use rusqlite::OptionalExtension;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::commands::parse;
 use crate::store::{is_id, RuntimeError};
 
 pub const METHODS: &[&str] = &["changes.status", "changes.diff"];
@@ -107,12 +108,6 @@ fn invalid(message: &str) -> RuntimeError {
     RuntimeError::new("INVALID_PARAMS", message)
 }
 
-fn parse<T: serde::de::DeserializeOwned>(params: Value) -> Result<T, RuntimeError> {
-    serde_json::from_value(params).map_err(|error| {
-        RuntimeError::new("INVALID_PARAMS", format!("Invalid parameters: {error}."))
-    })
-}
-
 /// Read the saved project root for a project that has a Changes tile.
 /// `Ok(None)` means the folder is gone or no longer a directory.
 fn resolve(data_root: Option<&Path>, scope: &Scope) -> Result<Option<PathBuf>, RuntimeError> {
@@ -124,27 +119,7 @@ fn resolve(data_root: Option<&Path>, scope: &Scope) -> Result<Option<PathBuf>, R
             "Workspace, canvas, and project IDs must be lowercase UUIDs.",
         ));
     }
-    let data_root = data_root.ok_or_else(|| {
-        RuntimeError::new("STORAGE_ERROR", "No backend data directory is available.")
-    })?;
-    let database = data_root
-        .join("workspaces")
-        .join(&scope.workspace_id)
-        .join("workspace.sqlite3");
-    let conn = Connection::open_with_flags(
-        database,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    conn.busy_timeout(Duration::from_millis(200))?;
-    let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    let application: i64 = conn.pragma_query_value(None, "application_id", |row| row.get(0))?;
-    if application != crate::store::APPLICATION_ID || version != crate::STORAGE_VERSION {
-        return Err(RuntimeError::new(
-            "UNSUPPORTED_STORAGE",
-            "Open this workspace with the current backend before reading its changes.",
-        ));
-    }
-    let root: String = conn
+    let root: String = crate::store::open_read_only(data_root, &scope.workspace_id)?
         .query_row(
             "SELECT g.root FROM project_group g
             JOIN changes_tile c ON c.project_id = g.id AND c.canvas_id = g.canvas_id

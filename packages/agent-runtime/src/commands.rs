@@ -93,20 +93,24 @@ fn supported_preview_url(value: &str, excluded: &[(String, u16)]) -> Result<(), 
     }
     Ok(())
 }
-/// Copied canvas files kept in workspace storage; images, PDFs, Word documents,
-/// and text-like files. The frontend normalizes types before uploading.
-const FILE_MIMES: &[&str] = &[
-    "image/png",
-    "image/jpeg",
-    "image/webp",
-    "image/gif",
-    "image/svg+xml",
-    "application/pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/msword",
-    "text/plain",
-    "text/markdown",
-    "text/csv",
+/// Copied canvas files kept in workspace storage (images, PDFs, Word documents,
+/// and text-like files), each with the extension an opened copy gets. The
+/// frontend normalizes types before uploading.
+const FILE_TYPES: &[(&str, &str)] = &[
+    ("image/png", "png"),
+    ("image/jpeg", "jpg"),
+    ("image/webp", "webp"),
+    ("image/gif", "gif"),
+    ("image/svg+xml", "svg"),
+    ("application/pdf", "pdf"),
+    (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "docx",
+    ),
+    ("application/msword", "doc"),
+    ("text/plain", "txt"),
+    ("text/markdown", "md"),
+    ("text/csv", "csv"),
 ];
 const MAX_SHAPES: usize = 1_000;
 const MAX_POINTS: usize = 10_000;
@@ -177,7 +181,7 @@ fn conflict(what: &str, revision: i64) -> RuntimeError {
     )
 }
 
-fn parse<T: DeserializeOwned>(params: Value) -> Result<T, RuntimeError> {
+pub(crate) fn parse<T: DeserializeOwned>(params: Value) -> Result<T, RuntimeError> {
     if !params.is_object() {
         return Err(invalid("Parameters must be a JSON object."));
     }
@@ -238,14 +242,14 @@ fn file_text(value: &str) -> Result<(), RuntimeError> {
     Ok(())
 }
 
-fn file_mime(value: &str) -> Result<(), RuntimeError> {
-    if FILE_MIMES.contains(&value) {
-        Ok(())
-    } else {
-        Err(invalid(
-            "Unsupported file type. Use an image, PDF, Word document, or text file.",
-        ))
-    }
+fn file_extension(mime: &str) -> Result<&'static str, RuntimeError> {
+    FILE_TYPES
+        .iter()
+        .find(|(known, _)| *known == mime)
+        .map(|(_, extension)| *extension)
+        .ok_or_else(|| {
+            invalid("Unsupported file type. Use an image, PDF, Word document, or text file.")
+        })
 }
 
 fn file_size(value: f64) -> Result<i64, RuntimeError> {
@@ -689,16 +693,18 @@ impl Runtime {
         self.call(method, params)
     }
 
-    /// Copied bytes for the desktop's open-with-system-app action. Read-only and
-    /// limited to a file artifact in the currently open workspace.
+    /// Name, extension, and copied bytes for the desktop's open-with-system-app
+    /// action. Read-only and limited to a file artifact in the currently open
+    /// workspace. The extension comes from the stored type, never the name: a
+    /// restored backup can name a text file `notes.txt.cmd`.
     pub fn file_bytes(
         &mut self,
         workspace_id: &str,
         artifact_id: &str,
-    ) -> Result<(String, String, Vec<u8>), RuntimeError> {
+    ) -> Result<(String, &'static str, Vec<u8>), RuntimeError> {
         id("artifactId", artifact_id)?;
         let workspace = self.workspace(workspace_id)?;
-        workspace
+        let (name, mime, bytes): (String, String, Vec<u8>) = workspace
             .conn
             .query_row(
                 "SELECT f.name, f.mime, f.body FROM artifact a
@@ -708,7 +714,8 @@ impl Runtime {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()?
-            .ok_or_else(|| not_found("File artifact"))
+            .ok_or_else(|| not_found("File artifact"))?;
+        Ok((name, file_extension(&mime)?, bytes))
     }
 
     pub(crate) fn call(&mut self, method: &str, params: Value) -> Result<Value, RuntimeError> {
@@ -1084,7 +1091,7 @@ impl Runtime {
                 let params: FileBegin = parse(params)?;
                 id("canvasId", &params.canvas_id)?;
                 file_name(&params.name)?;
-                file_mime(&params.mime)?;
+                file_extension(&params.mime)?;
                 let size = file_size(params.size)?;
                 file_text(&params.text)?;
                 let upload_id = new_id()?;

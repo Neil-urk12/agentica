@@ -28,7 +28,10 @@ Notes:
   all-features build embeds frontend assets.
 - `tests/*.test.mjs` import `@agentica/protocol` from its built `dist/`. Rebuild
   it after changing the protocol package.
-- `tests/http.test.mjs` starts the real backend on port 1421 and drives Chrome
+- `pnpm test:unit` runs every `tests/*.test.mjs`. Tests that need the real
+  backend or a browser are named `*.browser.mjs` and run in `pnpm test` (or
+  `pnpm test:preview:browser`), so a new unit test file needs no script change.
+- `tests/http.browser.mjs` starts the real backend on port 1421 and drives Chrome
   (`CHROME_PATH` overrides the browser). Stop any dev backend first.
 - Tests use temporary data directories and never call real agents or paid
   providers.
@@ -127,7 +130,7 @@ Manual and end-to-end validation, with dates and evidence:
 | [Windows handoff](windows-validation.md) | Steps still to run on Windows                  |
 
 Changes review feedback persistence is validated on Linux (Fedora 44) in browser
-mode by the `tests/http.test.mjs` case "review feedback survives browser reload
+mode by the `tests/http.browser.mjs` case "review feedback survives browser reload
 and backend restart". Desktop restart and close-time flush are not yet validated.
 
 Not yet validated anywhere: Windows lifecycle, installers, and system-wide

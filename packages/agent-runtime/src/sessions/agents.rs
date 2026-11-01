@@ -4,7 +4,7 @@
 //! Custom definitions live outside every workspace directory so that copying,
 //! sharing, or importing a workspace can never decide what Start executes.
 use super::launch::{executable, ExecutableCapability};
-use crate::commands::{invalid, label};
+use crate::commands::{invalid, label, parse};
 use crate::store::{is_id, new_id, RuntimeError};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -307,10 +307,6 @@ struct Change {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Remove {
     agent_id: String,
-}
-
-fn parse<T: serde::de::DeserializeOwned>(params: Value) -> Result<T, RuntimeError> {
-    serde_json::from_value(params).map_err(|error| invalid(format!("Invalid parameters: {error}.")))
 }
 
 fn missing() -> RuntimeError {
