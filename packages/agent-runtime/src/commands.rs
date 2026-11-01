@@ -242,6 +242,15 @@ fn file_text(value: &str) -> Result<(), RuntimeError> {
     Ok(())
 }
 
+fn file_text_status(value: Option<&str>) -> Result<&str, RuntimeError> {
+    match value.unwrap_or("unknown") {
+        status @ ("complete" | "truncated" | "empty" | "failed" | "unsupported" | "unknown") => {
+            Ok(status)
+        }
+        _ => Err(invalid("textStatus is not a supported extraction status.")),
+    }
+}
+
 fn file_extension(mime: &str) -> Result<&'static str, RuntimeError> {
     FILE_TYPES
         .iter()
@@ -569,6 +578,8 @@ struct FileBegin {
     mime: String,
     size: f64,
     text: String,
+    /// Older clients omit it; stored as `unknown`.
+    text_status: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1094,6 +1105,7 @@ impl Runtime {
                 file_extension(&params.mime)?;
                 let size = file_size(params.size)?;
                 file_text(&params.text)?;
+                let text_status = file_text_status(params.text_status.as_deref())?;
                 let upload_id = new_id()?;
                 self.transact(&params.workspace_id, |tx| {
                     canvas_revision(tx, &params.canvas_id)?;
@@ -1103,8 +1115,8 @@ impl Runtime {
                         [],
                     )?;
                     tx.execute(
-                        "INSERT INTO file_upload (id, canvas_id, name, mime, size, text, created_at)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%s', 'now'))",
+                        "INSERT INTO file_upload (id, canvas_id, name, mime, size, text, text_status, created_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, strftime('%s', 'now'))",
                         (
                             &upload_id,
                             &params.canvas_id,
@@ -1112,6 +1124,7 @@ impl Runtime {
                             &params.mime,
                             size,
                             &params.text,
+                            text_status,
                         ),
                     )?;
                     Ok(json!({ "uploadId": upload_id }))
@@ -1223,9 +1236,18 @@ impl Runtime {
                         }
                     }
                     tx.execute(
-                        "INSERT INTO file_content (id, body, name, mime, size, text)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                        (&content_id, body.as_slice(), &name, &mime, size, &text),
+                        "INSERT INTO file_content (id, body, name, mime, size, text, text_status)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6,
+                                 (SELECT text_status FROM file_upload WHERE id = ?7))",
+                        (
+                            &content_id,
+                            body.as_slice(),
+                            &name,
+                            &mime,
+                            size,
+                            &text,
+                            &params.upload_id,
+                        ),
                     )?;
                     tx.execute(
                         "INSERT INTO artifact (id, type, schema_version, revision, content_store, content_id)
@@ -1542,16 +1564,26 @@ fn artifact(tx: &Transaction, artifact_id: &str) -> Result<Value, RuntimeError> 
             }))
         }
         "file" => {
-            let (name, mime, size, file_text): (String, String, i64, String) = tx.query_row(
-                "SELECT name, mime, size, text FROM file_content WHERE id = ?1",
-                [&content_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )?;
+            let (name, mime, size, file_text, text_status): (String, String, i64, String, String) =
+                tx.query_row(
+                    "SELECT name, mime, size, text, text_status FROM file_content WHERE id = ?1",
+                    [&content_id],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                        ))
+                    },
+                )?;
             Ok(json!({
                 "id": artifact_id, "type": "file",
                 "schemaVersion": schema_version,
                 "revision": revision,
                 "name": name, "mime": mime, "size": size, "text": file_text,
+                "textStatus": text_status,
             }))
         }
         "drawing" => {

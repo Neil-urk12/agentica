@@ -42,6 +42,19 @@ export const FileMimeSchema = z.enum([
   "text/csv",
 ]);
 export type FileMime = z.infer<typeof FileMimeSchema>;
+/**
+ * How much of a document's text layer was extracted at import. `unknown`
+ * covers imports that predate this field; never infer completeness from text.
+ */
+export const FileTextStatusSchema = z.enum([
+  "complete",
+  "truncated",
+  "empty",
+  "failed",
+  "unsupported",
+  "unknown",
+]);
+export type FileTextStatus = z.infer<typeof FileTextStatusSchema>;
 
 const RequestId = z.string().min(1).max(128);
 // Lowercase UUID identities; only explicit project operations accept paths.
@@ -829,6 +842,8 @@ const ParamSchemas = {
     mime: FileMimeSchema,
     size: z.number().int().min(0).max(FILE_LIMITS.maxBytes),
     text: z.string().max(FILE_LIMITS.text),
+    // Older clients omit it; the runtime then stores `unknown`.
+    textStatus: FileTextStatusSchema.optional(),
   }),
   "file.chunk": z.strictObject({
     ...WorkspaceRef,
@@ -999,6 +1014,8 @@ export const FileArtifactSchema = z.strictObject({
   mime: FileMimeSchema,
   size: z.number().int().min(0).max(FILE_LIMITS.maxBytes),
   text: z.string().max(FILE_LIMITS.text),
+  // Absent from older runtimes and saved snapshots.
+  textStatus: FileTextStatusSchema.default("unknown"),
 });
 export const WebPreviewArtifactSchema = z.strictObject({
   id: IdSchema,

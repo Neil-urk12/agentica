@@ -12,6 +12,8 @@
     text: string;
     /** Labels render as plain text; text artifacts use the Markdown subset. */
     markdown?: boolean;
+    /** Read-only caveat about the text, such as partial file extraction. */
+    notice?: string;
     /** Present only for editable text; labels and proposals are read-only. */
     onEdit?: (text: string) => void;
     editDisabled?: boolean;
@@ -23,6 +25,7 @@
     subtitle,
     text,
     markdown = true,
+    notice = "",
     onEdit,
     editDisabled = false,
     startEditing = false,
@@ -74,6 +77,9 @@
     ></textarea>
   {:else}
     <div class="reader__content" tabindex="-1">
+      {#if notice}
+        <p class="reader__notice" role="note">{notice}</p>
+      {/if}
       {#if !text.trim()}
         <p class="muted">This object has no text yet.</p>
       {:else if markdown}

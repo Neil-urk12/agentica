@@ -721,7 +721,17 @@ test("file artifacts and upload requests keep binary content bounded and typed",
     text: "Extracted summary",
   };
   assert.equal(FileArtifactSchema.safeParse(artifact).success, true);
+  // Older runtimes and saved snapshots carry no coverage: unknown, never complete.
+  assert.equal(FileArtifactSchema.parse(artifact).textStatus, "unknown");
+  assert.equal(
+    FileArtifactSchema.parse({ ...artifact, textStatus: "truncated" })
+      .textStatus,
+    "truncated",
+  );
   for (const mutate of [
+    (value) => {
+      value.textStatus = "partial";
+    },
     (value) => {
       value.mime = "application/x-msdownload";
     },

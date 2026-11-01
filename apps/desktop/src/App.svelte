@@ -93,6 +93,7 @@
     extractFileText,
     fileKindLabel,
     fileMime,
+    fileTextCoverage,
     formatFileSize,
     openCanvasFile,
     readCanvasFile,
@@ -109,8 +110,14 @@
   import {
     runCanvasAgent,
     canvasToolSupport,
+    imageInputSupport,
     contextWindow,
   } from "./lib/openrouter";
+  import {
+    imagePreflight,
+    prepareImages,
+    selectedFileArtifacts,
+  } from "./lib/attachments";
   import {
     getActivePreset,
     getProviderConfig,
@@ -331,6 +338,8 @@
     text: string;
     markdown: boolean;
     startEditing?: boolean;
+    /** File text coverage limits, shown above the text. */
+    notice?: string;
   };
   let reader = $state.raw<ReaderState | null>(null);
   let reviewError = $state("");
@@ -364,6 +373,19 @@
       (id) => nodes.find((node) => node.id === id)?.type !== "web-preview",
     ),
   );
+  /** Selected file artifacts, once each, in selection order. */
+  const selectedFiles = $derived(
+    selectedFileArtifacts(editorState.document, contextIds),
+  );
+  const attachmentNotices = $derived([
+    ...selectedFiles.flatMap((file) => {
+      const coverage = fileTextCoverage(file.mime, file.textStatus);
+      return coverage?.guidance
+        ? [`${file.name}: ${coverage.label}. ${coverage.guidance}`]
+        : [];
+    }),
+    ...imagePreflight(selectedFiles).problems,
+  ]);
   const nodeGroupBoxes = $derived(
     groupBoxes(editorState.document?.nodes ?? []),
   );
@@ -880,6 +902,8 @@
       canvasId: editorState.document.canvas.id,
     };
     const nodeIds = [...contextIds];
+    // Captured at Send: later selection changes never alter this turn's images.
+    const imageCheck = imagePreflight(selectedFiles);
     const contextMode = hasSelection
       ? ("selection" as const)
       : ("canvas" as const);
@@ -893,6 +917,21 @@
     try {
       const provider = validateProvider(getProviderConfig());
       const model = provider.model;
+      // Nothing is sent, and no turn is saved, when any selected image is unusable.
+      if (imageCheck.problems.length)
+        throw new Error(imageCheck.problems.join(" "));
+      if (imageCheck.images.length) {
+        const accepts =
+          provider.kind === "custom"
+            ? provider.images
+            : await imageInputSupport(model, controller.signal);
+        if (!accepts)
+          throw new Error(
+            provider.kind === "custom"
+              ? `Image input is off for ${model} at this address. If the model accepts images, turn on "Model accepts images" in Settings › Advanced; otherwise deselect the images. Nothing was sent.`
+              : `${model} does not accept images. Choose a model that does in Settings, or deselect the images. Nothing was sent.`,
+          );
+      }
       const tools =
         provider.kind === "custom"
           ? provider.tools
@@ -901,9 +940,16 @@
         source: toolsSource,
         text: tools
           ? "Canvas edits will appear as proposals for review."
-          : "This model supports text replies only. Choose a tool-capable model in Settings to propose canvas edits.",
+          : "This model can't propose canvas edits. Choose a tool-capable model in Settings to propose them.",
       };
       controller.signal.throwIfAborted();
+      // Bytes are loaded for explicitly selected images only, never for outline or reads.
+      const images = await prepareImages(
+        imageCheck.images,
+        (artifactId) =>
+          readCanvasFile(connectionKey.trim(), origin.workspaceId, artifactId),
+        controller.signal,
+      );
       const area = usable();
       const centre = area
         ? areaCentre(viewport, area)
@@ -948,6 +994,7 @@
       const { reply, operations, tokens } = await runCanvasAgent(start, {
         signal: controller.signal,
         tools,
+        images,
         provider,
         read: (nodeIds) =>
           editor.readConversation({
@@ -1039,13 +1086,22 @@
     if (!node || !source) return;
     if (source.type === "web-preview") return;
     if (source.type === "file") {
+      const coverage = fileTextCoverage(source.mime, source.textStatus);
       reader = {
         title: source.name,
-        subtitle: `${fileKindLabel(source.mime)} · ${formatFileSize(source.size)} · read-only`,
+        subtitle: [
+          fileKindLabel(source.mime),
+          formatFileSize(source.size),
+          coverage?.label,
+          "read-only",
+        ]
+          .filter(Boolean)
+          .join(" · "),
         text:
           source.text ||
           "No text could be extracted from this file. Open it with the system app to read it.",
         markdown: false,
+        notice: coverage?.guidance,
       };
       return;
     }
@@ -1162,10 +1218,10 @@
         }
         importName = file.name;
         importProgress = 0;
-        const text = await extractFileText(file, mime);
+        const extracted = await extractFileText(file, mime);
         const bytes = new Uint8Array(await file.arrayBuffer());
         await editor.addFile(
-          { name: file.name, mime, size: file.size, text, bytes },
+          { name: file.name, mime, size: file.size, ...extracted, bytes },
           {
             x: anchor.x - 190 + index * 32,
             y: anchor.y - 150 + index * 32,
@@ -3573,6 +3629,7 @@
                 ? `${contextIds.length} selected ${contextIds.length === 1 ? "object" : "objects"} · ${chatScope}`
                 : `No canvas content selected · ${chatScope}`
               : `Current canvas · ${chatScope}`}
+            notices={attachmentNotices}
             provider={providerName}
             model={providerConfig.model}
             modelNote={toolsNotice?.source === noticeSource
@@ -3900,6 +3957,7 @@
       subtitle={reader.subtitle}
       text={readerText}
       markdown={reader.markdown}
+      notice={reader.notice}
       startEditing={reader.startEditing}
       editDisabled={editorState.busy}
       onEdit={reader.artifactId

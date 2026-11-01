@@ -132,6 +132,34 @@ Changes review feedback persistence is validated on Linux (Fedora 44) in browser
 mode by the `tests/http.browser.mjs` case "review feedback survives browser reload
 and backend restart". Desktop restart and close-time flush are not yet validated.
 
+Chat attachments (document `textStatus`, selected-image input, image budgets) are
+covered by automated tests only: `tests/attachments.test.mjs`,
+`tests/provider.test.mjs`, `tests/file-types.test.mjs`, and the runtime
+`contracts` tests, all with mocked providers.
+
+Browser mode was validated live on Linux (Fedora 44) on 2026-11-01. The test
+drove the bundled `agentica-backend` with headless Chromium against Groq's
+OpenAI-compatible API:
+
+- Imports stored `complete` for a text PDF and `truncated` for a 15,000-character
+  text file. The composer named the partial file and the GIF format limit.
+- With "Model accepts images" off for the endpoint, a selected-image prompt was
+  blocked with Settings guidance and saved no turn. OpenRouter's catalog
+  blocked a text-only model (`recursive/flint-v1.0:free`) the same way, before
+  any chat request.
+- `qwen/qwen3.8-27b`, with image input declared and canvas tools off, read a
+  generated PNG and answered "742 — blue".
+- `openai/gpt-oss-120b`, with tools, turned the selected PDF into a reviewed
+  note proposal. Applying it created the note and left the PDF's revision and
+  text unchanged. Saved turns contained no image data URL.
+- Groq's free tier allows 8,000 tokens per minute per model. A tool turn right
+  after an image turn on the same model failed with 429, shown as a failed turn.
+
+Not validated: the desktop (Tauri) launch path, a live OpenRouter vision model
+(no OpenRouter key was available), the reader's status line in the rendered
+app, and toggling the Settings checkbox (the declaration was set through
+storage).
+
 Not yet validated anywhere: Windows lifecycle, installers, and system-wide
 package installation.
 

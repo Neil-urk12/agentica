@@ -27,6 +27,8 @@
     ) => Promise<string>;
     /** Short scope line, such as "2 selected objects · recent conversation". */
     scope?: string;
+    /** File-specific limits of the selected attachments, with guidance. */
+    notices?: string[];
     /** Provider and model shown on the model button, which opens AI settings. */
     provider?: string;
     model?: string;
@@ -47,6 +49,7 @@
     onSubmit,
     onTranscribe,
     scope = "",
+    notices = [],
     provider = "",
     model = "",
     modelNote = "",
@@ -439,6 +442,16 @@
     <p class="composer__scope" aria-live="polite">
       <span class="sr-only">Context:</span>{scope}
     </p>
+  {/if}
+  {#if notices.length}
+    <div class="composer__notice" role="status">
+      Limits of the selected files:
+      <ul>
+        {#each notices as notice, index (index)}
+          <li>{notice}</li>
+        {/each}
+      </ul>
+    </div>
   {/if}
   <label class="sr-only" for="canvas-prompt">Prompt</label>
   <textarea

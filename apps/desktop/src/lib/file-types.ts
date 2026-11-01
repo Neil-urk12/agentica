@@ -1,4 +1,8 @@
-import type { FileMime } from "@agentica/protocol";
+import {
+  FILE_LIMITS,
+  type FileMime,
+  type FileTextStatus,
+} from "@agentica/protocol";
 
 /**
  * Pure file-type and byte helpers. This module has no transport or DOM
@@ -77,6 +81,63 @@ export function fileKindLabel(mime: string): string {
     default:
       return "Text file";
   }
+}
+
+/**
+ * Cap extracted text at the stored limit without splitting a surrogate pair.
+ * `moreRemains` marks content the extractor never reached, such as unvisited
+ * PDF pages, so a stop exactly at the cap still reads as truncated.
+ */
+export function capFileText(
+  raw: string,
+  moreRemains = false,
+): { text: string; textStatus: FileTextStatus } {
+  let end = Math.min(raw.length, FILE_LIMITS.text);
+  const high = raw.charCodeAt(end - 1);
+  if (end < raw.length && high >= 0xd800 && high <= 0xdbff) end -= 1;
+  const text = raw.slice(0, end).trim();
+  const omitted = moreRemains || raw.slice(end).trim() !== "";
+  return {
+    text,
+    textStatus: omitted ? "truncated" : text ? "complete" : "empty",
+  };
+}
+
+const TEXT_STATUS_LABEL: Record<FileTextStatus, string> = {
+  complete: "All text read",
+  truncated: "Partial text",
+  empty: "No readable text",
+  failed: "Text extraction failed",
+  unsupported: "Text not supported",
+  unknown: "Text coverage unknown",
+};
+
+const TEXT_STATUS_GUIDANCE: Record<FileTextStatus, string> = {
+  complete: "",
+  truncated: `Only the first ${FILE_LIMITS.text.toLocaleString("en-US")} characters were kept. Import a smaller excerpt to cover the rest.`,
+  empty:
+    "No text layer was found. Scanned pages and images are not read; use a text-bearing PDF or Word file.",
+  failed:
+    "Its text could not be extracted. Import it again or use a text-bearing PDF or Word file.",
+  unsupported:
+    "Legacy .doc text is not read. Save it as .docx or PDF and import it again.",
+  unknown:
+    "It was imported before text coverage was recorded. Import it again to check that all text was read.",
+};
+
+/**
+ * Coverage shown in the reader and chat. Images have no text layer and use
+ * their own image-input feedback, so they get none.
+ */
+export function fileTextCoverage(
+  mime: string,
+  status: FileTextStatus,
+): { label: string; guidance: string } | undefined {
+  if (fileKind(mime) === "image") return undefined;
+  return {
+    label: TEXT_STATUS_LABEL[status],
+    guidance: TEXT_STATUS_GUIDANCE[status],
+  };
 }
 
 export function formatFileSize(bytes: number): string {

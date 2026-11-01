@@ -2753,6 +2753,28 @@ span.card-more {
   white-space: pre-wrap;
 }
 
+/* File text coverage caveats, in the reader and above the chat prompt. */
+.reader__notice,
+.composer__notice {
+  margin: 0 0 0.75rem;
+  padding: 0.4rem 0.6rem;
+  font-size: var(--type-meta);
+  line-height: 1.4;
+  color: var(--ink);
+  background: var(--warn-soft);
+  border: 1px solid var(--warn-line);
+  border-radius: 0.5rem;
+}
+
+.composer__notice {
+  margin: 0;
+}
+
+.composer__notice ul {
+  margin: 0.2rem 0 0;
+  padding-left: 1.1rem;
+}
+
 .reader__source {
   width: 100%;
   min-height: min(60dvh, 32rem);

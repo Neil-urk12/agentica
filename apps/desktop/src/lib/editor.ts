@@ -5,6 +5,7 @@ import {
   MAX_IDS,
   type Drawing,
   type FileMime,
+  type FileTextStatus,
   type RuntimeResult,
   type RuntimeParams,
   type ConversationTurn,
@@ -1126,6 +1127,7 @@ export class Editor {
       mime: FileMime;
       size: number;
       text: string;
+      textStatus: FileTextStatus;
       bytes: Uint8Array;
     },
     position?: { x: number; y: number },
@@ -1146,6 +1148,7 @@ export class Editor {
           mime: input.mime,
           size: input.size,
           text: input.text,
+          textStatus: input.textStatus,
         });
         try {
           let offset = 0;

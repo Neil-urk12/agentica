@@ -8,11 +8,13 @@ import {
   getProviderProfile,
   savePresetSetting,
   saveProviderProfile,
+  saveImageInput,
   saveProviderSetting,
   validateProvider,
 } from "../apps/desktop/src/lib/provider.ts";
 import {
   checkProvider,
+  imageInputSupport,
   runCanvasAgent,
   setOpenRouterApiKey,
   setOpenRouterModel,
@@ -24,6 +26,7 @@ const custom = () => ({
   apiKey: " custom-key ",
   model: " custom-model ",
   tools: true,
+  images: false,
 });
 const start = () => ({
   turn: { model: "custom-model", prompt: "Draw", anchor: { x: 0, y: 0 } },
@@ -69,6 +72,28 @@ test("provider settings preserve separate credentials and models when switching"
   assert.equal(getProviderConfig().apiKey, "router-key");
   assert.equal(getProviderConfig().model, "router-model");
   assert.equal(getCustomProvider().apiKey, "custom-key");
+
+  // Image input is declared per profile, address, and model, independently of tools.
+  saveProviderSetting("provider", "custom");
+  saveImageInput(true, getCustomProvider());
+  assert.deepEqual(
+    [getCustomProvider().images, getCustomProvider().tools],
+    [true, false],
+  );
+  savePresetSetting("model", "other-model");
+  assert.equal(getCustomProvider().images, false);
+  savePresetSetting("model", "custom-model");
+  assert.equal(getCustomProvider().images, true);
+  savePresetSetting("baseUrl", "https://other.example.com/v1");
+  assert.equal(getCustomProvider().images, false);
+  saveProviderProfile("groq");
+  savePresetSetting("model", "custom-model");
+  assert.equal(getCustomProvider().images, false);
+  saveProviderProfile("custom");
+  savePresetSetting("baseUrl", "https://example.com/v1");
+  saveImageInput(false, getCustomProvider());
+  assert.equal(getCustomProvider().images, false);
+  assert.equal(getProviderConfig().tools, false);
 });
 
 test("provider validation normalizes base paths and rejects unsafe or incomplete settings", () => {
@@ -670,4 +695,53 @@ test("settings check names the provider's error, redacts the key, and times out"
   const slow = await pending;
   assert.equal(slow.result, "other");
   assert.match(slow.detail, /No answer within 30 seconds/);
+});
+
+test("OpenRouter image support comes from catalog input modalities, router IDs included", async (t) => {
+  const catalog = {
+    data: [
+      { id: "openrouter/free", architecture: { input_modalities: ["text"] } },
+      {
+        id: "vision/no-tools",
+        architecture: { input_modalities: ["text", "image"] },
+      },
+      {
+        id: "tools/text",
+        supported_parameters: ["tools"],
+        architecture: { input_modalities: ["text"] },
+      },
+      { id: "unlisted/modalities" },
+    ],
+  };
+  let mode = "ok";
+  const urls = [];
+  t.mock.method(globalThis, "fetch", async (url) => {
+    urls.push(String(url));
+    if (mode === "offline") throw new TypeError("network");
+    if (mode === "error") return new Response("", { status: 503 });
+    return Response.json(catalog);
+  });
+  assert.equal(await imageInputSupport("vision/no-tools"), true);
+  assert.equal(await imageInputSupport("tools/text"), false);
+  // The free router is checked, not assumed, unlike tool support.
+  assert.equal(await imageInputSupport("openrouter/free"), false);
+  for (const model of ["missing/model", "unlisted/modalities"])
+    await assert.rejects(
+      imageInputSupport(model),
+      /image support is unknown|does not list the input types.*not sent/s,
+    );
+  for (mode of ["offline", "error"])
+    await assert.rejects(
+      imageInputSupport("vision/no-tools"),
+      /Retry, or choose a model.*not sent/,
+    );
+  assert.ok(urls.every((url) => url === "https://openrouter.ai/api/v1/models"));
+  // A cancelled lookup stays a cancellation.
+  mode = "offline";
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    imageInputSupport("vision/no-tools", controller.signal),
+    TypeError,
+  );
 });

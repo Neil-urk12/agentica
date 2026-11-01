@@ -62,7 +62,28 @@ export type ProviderConfig = {
   apiKey: string;
   model: string;
   tools: boolean;
+  /**
+   * The user's declaration that this endpoint and model accept images. Always
+   * false for OpenRouter, whose catalog decides per request.
+   */
+  images: boolean;
 };
+
+/** Image input is declared for one endpoint and model, never inherited. */
+function imageScope(baseUrl: string, model: string): string {
+  return JSON.stringify([baseUrl.trim(), model.trim()]);
+}
+
+/** Enable or disable image input for the active profile's current endpoint and model. */
+export function saveImageInput(
+  enabled: boolean,
+  config: Pick<ProviderConfig, "baseUrl" | "model">,
+): void {
+  savePresetSetting(
+    "images",
+    enabled ? imageScope(config.baseUrl, config.model) : "",
+  );
+}
 
 function stored(key: string, fallback = ""): string {
   try {
@@ -130,7 +151,7 @@ export function saveProviderProfile(profile: ProviderProfile): void {
 
 /** Save one field for the active preset, including the free-form endpoint. */
 export function savePresetSetting(
-  field: "baseUrl" | "apiKey" | "model" | "tools",
+  field: "baseUrl" | "apiKey" | "model" | "tools" | "images",
   value: string,
 ): void {
   try {
@@ -165,12 +186,15 @@ export function getCustomProvider(): ProviderConfig {
   };
   const fallbackTools =
     profile === "custom" ? stored("customTools", "true") : "true";
+  const baseUrl = read("baseUrl") || preset?.baseUrl || "";
+  const model = read("model");
   return {
     kind: "custom",
-    baseUrl: read("baseUrl") || preset?.baseUrl || "",
+    baseUrl,
     apiKey: read("apiKey"),
-    model: read("model"),
+    model,
     tools: stored(`preset.${profile}.tools`, fallbackTools) === "true",
+    images: stored(`preset.${profile}.images`) === imageScope(baseUrl, model),
   };
 }
 
@@ -183,6 +207,7 @@ export function getProviderConfig(): ProviderConfig {
         apiKey: getOpenRouterApiKey(),
         model: getOpenRouterModel(),
         tools: true,
+        images: false,
       };
 }
 

@@ -60,7 +60,10 @@ function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
 export const BUDGET = Object.freeze({
   rounds: 8,
   toolCalls: 32,
+  /** Everything but image data, which is measured as empty strings. */
   requestBytes: 128 * 1024,
+  /** The actual serialized request, including base64 image data. */
+  totalRequestBytes: 6 * 1024 * 1024,
   toolArgBytes: 16 * 1024,
   ms: 120_000,
 });
@@ -69,6 +72,7 @@ const BUDGET_NAMES: Record<keyof Budget, string> = {
   rounds: "model request",
   toolCalls: "tool call",
   requestBytes: "request size",
+  totalRequestBytes: "request size with images",
   toolArgBytes: "tool argument size",
   ms: "time",
 };
@@ -80,9 +84,13 @@ const MODEL_READ_ERRORS = new Set([
   "INVALID_PARAMS",
 ]);
 
+type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
 type Message = {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
+  /** Parts only on the current user message, when it carries images. */
+  content: string | null | ContentPart[];
   tool_calls?: ToolCall[];
   tool_call_id?: string;
 };
@@ -115,8 +123,20 @@ export type HarnessDeps = {
       args: Record<string, unknown>,
     ): Promise<RuntimeResult<"mcp.call">>;
   };
+  /**
+   * Selected images prepared for this turn only. They are sent with the
+   * current user message on every round and never saved or replayed.
+   */
+  images?: readonly ImageInput[];
   budget?: Budget;
 };
+
+/** A validated selected image; `dataUrl` must stay out of storage, logs, and errors. */
+export type ImageInput = Readonly<{
+  artifactId: string;
+  name: string;
+  dataUrl: string;
+}>;
 
 export type TurnResult = {
   reply: string;
@@ -190,13 +210,26 @@ export async function runCanvasTurn(
         content: `${previous.reply}\n[Previous turn status: ${previous.status}. Only applied proposals changed canvas objects.]`,
       });
   }
+  const prompt = `${start.turn.prompt}\n\n<canvas-data>\n${data({
+    proposalAnchor: start.turn.anchor,
+    writeScope: start.context,
+    outline: start.outline,
+  })}\n</canvas-data>`;
+  const images = deps.images ?? [];
   messages.push({
     role: "user",
-    content: `${start.turn.prompt}\n\n<canvas-data>\n${data({
-      proposalAnchor: start.turn.anchor,
-      writeScope: start.context,
-      outline: start.outline,
-    })}\n</canvas-data>`,
+    content: images.length
+      ? [
+          { type: "text", text: prompt },
+          ...images.flatMap((image): ContentPart[] => [
+            {
+              type: "text",
+              text: `<attached-image>\n${data({ name: image.name, artifactId: image.artifactId })}\n</attached-image>`,
+            },
+            { type: "image_url", image_url: { url: image.dataUrl } },
+          ]),
+        ]
+      : prompt,
   });
   let operations: CanvasOperation[] = [];
   let toolCalls = 0;
@@ -210,17 +243,28 @@ export async function runCanvasTurn(
   async function loop(): Promise<TurnResult> {
     for (let round = 0; round < budget.rounds; round++) {
       signal.throwIfAborted();
-      const body = JSON.stringify({
+      const request = {
         ...deps.request,
         messages,
         ...(deps.tools
           ? { tools: [...canvasTools(), ...mcpToolSpecs(external)] }
           : {}),
-      });
-      if (new TextEncoder().encode(body).length > budget.requestBytes)
+      };
+      const body = JSON.stringify(request);
+      const textBody = images.length
+        ? JSON.stringify(request, (key, value) =>
+            key === "image_url" ? { url: "" } : value,
+          )
+        : body;
+      if (new TextEncoder().encode(textBody).length > budget.requestBytes)
         throw new Exhausted(
           "requestBytes",
           `Conversation and canvas context exceed the ${budget.requestBytes / 1024} KiB request budget. Select fewer objects or use a new canvas; nothing was truncated.`,
+        );
+      if (new TextEncoder().encode(body).length > budget.totalRequestBytes)
+        throw new Exhausted(
+          "totalRequestBytes",
+          `The request with its selected images exceeds the ${budget.totalRequestBytes / (1024 * 1024)} MiB limit. Select fewer or smaller images; nothing was sent or truncated.`,
         );
       const response = await deps.post(body, signal);
       if (!response.ok)

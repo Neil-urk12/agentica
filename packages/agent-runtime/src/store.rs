@@ -31,6 +31,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("schema_v14.sql"),
     include_str!("schema_v15.sql"),
     include_str!("schema_v16.sql"),
+    include_str!("schema_v17.sql"),
 ];
 pub const STORAGE_VERSION: i64 = MIGRATIONS.len() as i64;
 
@@ -1167,6 +1168,15 @@ mod tests {
             [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         ).unwrap();
         assert_eq!(values, ("note".into(), "{}".into(), vec![1]));
+        // Nonempty legacy text is not evidence of a complete extraction.
+        let file: (String, String) = conn
+            .query_row(
+                "SELECT text, text_status FROM file_content WHERE id='f'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(file, ("a".into(), "unknown".into()));
         assert!(conn
             .prepare("PRAGMA foreign_key_check")
             .unwrap()

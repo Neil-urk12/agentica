@@ -310,6 +310,8 @@ fn files_are_copied_in_order_and_stay_out_of_canvas_metadata() {
     assert_eq!(artifact["name"], "notes.txt");
     assert_eq!(artifact["size"], 11);
     assert_eq!(artifact["text"], "hello world");
+    // An older client sends no coverage, which is never asserted complete.
+    assert_eq!(artifact["textStatus"], "unknown");
     assert!(artifact.get("data").is_none());
     let artifact_id = artifact["id"].clone();
 
@@ -401,4 +403,99 @@ fn files_are_copied_in_order_and_stay_out_of_canvas_metadata() {
         )),
         "INVALID_PARAMS"
     );
+    assert_eq!(
+        code(&call(
+            &mut backend,
+            "file.begin",
+            json!({ "workspaceId": workspace, "canvasId": reference["canvasId"],
+                "name": "scan.pdf", "mime": "application/pdf",
+                "size": 0, "text": "", "textStatus": "partial" }),
+        )),
+        "INVALID_PARAMS"
+    );
+
+    // Extraction coverage is stored with the import and returned with the artifact.
+    let begun = call(
+        &mut backend,
+        "file.begin",
+        json!({ "workspaceId": workspace, "canvasId": reference["canvasId"],
+            "name": "scan.pdf", "mime": "application/pdf",
+            "size": 0, "text": "", "textStatus": "empty" }),
+    );
+    assert_eq!(code(&begun), "ok", "{begun}");
+    let finished = call(
+        &mut backend,
+        "file.finish",
+        json!({ "workspaceId": workspace, "canvasId": reference["canvasId"],
+            "expectedRevision": 3, "uploadId": begun["result"]["uploadId"],
+            "x": 0, "y": 0, "width": 380, "height": 300 }),
+    );
+    assert_eq!(code(&finished), "ok", "{finished}");
+    assert_eq!(finished["result"]["artifact"]["textStatus"], "empty");
+}
+
+#[test]
+fn file_coverage_reaches_chat_context_and_oversized_selections_fail_whole() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut backend = desktop(temp.path());
+    let workspace = call(&mut backend, "workspace.create", json!({ "name": "Notes" }))["result"]
+        ["workspace"]["id"]
+        .clone();
+    let canvas = call(
+        &mut backend,
+        "canvas.create",
+        json!({ "workspaceId": workspace, "title": "Reading" }),
+    )["result"]["canvas"]["id"]
+        .clone();
+    let mut nodes = Vec::new();
+    for (revision, (name, status)) in [("a.pdf", "truncated"), ("b.pdf", "complete")]
+        .into_iter()
+        .enumerate()
+    {
+        let begun = call(
+            &mut backend,
+            "file.begin",
+            json!({ "workspaceId": workspace, "canvasId": canvas, "name": name,
+                "mime": "application/pdf", "size": 0,
+                "text": "x".repeat(9_000), "textStatus": status }),
+        );
+        let finished = call(
+            &mut backend,
+            "file.finish",
+            json!({ "workspaceId": workspace, "canvasId": canvas,
+                "expectedRevision": revision + 1, "uploadId": begun["result"]["uploadId"],
+                "x": 0, "y": 0, "width": 380, "height": 300 }),
+        );
+        assert_eq!(code(&finished), "ok", "{finished}");
+        nodes.push(finished["result"]["node"]["id"].clone());
+    }
+    let start = |backend: &mut DesktopBackend, turn: &str, ids: &[Value]| {
+        call(
+            backend,
+            "conversation.start",
+            json!({ "workspaceId": workspace, "canvasId": canvas, "turnId": turn,
+                "prompt": "Summarize", "model": "test", "nodeIds": ids,
+                "contextMode": "selection", "anchor": { "x": 0, "y": 0 } }),
+        )
+    };
+    // Two near-limit documents exceed the context frame: rejected, never trimmed.
+    let both = start(&mut backend, "40000000-0000-4000-8000-000000000001", &nodes);
+    assert_eq!(code(&both), "INVALID_PARAMS", "{both}");
+    let turn = "40000000-0000-4000-8000-000000000002";
+    let one = start(&mut backend, turn, &nodes[..1]);
+    assert_eq!(code(&one), "ok", "{one}");
+    let artifact = &one["result"]["context"]["artifacts"][0];
+    assert_eq!(
+        (artifact["name"].as_str(), artifact["textStatus"].as_str()),
+        (Some("a.pdf"), Some("truncated"))
+    );
+    assert_eq!(artifact["text"].as_str().unwrap().len(), 9_000);
+    let read = call(
+        &mut backend,
+        "conversation.read",
+        json!({ "workspaceId": workspace, "canvasId": canvas, "turnId": turn,
+            "nodeIds": [nodes[1]] }),
+    );
+    assert_eq!(code(&read), "ok", "{read}");
+    assert_eq!(read["result"]["artifacts"][0]["textStatus"], "complete");
 }

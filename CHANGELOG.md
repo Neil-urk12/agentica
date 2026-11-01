@@ -12,6 +12,50 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Chat attachments: document coverage and selected images (2026-11-01)
+
+- Implemented: document imports record a `textStatus` (`complete`,
+  `truncated`, `empty`, `failed`, `unsupported`) next to their extracted text.
+  Workspace migration v17 adds the column with `unknown` for existing files,
+  since nonempty legacy text cannot prove the import was complete; bytes and
+  text are unchanged and nothing is re-extracted. Protocol schemas default a
+  missing status to `unknown` so older runtimes and saved snapshots still parse.
+  Older builds refuse a workspace once it is migrated to v17.
+- Truncation is recorded from what was omitted, not inferred from length: a
+  PDF that stops at the 10,000-character cap with pages unread is `truncated`
+  even at exactly the cap, and the cap never splits a surrogate pair.
+- The reader and the chat composer show file-specific coverage and recovery
+  guidance (reimport, smaller excerpt, text-bearing PDF/DOCX). The model gets
+  the same status and is told not to claim a whole-document summary from
+  partial or missing text. Warnings never block the prompt.
+- Selected PNG, JPEG, and WebP files are sent as image parts of the current
+  user message, labeled with escaped name and artifact ID, and reused for every
+  round of the turn. Selection is captured at Send and deduplicated by
+  artifact; whole-canvas context, the outline, and `canvas_read` never load
+  image bytes. Image data stays turn-local: it is not saved, replayed in later
+  history, or put in errors.
+- Image capability is separate from tool support. OpenRouter requires `image`
+  in the catalog's input modalities, including for `openrouter/free`; an
+  unknown or unreachable catalog blocks the image request with retry/model
+  guidance. Custom endpoints and presets get an Advanced "Model accepts images"
+  declaration, off by default and tied to the profile, address, and model.
+- Limits (local choices, not provider guarantees): 4 images, 2 MiB each, 4 MiB
+  combined; the existing 128 KiB budget now measures requests with image data
+  blanked, and a new 6 MiB cap covers the real serialized request. Both are
+  checked each round. GIF/SVG, oversized, unloadable, or undecodable images
+  reject the whole request before any provider post, naming the file; nothing
+  is resized, converted, or dropped. The decode check fails closed: a webview
+  without `createImageBitmap` rejects the image instead of skipping the check.
+- Validated: Rust migration, persistence, and `conversation.start`/`read`
+  context tests; Node tests for extraction caps, coverage guidance, catalog
+  capability, scoped image settings, image preflight/loading, harness message
+  parts, and both request budgets. Browser mode was validated live against Groq:
+  a selected image answered by a vision model with no tools, PDF-to-notes
+  proposed and applied with the source PDF unchanged, and image requests
+  blocked before sending for a non-vision custom model and an OpenRouter
+  text-only model. Evidence is in the development docs. The desktop launch path
+  and a live OpenRouter vision model are not yet validated.
+
 ### Whole canvas card opens the canvas (2026-11-01)
 
 - The open button's hit area only covered the title row, so clicks lower on a

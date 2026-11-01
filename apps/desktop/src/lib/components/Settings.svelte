@@ -16,6 +16,7 @@
     getProviderConfig,
     getProviderProfile,
     getCustomProvider,
+    saveImageInput,
     savePresetSetting,
     saveProviderProfile,
     type ProviderProfile,
@@ -185,7 +186,7 @@
     model = value;
     if (providerKind === "custom") {
       savePresetSetting("model", value);
-      custom.model = value;
+      custom = getCustomProvider();
     } else setOpenRouterModel(value);
     flashSaved();
   }
@@ -520,8 +521,12 @@
                   value={custom.baseUrl}
                   placeholder="https://api.example.com/v1"
                   oninput={(event) => {
-                    custom.baseUrl = event.currentTarget.value;
-                    savePresetSetting("baseUrl", custom.baseUrl);
+                    savePresetSetting("baseUrl", event.currentTarget.value);
+                    // A new address must not inherit another one's image declaration.
+                    custom = {
+                      ...getCustomProvider(),
+                      baseUrl: event.currentTarget.value,
+                    };
                     flashSaved();
                   }}
                   autocomplete="off"
@@ -595,6 +600,21 @@
                     }}
                   /> Let the AI suggest canvas edits (the model must support tool
                   calling)</label
+                >
+              {/if}
+              {#if providerKind === "custom"}
+                <label class="setting__checkbox"
+                  ><input
+                    id="provider-images"
+                    type="checkbox"
+                    checked={custom.images}
+                    onchange={(event) => {
+                      saveImageInput(event.currentTarget.checked, custom);
+                      custom = getCustomProvider();
+                      flashSaved();
+                    }}
+                  /> Model accepts images (send selected PNG, JPEG, and WebP files
+                  with prompts; applies to this address and model only)</label
                 >
               {/if}
             </div>

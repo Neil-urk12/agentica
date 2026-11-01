@@ -87,6 +87,43 @@ export async function canvasToolSupport(
   return entry.supported_parameters?.includes("tools") ?? false;
 }
 
+/**
+ * Whether OpenRouter's catalog lists `image` among the model's input
+ * modalities. Router IDs such as openrouter/free are checked the same way:
+ * unlike tools, image input is not a filter the router guarantees. Throws when
+ * capability cannot be established, so images are neither sent nor dropped.
+ */
+export async function imageInputSupport(
+  model: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const unknown = (reason: string) =>
+    new Error(
+      `${reason} Retry, or choose a model that accepts images in Settings. The selected images were not sent.`,
+    );
+  let response: Response;
+  try {
+    response = await fetch("https://openrouter.ai/api/v1/models", { signal });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw unknown("Could not check whether this model accepts images.");
+  }
+  if (!response.ok)
+    throw unknown("Could not check whether this model accepts images.");
+  const catalog = (await response.json().catch(() => null)) as {
+    data?: { id: string; architecture?: { input_modalities?: unknown } }[];
+  } | null;
+  const entry = catalog?.data?.find((entry) => entry.id === model);
+  if (!entry)
+    throw unknown(
+      `${model} is not in OpenRouter's catalog, so its image support is unknown.`,
+    );
+  const modalities = entry.architecture?.input_modalities;
+  if (!Array.isArray(modalities))
+    throw unknown(`OpenRouter does not list the input types ${model} accepts.`);
+  return modalities.includes("image");
+}
+
 /** The model's context window in tokens from OpenRouter's public catalog, if listed. */
 export async function contextWindow(
   model: string,
@@ -265,6 +302,7 @@ export async function runCanvasAgent(
     tools: boolean;
     read: HarnessDeps["read"];
     mcp?: HarnessDeps["mcp"];
+    images?: HarnessDeps["images"];
     apiKey?: string;
     provider?: ProviderConfig;
     budget?: Budget;
@@ -288,6 +326,7 @@ export async function runCanvasAgent(
     tools: options.tools,
     read: options.read,
     mcp: options.mcp,
+    images: options.images,
     budget: options.budget,
     label: provider?.kind === "custom" ? "Provider" : "OpenRouter",
     request: {

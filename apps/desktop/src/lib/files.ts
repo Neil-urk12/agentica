@@ -1,6 +1,15 @@
-import { FILE_LIMITS, type FileMime } from "@agentica/protocol";
+import {
+  FILE_LIMITS,
+  type FileMime,
+  type FileTextStatus,
+} from "@agentica/protocol";
 import { invoke } from "@tauri-apps/api/core";
-import { base64ToBytes, fileKind, toArrayBuffer } from "./file-types";
+import {
+  base64ToBytes,
+  capFileText,
+  fileKind,
+  toArrayBuffer,
+} from "./file-types";
 import { callRuntime, desktopMode } from "./runtime";
 
 export {
@@ -10,6 +19,7 @@ export {
   fileKind,
   fileKindLabel,
   fileMime,
+  fileTextCoverage,
   formatFileSize,
   toArrayBuffer,
   type FileKind,
@@ -75,30 +85,34 @@ export async function openCanvasFile(
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-/** Text shared with the agent and shown by Read; bounded by the protocol. */
+/**
+ * Text shared with the agent and shown by Read, bounded by the protocol, plus
+ * how much of the text layer it covers. Images and legacy DOC have no text
+ * extraction.
+ */
 export async function extractFileText(
   file: File,
   mime: FileMime,
-): Promise<string> {
+): Promise<{ text: string; textStatus: FileTextStatus }> {
   const kind = fileKind(mime);
-  if (kind === "image" || kind === "doc") return "";
+  if (kind === "image" || kind === "doc")
+    return { text: "", textStatus: "unsupported" };
   try {
-    if (kind === "text") {
-      return (await file.text()).slice(0, FILE_LIMITS.text).trim();
-    }
+    if (kind === "text") return capFileText(await file.text());
     if (kind === "pdf") {
-      return (await pdfText(new Uint8Array(await file.arrayBuffer())))
-        .slice(0, FILE_LIMITS.text)
-        .trim();
+      const { text, moreRemains } = await pdfText(
+        new Uint8Array(await file.arrayBuffer()),
+      );
+      return capFileText(text, moreRemains);
     }
     const mammoth = await loadMammoth();
     const result = await mammoth.extractRawText({
       arrayBuffer: await file.arrayBuffer(),
     });
-    return result.value.slice(0, FILE_LIMITS.text).trim();
+    return capFileText(result.value);
   } catch {
     // A preview can still open; extraction must not block the import.
-    return "";
+    return { text: "", textStatus: "failed" };
   }
 }
 
@@ -146,13 +160,17 @@ export async function openPdf(bytes: Uint8Array) {
   return { pdf, destroy: () => task.destroy() };
 }
 
-async function pdfText(bytes: Uint8Array): Promise<string> {
+/** `moreRemains` reports pages left unread once the text cap was reached. */
+async function pdfText(
+  bytes: Uint8Array,
+): Promise<{ text: string; moreRemains: boolean }> {
   const document = await openPdf(bytes);
   const pdf = document.pdf;
   let text = "";
+  let pageNumber = 1;
   try {
     for (
-      let pageNumber = 1;
+      ;
       pageNumber <= pdf.numPages && text.length < FILE_LIMITS.text;
       pageNumber += 1
     ) {
@@ -168,5 +186,5 @@ async function pdfText(bytes: Uint8Array): Promise<string> {
   } finally {
     await document.destroy();
   }
-  return text;
+  return { text, moreRemains: pageNumber <= pdf.numPages };
 }
