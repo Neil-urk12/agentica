@@ -4,6 +4,7 @@
   import { fitTextField, turnStatus } from "../canvas-view";
   import Icon from "./Icon.svelte";
   import Markdown from "./Markdown.svelte";
+  import Select from "./Select.svelte";
 
   interface Props {
     selected?: boolean;
@@ -15,6 +16,8 @@
       error?: string;
       preview?: boolean;
       connectable?: boolean;
+      /** An arrow or task context wire ends at this node. */
+      linked?: boolean;
       editable?: boolean;
       onEdit?: (text: string) => void;
       onResize?: (width: number, height: number) => void;
@@ -58,6 +61,10 @@
           ? "instruction"
           : "text",
   );
+  const turnState = $derived(data.role && turnStatus(data.status, data.role));
+  // A tracked task carries controls, so it gets a card instead of floating text.
+  const todo = $derived(data.preview ? null : (data.task?.task ?? null));
+  // One name for the head, screen reader labels and the edit box.
   const label = $derived(
     kind === "prompt"
       ? "You"
@@ -65,10 +72,18 @@
         ? "Agent"
         : kind === "instruction"
           ? "Instruction note"
-          : "Text",
+          : todo
+            ? todo.done
+              ? "Done task"
+              : "Task"
+            : "Text",
   );
-  const turnState = $derived(data.role && turnStatus(data.status, data.role));
-  const framed = $derived(kind !== "text" || !!data.preview);
+  const framed = $derived(kind !== "text" || !!data.preview || !!todo);
+  // Plain text shows its box unless it is a lone heading (a canvas title);
+  // a wired title is outlined too, so its wires end on a visible edge.
+  const title = $derived(/^ {0,3}#{1,6}[ \t]+\S.*$/.test(data.text.trim()));
+  const outlined = $derived(!framed && (!title || !!data.linked));
+  const stop = (event: KeyboardEvent) => event.stopPropagation();
 
   function edit() {
     if (!data.editable || data.preview) return;
@@ -106,6 +121,9 @@
 <div
   class={`canvas-text canvas-text--${kind}`}
   class:canvas-text--framed={framed}
+  class:canvas-text--task={!!todo}
+  class:canvas-text--outlined={outlined}
+  class:is-done={todo?.done}
   class:preview={data.preview}
   class:handles-hidden={!data.connectable}
 >
@@ -113,9 +131,21 @@
   {#if framed}
     <div class="card-head">
       {#if data.preview}<span class="chip chip--proposal">Proposed</span>{/if}
+      {#if todo && data.task}
+        <input
+          class="task-check nodrag"
+          type="checkbox"
+          aria-label="Done"
+          title={todo.done ? "Mark not done" : "Mark done"}
+          checked={todo.done}
+          disabled={data.task.busy || !data.editable}
+          onkeydown={stop}
+          onchange={(event) => data.task?.onDone(event.currentTarget.checked)}
+        />
+      {/if}
       <span class="card-role">
         {#if kind === "instruction"}<Icon name="sticky_note_2" size={14} />{/if}
-        {label}
+        {todo ? (todo.done ? "Done" : "Task") : label}
       </span>
       {#if turnState}
         <span class={`chip chip--${turnState.tone}`} role="status"
@@ -134,68 +164,84 @@
           <Icon name="open_in_full" size={16} />
         </button>
       {/if}
-    </div>
-  {/if}
-  {#if editing && !data.preview}
-    <textarea
-      bind:this={textarea}
-      class="card-body nodrag nowheel"
-      aria-label={`Edit ${label.toLowerCase()} text`}
-      value={data.text}
-      maxlength={LIMITS.text}
-      readonly={!data.editable}
-      oninput={(event) => data.onEdit?.(fitTextField(event.currentTarget))}
-      onblur={() => (editing = false)}
-      onkeydown={(event) => {
-        event.stopPropagation();
-        if (
-          event.key === "Escape" ||
-          (event.key === "Enter" && (event.ctrlKey || event.metaKey))
-        )
-          editing = false;
-      }}></textarea>
-  {:else if data.preview}
-    <div class="card-body" bind:this={body}>
-      <Markdown source={data.text} />
-    </div>
-  {:else}
-    <div
-      bind:this={body}
-      class="card-body"
-      class:nodrag={framed}
-      role="button"
-      tabindex="0"
-      title="Double-click or press Enter to edit the source text."
-      aria-label={`${label}: ${data.text.slice(0, 160) || "empty"}`}
-      aria-disabled={!data.editable}
-      ondblclick={edit}
-      onkeydown={(event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          event.stopPropagation();
-          edit();
-        }
-      }}
-    >
-      {#if data.text}
-        <Markdown source={data.text} />
-      {:else}
-        <span class="card-placeholder">Double-click to write…</span>
+      {#if todo && data.task}
+        <button
+          class="card-action nodrag"
+          type="button"
+          title="Stop tracking as a task (keeps the text)"
+          aria-label="Remove task"
+          disabled={data.task.busy || !data.editable}
+          onkeydown={stop}
+          onclick={() => data.task?.onMark(false)}
+          ><Icon name="close" size={16} /></button
+        >
       {/if}
     </div>
   {/if}
-  {#if overflowing && !editing}
-    {#if data.preview}
-      <span class="card-more">More · see Proposed text</span>
-    {:else if data.onRead}
-      <button
-        class="card-more nodrag"
-        type="button"
-        onkeydown={(event) => event.stopPropagation()}
-        onclick={data.onRead}>Read more</button
+  <!-- "Read more" overlays the faded bottom instead of taking its own row. -->
+  <div class="card-clip">
+    {#if editing && !data.preview}
+      <textarea
+        bind:this={textarea}
+        class="card-body nodrag nowheel"
+        aria-label={`Edit ${label.toLowerCase()} text`}
+        value={data.text}
+        maxlength={LIMITS.text}
+        readonly={!data.editable}
+        oninput={(event) => data.onEdit?.(fitTextField(event.currentTarget))}
+        onblur={() => (editing = false)}
+        onkeydown={(event) => {
+          event.stopPropagation();
+          if (
+            event.key === "Escape" ||
+            (event.key === "Enter" && (event.ctrlKey || event.metaKey))
+          )
+            editing = false;
+        }}></textarea>
+    {:else if data.preview}
+      <div class="card-body" class:clipped={overflowing} bind:this={body}>
+        <Markdown source={data.text} />
+      </div>
+    {:else}
+      <div
+        bind:this={body}
+        class="card-body"
+        class:clipped={overflowing}
+        class:nodrag={framed && !todo}
+        role="button"
+        tabindex="0"
+        title="Double-click or press Enter to edit the source text."
+        aria-label={`${label}: ${data.text.slice(0, 160) || "empty"}`}
+        aria-disabled={!data.editable}
+        ondblclick={edit}
+        onkeydown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            event.stopPropagation();
+            edit();
+          }
+        }}
       >
+        {#if data.text}
+          <Markdown source={data.text} />
+        {:else}
+          <span class="card-placeholder">Double-click to write…</span>
+        {/if}
+      </div>
     {/if}
-  {/if}
+    {#if overflowing && !editing}
+      {#if data.preview}
+        <span class="card-more">More · see Proposed text</span>
+      {:else if data.onRead}
+        <button
+          class="card-more nodrag"
+          type="button"
+          onkeydown={stop}
+          onclick={data.onRead}>Read more</button
+        >
+      {/if}
+    {/if}
+  </div>
   {#if data.role === "You" && data.status && ["failed", "cancelled", "interrupted"].includes(data.status) && !data.preview}
     {#if data.error}<p class="card-error">{data.error}</p>{/if}
     <button
@@ -214,29 +260,21 @@
         class="task-bar nodrag"
         role="group"
         aria-label="Task"
-        onkeydown={(event) => event.stopPropagation()}
+        onkeydown={stop}
       >
-        <label class="task-done">
-          <input
-            type="checkbox"
-            checked={t.task.done}
-            disabled={t.busy || !data.editable}
-            onchange={(event) => t.onDone(event.currentTarget.checked)}
-          />
-          Done
-        </label>
-        <select
+        <Select
           class="task-assignee"
-          aria-label="Assigned agent tile"
-          value={t.task.assignedTileId ?? ""}
+          label="Assigned agent tile"
+          value={t.assignees.some((a) => a.id === t.task?.assignedTileId)
+            ? (t.task.assignedTileId ?? "")
+            : ""}
+          options={[
+            { value: "", label: "Unassigned" },
+            ...t.assignees.map((a) => ({ value: a.id, label: a.label })),
+          ]}
           disabled={t.busy || !data.editable}
-          onchange={(event) => t.onAssign(event.currentTarget.value || null)}
-        >
-          <option value="">Unassigned</option>
-          {#each t.assignees as assignee (assignee.id)}
-            <option value={assignee.id}>{assignee.label}</option>
-          {/each}
-        </select>
+          onchange={(value) => t.onAssign(value || null)}
+        />
         <button
           class="btn btn--soft task-send"
           type="button"
@@ -244,15 +282,6 @@
           title={t.blocker ||
             "Preview the text, then paste it without pressing Enter"}
           onclick={t.onSend}><Icon name="send" size={14} /> Send</button
-        >
-        <button
-          class="card-action"
-          type="button"
-          title="Stop tracking as a task (keeps the text)"
-          aria-label="Remove task"
-          disabled={t.busy || !data.editable}
-          onclick={() => t.onMark(false)}
-          ><Icon name="close" size={14} /></button
         >
       </div>
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -278,10 +307,15 @@
             >
           </span>
         {/each}
-        <select
+        <Select
           class="task-context-add"
-          aria-label="Add context"
+          label="Add context"
+          placeholder="Add context"
           value=""
+          options={t.contextOptions.map((o) => ({
+            value: o.id,
+            label: o.label,
+          }))}
           disabled={t.busy ||
             !data.editable ||
             t.context.length >= LIMITS.taskContext ||
@@ -289,17 +323,8 @@
           title={t.context.length >= LIMITS.taskContext
             ? `A task can have at most ${LIMITS.taskContext} context items.`
             : "Paste a note or file text after the task text when sending"}
-          onchange={(event) => {
-            const id = event.currentTarget.value;
-            event.currentTarget.value = "";
-            if (id) t.onAddContext(id);
-          }}
-        >
-          <option value="">Add context</option>
-          {#each t.contextOptions as option (option.id)}
-            <option value={option.id}>{option.label}</option>
-          {/each}
-        </select>
+          onchange={(id) => t.onAddContext(id)}
+        />
       </div>
       {#if t.sent || t.edited || t.contextChanged || (t.blocker && t.task.assignedTileId)}
         <p class="task-status" role="status">

@@ -1396,8 +1396,8 @@
     // Layout pixels match canvas units; the label area may be inset within
     // the node, so its growth scales by the area-to-node ratio.
     const ratio = textArtifact ? 1 : content.clientHeight / selected.height;
-    // Overflow is measured with the "Read more" indicator shown; growing by
-    // the full overflow keeps the result stable once the indicator hides.
+    // "Read more" overlays the body rather than taking height, so growing by
+    // the measured overflow fits the text exactly.
     const result = fitTextHeight(
       selected,
       selected.height + Math.max(0, extra / ratio),
@@ -1542,6 +1542,16 @@
             : undefined,
         };
       };
+      // Plain text draws no box, so wired text is outlined for wires to land on.
+      const wired = new Set([
+        ...(document?.edges ?? []).flatMap((edge) => [
+          edge.sourceNodeId,
+          edge.targetNodeId,
+        ]),
+        ...(document?.nodes ?? []).flatMap((node) =>
+          (node.task?.context ?? []).map((item) => item.nodeId),
+        ),
+      ]);
       const asNode = (
         node: NonNullable<typeof document>["nodes"][number],
         artifacts: Map<
@@ -1624,6 +1634,7 @@
             preview,
             editable: editable && !preview,
             connectable: currentTool === "arrow" && !preview,
+            linked: wired.has(node.id),
             role: turn
               ? turn.promptNodeId === node.id
                 ? "You"
@@ -3305,6 +3316,8 @@
               if (tool === "select") selectedId = "";
               if (tool !== "text" || !canEdit || !canvasEl) return;
               const rect = canvasEl.getBoundingClientRect();
+              // One note per pick of the Text tool; further clicks select.
+              selectTool("select");
               void editor.addText({
                 x:
                   (event.clientX - rect.left - viewport.x) / viewport.zoom -

@@ -12,6 +12,69 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Task text nodes as cards (2026-11-01)
+
+- Implemented: a text node tracked as a task now renders as a framed card
+  instead of loose controls on the canvas. The Done checkbox and Remove task
+  action move into the card head; the head reads "Task" or "Done", and a done
+  task strikes through and mutes its text with a green edge bar.
+- The card grows past its saved height instead of letting its controls squeeze
+  the text to zero height, which used to leave a bare "Read more" with no text.
+  At least one line of text always shows.
+- Task cards drag by their text, as plain notes do. Prompt and reply cards
+  keep their text selectable (`nodrag`); a task card inherited that, which
+  left only the thin head strip to drag by. Its controls stay `nodrag`.
+- Fixed: the global `input` rule stretched the Done checkbox, and the task
+  selects' `background` shorthand removed the global select chevron so they
+  looked like text fields. Selects now set `background-color` only.
+- Clipped text fades out at the bottom (never its first line) and "Read more"
+  is a link laid over the faded bottom right instead of a bordered button on
+  its own row. In a short note the row used to take the space of the next
+  line, so a heading plus "Read more" looked like an empty note. Task cards,
+  which often show a single line, keep the link on its own row. The link has
+  a solid backing and no side fade or wide padding, so the focus ring
+  restored after closing the reader hugs the label (Chromium also outlines a
+  button's positioned pseudo-elements, so a side fade there widened the ring
+  and painted over it).
+- Consecutive card head actions now sit together at the end of the head
+  instead of splitting its free space (also fixes file nodes).
+- The task card's assignee and Add context pickers are a themed listbox
+  (`Select.svelte`) instead of native selects. On Linux the desktop web view
+  draws native select popups with the GTK theme, so they ignored the app theme
+  and font. The listbox supports arrow keys, Home/End, Enter/Space, Escape,
+  and closes on outside clicks. A task assigned to a removed agent still shows
+  "Unassigned", as the native select did. Other selects in the app stay native.
+- The Send button wraps below the assignee when the card is too narrow, so the
+  agent name is not truncated to a few characters.
+- Plain text nodes now show a light outline (no head or shadow, lighter than a
+  card), except a node whose whole text is one Markdown heading, which stays
+  bare as a canvas title. Without a box, a clipped note showed only its first
+  line and "Read more" with no sign of its size, and wires, which attach to the
+  node box, ended in empty space below short text. A title with an arrow or
+  task context wire is outlined too, for the same reason.
+- A selected text node shows one 2px ring drawn over its visible box edge.
+  It used to stack the box border, the resize lines and an outline offset 2px
+  outside them, which read as a doubled frame. Resize edges are still draggable
+  but no longer drawn; the corner handles sit on the ring.
+- Fixed: the modal icon, brand mark, primary button shadow, input focus ring
+  and selected default node hard-coded the dark theme's amber, so in the light
+  theme they glowed peach around indigo. They now derive from `--accent`.
+- The reader opens with focus on its content instead of the Close button, so
+  no focus ring shows on open; Tab still reaches the buttons and Escape still
+  closes. Close is an × icon button (titled "Close (Esc)"), leaving Edit
+  source as the one labelled action, and modal head actions are 0.5rem apart
+  instead of 0.25rem.
+- The reader's empty state uses reader text size instead of 13px metadata
+  text, and for editable text says to choose Edit source.
+- The Text tool switches back to Select after placing one note, so further
+  canvas clicks select or deselect instead of adding more empty notes.
+- A task card's screen reader labels (text, edit box, Read action) say "Task"
+  or "Done task", matching its head, instead of "Text".
+- Validated: `pnpm check`, `pnpm lint`, `pnpm test`, and a manual browser
+  check of the open, done, and dark-theme task card states and both pickers.
+  The browser task flow now picks the assignee through the listbox and the
+  label reader closes through the × button; both pass.
+
 ### Structured agent notes and checklist items (2026-11-01)
 
 - Implemented: unordered list items starting with `[ ]`, `[x]`, or `[X]` and a

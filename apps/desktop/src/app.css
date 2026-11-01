@@ -215,7 +215,8 @@ body {
     var(--primary-from) 0%,
     var(--primary-to) 100%
   );
-  box-shadow: 0 10px 22px -12px rgba(245, 158, 11, 0.4);
+  box-shadow: 0 10px 22px -12px
+    color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 .btn--soft {
@@ -320,7 +321,7 @@ select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 textarea {
@@ -456,7 +457,8 @@ label {
     var(--accent) 0%,
     var(--accent-strong) 100%
   );
-  box-shadow: 0 12px 24px -14px rgba(245, 158, 11, 0.5);
+  box-shadow: 0 12px 24px -14px
+    color-mix(in srgb, var(--accent) 50%, transparent);
 }
 
 .modal__titles h1 {
@@ -475,7 +477,7 @@ label {
 .modal__actions {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: 0.5rem;
   margin-left: auto;
 }
 
@@ -1099,7 +1101,8 @@ button.home__brand:disabled {
     var(--accent) 0%,
     var(--accent-strong) 100%
   );
-  box-shadow: 0 10px 20px -12px rgba(245, 158, 11, 0.5);
+  box-shadow: 0 10px 20px -12px
+    color-mix(in srgb, var(--accent) 50%, transparent);
 }
 
 .crumbs {
@@ -2216,19 +2219,39 @@ button.pill:disabled {
 .svelte-flow__node-default.node--selected {
   border-color: var(--accent) !important;
   box-shadow:
-    0 0 0 3px rgba(245, 158, 11, 0.22),
+    0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent),
     var(--shadow-sm) !important;
 }
 
 /* Selection: a solid outline plus resize handles. Focus uses a separate,
    offset dashed outline, and proposals carry a visible "Proposed" label. */
-.svelte-flow__node-text.selected,
-.svelte-flow__node-text.node--selected,
 .svelte-flow__node-drawing.selected,
 .svelte-flow__node-drawing.node--selected {
   border-radius: 8px;
   outline: 2px solid var(--selection);
   outline-offset: 2px;
+}
+
+/* Text: one ring drawn over the visible box edge (which a task card may grow
+   past the node box), instead of border + resize line + offset outline. */
+.svelte-flow__node-text.selected .canvas-text,
+.svelte-flow__node-text.node--selected .canvas-text {
+  border-radius: 10px;
+  outline: 2px solid var(--selection);
+  outline-offset: -1px;
+}
+
+/* Resize edges stay draggable but draw nothing; the ring shows the bounds. */
+.svelte-flow__node-text .svelte-flow__resize-control.line {
+  border-color: transparent;
+}
+
+.svelte-flow__node-text .svelte-flow__resize-control.handle {
+  width: 8px;
+  height: 8px;
+  background: var(--surface);
+  border: 2px solid var(--selection);
+  border-radius: 2px;
 }
 
 .svelte-flow__controls {
@@ -2272,6 +2295,8 @@ button.pill:disabled {
   width: 100%;
   height: 100%;
   padding: 8px;
+  /* Card colour, reused by the "Read more" overlay's fade. */
+  --card-bg: var(--bg);
   color: var(--ink);
   text-align: left;
   font-size: var(--type-body);
@@ -2279,10 +2304,21 @@ button.pill:disabled {
 
 .canvas-text--framed {
   padding: 10px 12px 10px 14px;
-  background: var(--card-reply);
+  --card-bg: var(--card-reply);
+  background: var(--card-bg);
   border: 1px solid var(--card-line);
   border-radius: 10px;
   box-shadow: var(--shadow-sm);
+}
+
+/* Plain text shows its box (hidden text, wire ends) unless it is a title; no
+   head or shadow, so it stays lighter than a card. */
+.canvas-text--outlined {
+  padding: 8px 12px;
+  --card-bg: var(--surface);
+  background: var(--card-bg);
+  border: 1px solid var(--card-line);
+  border-radius: 10px;
 }
 
 /* The bar carries role meaning alongside the text label. */
@@ -2296,7 +2332,8 @@ button.pill:disabled {
 }
 
 .canvas-text--prompt {
-  background: var(--card-prompt);
+  --card-bg: var(--card-prompt);
+  background: var(--card-bg);
 }
 
 .canvas-text--prompt::before {
@@ -2308,7 +2345,8 @@ button.pill:disabled {
 }
 
 .canvas-text--instruction {
-  background: var(--card-note);
+  --card-bg: var(--card-note);
+  background: var(--card-bg);
   border-color: var(--card-note-line);
 }
 
@@ -2398,9 +2436,19 @@ button.pill:disabled {
   cursor: pointer;
 }
 
-.card-action:hover {
+/* Actions cluster at the end of a head instead of splitting its free space. */
+.card-action + .card-action {
+  margin-left: 0;
+}
+
+.card-action:hover:not(:disabled) {
   border-color: var(--line-strong);
   background: var(--surface-soft);
+}
+
+.card-action:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .card-body {
@@ -2454,6 +2502,46 @@ button.card-more {
   cursor: pointer;
 }
 
+/* Body plus its "Read more" link; the link overlays the faded bottom right so
+   the text keeps the full height, even in a short note. */
+.card-clip {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Clipped text fades out, never its first line. */
+.card-body.clipped {
+  mask-image: linear-gradient(
+    to bottom,
+    #000 max(1.5em, calc(100% - 2.25em)),
+    transparent
+  );
+}
+
+.canvas-text button.card-more {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  /* Sits on the faded last line; a solid backing keeps the label legible. */
+  padding: 0 2px 0 6px;
+  line-height: 1.5;
+  color: var(--accent-ink);
+  background: var(--card-bg);
+  border: 0;
+  border-radius: 4px;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+  transition: text-decoration-color 0.16s ease;
+}
+
+.canvas-text button.card-more:hover {
+  text-decoration-color: currentColor;
+}
+
 .card-error {
   margin: 0;
   font-size: var(--type-meta);
@@ -2465,25 +2553,73 @@ button.card-more {
   min-height: 32px;
 }
 
+/* Task card: the frame grows past the saved height rather than letting its
+   controls squeeze the text to nothing; one line of text always shows. */
+.canvas-text--task {
+  height: auto;
+  min-height: 100%;
+}
+
+.canvas-text--task::before {
+  background: var(--accent);
+}
+
+/* A task often shows a single line, which an overlaid link would cover, so
+   here "Read more" keeps its own row below that line. */
+.canvas-text--task .card-clip {
+  flex: 1 1 0px;
+  min-height: auto;
+}
+
+.canvas-text--task .card-body {
+  min-height: 1.5em;
+  /* Task text drags the card like a plain note; Read opens it to copy. */
+  user-select: none;
+}
+
+.canvas-text--task button.card-more {
+  position: static;
+  align-self: flex-start;
+  padding: 0;
+  background: none;
+}
+
+.canvas-text--task.is-done::before {
+  background: var(--ok);
+}
+
+.canvas-text--task.is-done .card-body {
+  color: var(--muted);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent);
+}
+
+.canvas-text--task.is-done .card-role {
+  color: var(--ok);
+}
+
+.task-check {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--ok);
+  cursor: pointer;
+}
+
+.task-check:disabled {
+  cursor: default;
+}
+
 .task-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  padding-top: 6px;
+  padding-top: 8px;
   border-top: 1px solid var(--card-line);
   font-size: var(--type-meta);
-}
-
-.task-done {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--ink);
-}
-
-.task-done input {
-  accent-color: var(--accent);
 }
 
 .task-context {
@@ -2497,10 +2633,21 @@ button.card-more {
 .task-context-chip {
   display: inline-flex;
   align-items: center;
+  gap: 2px;
   max-width: 12rem;
-  padding-left: 6px;
-  border: 1px dashed var(--card-line);
-  border-radius: 6px;
+  min-height: 24px;
+  padding-left: 8px;
+  color: var(--ink-soft);
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.task-context-chip .card-action {
+  width: 22px;
+  height: 22px;
+  margin-left: 0;
+  border-radius: 999px;
 }
 
 .task-context-label {
@@ -2509,17 +2656,109 @@ button.card-more {
   white-space: nowrap;
 }
 
-.task-assignee,
-.task-context-add {
+/* Themed listbox (Select.svelte); the OS draws native select popups. */
+.select {
+  position: relative;
   min-width: 0;
-  max-width: 14rem;
+}
+
+.select__trigger {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
   min-height: 28px;
-  padding: 2px 6px;
+  padding: 2px 4px 2px 8px;
+  font: inherit;
+  text-align: left;
   color: var(--ink);
-  background: var(--surface, transparent);
+  background: var(--surface);
   border: 1px solid var(--card-line);
   border-radius: 6px;
-  font: inherit;
+  cursor: pointer;
+}
+
+.select__trigger:hover:not(:disabled),
+.select.open .select__trigger {
+  border-color: var(--accent);
+}
+
+.select__trigger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.select__value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select__trigger .material-icons {
+  flex: none;
+  color: var(--muted);
+  transition: transform 0.16s ease;
+}
+
+.select.open .select__trigger .material-icons {
+  transform: rotate(180deg);
+}
+
+.select__list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 100%;
+  max-width: 18rem;
+  max-height: 12rem;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow-sm);
+  outline: none;
+}
+
+.select__list li {
+  padding: 5px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.select__list li.active {
+  background: var(--accent-soft);
+}
+
+.select__list li[aria-selected="true"] {
+  font-weight: 600;
+  color: var(--accent-ink);
+}
+
+/* Send drops below the assignee when the card is too narrow for both. */
+.task-assignee {
+  flex: 1 1 10rem;
+}
+
+.task-context-add {
+  max-width: 12rem;
+}
+
+.task-context-add .select__trigger {
+  min-height: 24px;
+  color: var(--ink-soft);
+  background: transparent;
+  border-style: dashed;
+  border-radius: 999px;
 }
 
 .task-send,
@@ -2528,6 +2767,13 @@ button.card-more {
   align-items: center;
   gap: 4px;
   min-height: 28px;
+}
+
+.task-send {
+  flex: none;
+  padding: 0 10px;
+  font-size: var(--type-meta);
+  border-radius: 6px;
 }
 
 .task-mark {
@@ -2541,6 +2787,7 @@ button.card-more {
   gap: 4px;
   margin: 0;
   font-size: var(--type-meta);
+  line-height: 1.4;
   color: var(--muted);
 }
 
@@ -2778,6 +3025,12 @@ span.card-more {
 
 .reader__content:focus {
   outline: none;
+}
+
+/* Same size as reader text, so an empty note does not read as a load error. */
+.reader__empty {
+  margin: 0;
+  color: var(--muted);
 }
 
 .reader__plain {

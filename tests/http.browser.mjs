@@ -1400,7 +1400,7 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
     );
     await clickAt(
       browser,
-      await boxByText(browser, "dialog[open] button", "Close"),
+      await boxOf(browser, `dialog[open] button[aria-label="Close"]`),
     );
     // Change the measured box to exercise the observer independently of rerenders.
     await evaluate(
@@ -1436,7 +1436,7 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
     );
     await clickAt(
       browser,
-      await boxByText(browser, "dialog[open] button", "Close"),
+      await boxOf(browser, `dialog[open] button[aria-label="Close"]`),
     );
     await evaluate(
       browser,
@@ -3108,11 +3108,16 @@ wait
     );
 
     // Assigning draws a wire but never starts the tile.
-    await run(`(() => {
-      const select = document.querySelector('${node} .task-assignee');
-      select.value = ${JSON.stringify(tileId)};
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    })()`);
+    await run(
+      `document.querySelector('${node} .task-assignee .select__trigger').click()`,
+    );
+    const option = `${node} .task-assignee [role="option"][data-value=${JSON.stringify(tileId)}]`;
+    await waitFor(
+      browser,
+      `!!document.querySelector('${option}')`,
+      "the assignee list",
+    );
+    await run(`document.querySelector('${option}').click()`);
     await waitFor(
       browser,
       `!!document.querySelector('.task-wire') && ${status}.includes('not running')`,
@@ -3202,7 +3207,7 @@ wait
     await openApp();
     await waitFor(
       browser,
-      `${status}.includes('Sent') && ${status}.includes('not running') && document.querySelector('${node} .task-assignee')?.value === ${JSON.stringify(tileId)} && !!document.querySelector('.task-wire')`,
+      `${status}.includes('Sent') && ${status}.includes('not running') && document.querySelector('${node} .task-assignee')?.dataset.value === ${JSON.stringify(tileId)} && !!document.querySelector('.task-wire')`,
       "the restored task",
     );
 
@@ -3215,7 +3220,7 @@ wait
     await openApp();
     await waitFor(
       browser,
-      `${status}.includes('to a removed agent') && document.querySelector('${node} .task-assignee')?.value === '' && !document.querySelector('.task-wire')`,
+      `${status}.includes('to a removed agent') && document.querySelector('${node} .task-assignee')?.dataset.value === '' && !document.querySelector('.task-wire')`,
       "the task without its removed agent",
     );
     assert.match(

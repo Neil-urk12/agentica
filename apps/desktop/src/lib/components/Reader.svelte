@@ -4,6 +4,7 @@
   import { fitTextField } from "../canvas-view";
   import Modal from "./Modal.svelte";
   import Markdown from "./Markdown.svelte";
+  import Icon from "./Icon.svelte";
 
   interface Props {
     title: string;
@@ -34,13 +35,15 @@
 
   // Opening mode is chosen once; later busy states only disable the editor.
   let editing = $state(untrack(() => startEditing && !!onEdit));
-  let closeButton = $state<HTMLButtonElement>();
+  let content = $state<HTMLElement>();
   let textarea = $state<HTMLTextAreaElement>();
 
-  // The dialog's own autofocus lands on the first control; move it to the
-  // most useful one once rendered.
+  // The dialog's own autofocus lands on the first control; move it to what
+  // is being read or edited. Focusing the content instead of Close keeps a
+  // focus ring off the buttons on open; Tab still reaches them and Escape
+  // still closes.
   $effect(() => {
-    const target = editing ? textarea : closeButton;
+    const target = editing ? textarea : content;
     requestAnimationFrame(() => target?.focus());
   });
 </script>
@@ -58,10 +61,11 @@
       >
     {/if}
     <button
-      bind:this={closeButton}
-      class="btn btn--ghost"
+      class="icon-btn"
       type="button"
-      onclick={onClose}>Close</button
+      title="Close (Esc)"
+      aria-label="Close"
+      onclick={onClose}><Icon name="close" /></button
     >
   {/snippet}
   {#if editing && onEdit}
@@ -76,12 +80,16 @@
       oninput={(event) => onEdit?.(fitTextField(event.currentTarget))}
     ></textarea>
   {:else}
-    <div class="reader__content" tabindex="-1">
+    <div class="reader__content" tabindex="-1" bind:this={content}>
       {#if notice}
         <p class="reader__notice" role="note">{notice}</p>
       {/if}
       {#if !text.trim()}
-        <p class="muted">This object has no text yet.</p>
+        <p class="reader__empty">
+          {onEdit
+            ? "Nothing written yet. Choose Edit source to add text."
+            : "This object has no text yet."}
+        </p>
       {:else if markdown}
         <Markdown source={text} links />
       {:else}
