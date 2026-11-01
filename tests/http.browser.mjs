@@ -628,10 +628,12 @@ test("the shared workspace and conversation fixtures round-trip over authenticat
       );
       const body = typeof input === "string" ? input : JSON.stringify(input);
       const request = JSON.parse(body);
-      // The frontend schema rejects exactly what the runtime calls invalid.
+      // The frontend schema rejects exactly what the runtime calls invalid,
+      // except checks that need stored state (`runtimeOnly`).
       assert.equal(
         RuntimeRequestSchema.safeParse(request).success,
-        !["INVALID_REQUEST", "INVALID_PARAMS"].includes(step.error),
+        step.runtimeOnly === true ||
+          !["INVALID_REQUEST", "INVALID_PARAMS"].includes(step.error),
         label,
       );
       const reply = await send(port, { body });

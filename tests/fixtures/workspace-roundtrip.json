@@ -1,5 +1,5 @@
 {
-  "description": "Workspace, canvas, text-artifact, link, and view-state round trip shared by the desktop (Rust) and detached HTTP (Node) contract tests. \"$name\" strings are values saved by earlier steps; \"request\" supplies an envelope or a raw JSON string; \"restart\" closes the runtime and starts a new one on the same data directory. Expected objects match a subset of keys; arrays match exactly.",
+  "description": "Workspace, canvas, text-artifact, link, and view-state round trip shared by the desktop (Rust) and detached HTTP (Node) contract tests. \"$name\" strings are values saved by earlier steps; \"request\" supplies an envelope or a raw JSON string; \"restart\" closes the runtime and starts a new one on the same data directory; \"runtimeOnly\" marks an INVALID_PARAMS that depends on stored state (such as a node's type), so the frontend schema accepts the request and only the runtime rejects it. Expected objects match a subset of keys; arrays match exactly.",
   "steps": [
     {
       "method": "canvas.save",
@@ -620,7 +620,8 @@
         "expectedRevision": 2,
         "contextNodeIds": ["$drawingNode"]
       },
-      "error": "INVALID_PARAMS"
+      "error": "INVALID_PARAMS",
+      "runtimeOnly": true
     },
     {
       "method": "task.update",
@@ -631,7 +632,8 @@
         "expectedRevision": 2,
         "contextNodeIds": ["$firstNode"]
       },
-      "error": "INVALID_PARAMS"
+      "error": "INVALID_PARAMS",
+      "runtimeOnly": true
     },
     {
       "method": "task.update",

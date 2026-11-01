@@ -12,6 +12,15 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Contract fixture: stored-state task errors (2026-11-01)
+
+- Fixed: the HTTP contract test failed at `task.update` with a drawing node,
+  or the task itself, as context. It asserted that the frontend schema rejects
+  every `INVALID_PARAMS` request, but those two depend on stored node types
+  and identity, which only the runtime knows. The fixture marks such steps
+  `runtimeOnly`; the Rust contract test ignores the field and still checks
+  the runtime error. The mismatch dated from the task context fixture steps.
+
 ### Task text nodes as cards (2026-11-01)
 
 - Implemented: a text node tracked as a task now renders as a framed card
