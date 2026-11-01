@@ -65,8 +65,7 @@ stored; the Codecov GitHub App must be installed on the repository. A newer push
 to a pull request cancels its running workflow; branch pushes are never
 cancelled. Tag pushes run no checks, so tag only commits that passed CI on
 `main`. On `vX.Y.Z` tags, the [release workflow](../../.github/workflows/release.yml)
-and the [GitLab mirror](../../.gitlab-ci.yml), which runs only on those tags, each
-build installers and publish a release
+builds installers and publishes a release
 ([how to cut one](../running.md#cutting-a-release)).
 
 ## Protocol
