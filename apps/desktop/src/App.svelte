@@ -29,6 +29,7 @@
     type RuntimeParams,
     type SessionStatus,
     type CanvasOperation,
+    type ConversationTurn,
     type TextStyle,
   } from "@agentica/protocol";
   import {
@@ -73,6 +74,7 @@
     fitViewport,
     overlayInsets,
     proposedContent,
+    sessionProposal,
     unionBox,
     usableArea,
     zoomAbout,
@@ -366,6 +368,12 @@
   let reader = $state.raw<ReaderState | null>(null);
   let reviewError = $state("");
   let resolving = $state(false);
+  /** Pending Codex proposals on the open canvas (browser mode only). */
+  let sessionProposals = $state.raw<ConversationTurn[]>([]);
+  /** The Codex proposal previewed on the canvas, by turn ID. */
+  let sessionReview = $state("");
+  let sessionResolving = $state("");
+  let sessionErrors = $state.raw<Record<string, string>>({});
   let fitNotice = $state("");
   let fileInput = $state<HTMLInputElement>();
   let creatingPreview = $state(false);
@@ -1482,6 +1490,60 @@
     };
   }
 
+  async function refreshSessionProposals() {
+    const canvasId = editorState.document?.canvas.id;
+    try {
+      const { turns } = await editor.listSessionProposals();
+      if (editorState.document?.canvas.id === canvasId)
+        sessionProposals = turns;
+    } catch {
+      // Keep the last list; the next poll retries.
+    }
+  }
+
+  // Polling keys on the canvas, not the document, so edits do not restart it.
+  const codexCanvas = $derived(
+    !desktopMode &&
+      connected &&
+      editorState.document?.sessionTiles.some((t) => t.preset === "codex")
+      ? editorState.document.canvas.id
+      : "",
+  );
+  // shortcut: Codex stages out of band, so poll every 2 s while the canvas has
+  // a Codex tile; push an event from the stage call if this shows up as load.
+  $effect(() => {
+    sessionProposals = [];
+    sessionReview = "";
+    if (!codexCanvas) return;
+    untrack(() => void refreshSessionProposals());
+    const timer = setInterval(() => void refreshSessionProposals(), 2000);
+    return () => clearInterval(timer);
+  });
+
+  async function resolveSession(
+    turn: ConversationTurn,
+    action: "apply" | "discard",
+  ) {
+    if (sessionResolving) return;
+    sessionResolving = turn.id;
+    sessionErrors = { ...sessionErrors, [turn.id]: "" };
+    try {
+      await editor.resolveConversation(turn.id, action);
+      await refreshSessionProposals();
+    } finally {
+      sessionResolving = "";
+    }
+    // The runtime keeps the proposal pending when resolution fails.
+    if (sessionProposals.some((t) => t.id === turn.id))
+      sessionErrors = {
+        ...sessionErrors,
+        [turn.id]:
+          editorState.error ||
+          `The proposal could not be ${action === "apply" ? "applied" : "discarded"}.`,
+      };
+    else if (sessionReview === turn.id) sessionReview = "";
+  }
+
   async function resolvePending(action: "apply" | "discard") {
     const turn = pendingTurn;
     if (!turn || resolving) return;
@@ -1545,6 +1607,10 @@
     const currentTool = tool;
     const editable = connected && !editorState.busy;
     const turns = editorState.turns;
+    const proposals = sessionProposals;
+    const reviewing = sessionReview;
+    const proposalBusy = !!sessionResolving;
+    const proposalErrors = sessionErrors;
     const revision = sessionRevision;
     const pastingNow = pasting;
     // Tracked so collapsing or expanding a group rerenders these nodes.
@@ -1938,6 +2004,7 @@
             });
             continue;
           }
+          const proposal = sessionProposal(proposals, tile.id, desktopMode);
           rendered.push({
             ...renderedById.get(tile.id),
             id: tile.id,
@@ -1964,6 +2031,21 @@
               onRemove: () => void removeObject(tile.id),
               onRefresh: () =>
                 void sessions.reconcile(workspaceId, document, true),
+              proposal: proposal && {
+                count: proposal.operations.length,
+                previewing: proposal.id === reviewing,
+                busy: proposalBusy || !editable,
+                error: proposalErrors[proposal.id] ?? "",
+                onPreview: async () => {
+                  sessionReview = proposal.id === reviewing ? "" : proposal.id;
+                  if (sessionReview) {
+                    await tick();
+                    await showChanges();
+                  }
+                },
+                onApply: () => void resolveSession(proposal, "apply"),
+                onDiscard: () => void resolveSession(proposal, "discard"),
+              },
               onResize: (width: number, height: number) =>
                 editor.placeSessionTile(tile.id, { width, height }),
             },
@@ -2018,7 +2100,10 @@
           })),
         ),
       ];
-      const pending = turns.find((t) => t.status === "pending");
+      // A Codex proposal the user chose to preview replaces the chat preview.
+      const pending =
+        proposals.find((t) => t.id === reviewing) ??
+        turns.find((t) => t.status === "pending");
       if (document && pending) {
         try {
           const staged = stageOperations(document, pending.operations);

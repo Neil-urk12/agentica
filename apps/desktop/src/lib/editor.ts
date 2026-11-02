@@ -1580,6 +1580,17 @@ export class Editor {
     });
   }
 
+  /** Pending Codex proposals on this canvas; reading them never changes it. */
+  listSessionProposals() {
+    const canvasId = this.state.document?.canvas.id;
+    const workspaceId = this.state.workspace?.workspace.id;
+    if (!canvasId || !workspaceId) return Promise.resolve({ turns: [] });
+    return this.call(this.key(), false, "conversation.sessionProposals", {
+      workspaceId,
+      canvasId,
+    });
+  }
+
   /** Show one chat in the panel; null starts a new chat with the next prompt. */
   async openChat(chatId: string | null) {
     await this.enqueue(async () => {

@@ -338,6 +338,19 @@ export function fitTextHeight(
   return { ok: true, height };
 }
 
+/**
+ * The Codex proposal a session tile shows. Only browser mode offers the canvas
+ * endpoint, so the desktop app never shows one, even from a shared data folder.
+ */
+export function sessionProposal<
+  T extends { status: string; sessionTileId: string | null },
+>(turns: readonly T[], tileId: string, desktop: boolean): T | undefined {
+  if (desktop) return undefined;
+  return turns.find(
+    (turn) => turn.status === "pending" && turn.sessionTileId === tileId,
+  );
+}
+
 /** Read-only text carried by a pending proposal, for the review disclosure. */
 export type ProposedContent = { title: string; text: string };
 

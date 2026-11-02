@@ -33,6 +33,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("schema_v16.sql"),
     include_str!("schema_v17.sql"),
     include_str!("schema_v18.sql"),
+    include_str!("schema_v19.sql"),
 ];
 pub const STORAGE_VERSION: i64 = MIGRATIONS.len() as i64;
 
@@ -1306,6 +1307,44 @@ mod tests {
             .query_row("SELECT count(*) FROM conversation_read", [], |r| r.get(0))
             .unwrap();
         assert_eq!(reads, 0);
+    }
+
+    #[test]
+    fn session_turn_migration_locks_chat_and_each_tile_separately() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut conn = connect(&temp.path().join("db"), true).unwrap();
+        let tx = conn.transaction().unwrap();
+        migrate(&tx, 0, &MIGRATIONS[..18]).unwrap();
+        tx.execute_batch(
+            "INSERT INTO workspace (id, name) VALUES ('w', 'Existing');
+            INSERT INTO canvas VALUES ('c', 'Canvas', 9, 0, 0, 1);
+            INSERT INTO conversation_turn (id, canvas_id, model, prompt, anchor, context, status, chat_id)
+                VALUES ('chat', 'c', 'm', 'Prompt', '{}', '{}', 'pending', 'chat');",
+        )
+        .unwrap();
+        migrate(&tx, 18, MIGRATIONS).unwrap();
+        tx.commit().unwrap();
+        let tile: Option<String> = conn
+            .query_row(
+                "SELECT session_tile_id FROM conversation_turn WHERE id = 'chat'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tile, None);
+        let session = "INSERT INTO conversation_turn (id, canvas_id, model, prompt, anchor, context, status, chat_id, session_tile_id)
+                       VALUES (?1, 'c', 'codex', '', '{}', '{}', 'pending', ?1, ?2)";
+        // A pending session proposal coexists with the pending chat turn.
+        conn.execute(session, ("first", "tile-a")).unwrap();
+        conn.execute(session, ("other", "tile-b")).unwrap();
+        assert!(conn.execute(session, ("second", "tile-a")).is_err());
+        assert!(conn
+            .execute(
+                "INSERT INTO conversation_turn (id, canvas_id, model, prompt, anchor, context, status)
+                 VALUES ('again', 'c', 'm', 'Next', '{}', '{}', 'generating')",
+                [],
+            )
+            .is_err());
     }
 
     fn turn_ids(conn: &Connection) -> Vec<(i64, String)> {

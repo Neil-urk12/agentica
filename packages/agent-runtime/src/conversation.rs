@@ -74,6 +74,17 @@ struct Chats {
     canvas_id: String,
 }
 
+/// A Codex session's scope, from its token: never client-supplied over `/rpc`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Tile {
+    workspace_id: String,
+    canvas_id: String,
+    tile_id: String,
+    #[serde(default)]
+    operations: Vec<Value>,
+}
+
 // shortcut: the chat list returns the most recent chats only; add a cursor when
 // a canvas outgrows it (older chats stay saved and reachable through the API).
 const CHAT_LIST: i64 = 100;
@@ -149,6 +160,128 @@ fn agent_visible(state: &Value, node: &Value) -> bool {
             artifact["id"] == node["artifactId"] && artifact["type"] != "web-preview"
         })
     })
+}
+
+/// Agent-visible nodes that `keep` accepts, their artifacts, and the edges between them.
+fn scoped_context(state: &Value, keep: impl Fn(&Value) -> bool) -> Value {
+    let nodes: Vec<_> = state["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|n| agent_visible(state, n) && keep(n))
+        .cloned()
+        .map(model_node)
+        .collect();
+    let artifacts: Vec<_> = state["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|a| nodes.iter().any(|n| n["artifactId"] == a["id"]))
+        .cloned()
+        .collect();
+    let edges: Vec<_> = state["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| {
+            nodes.iter().any(|n| n["id"] == e["sourceNodeId"])
+                && nodes.iter().any(|n| n["id"] == e["targetNodeId"])
+        })
+        .cloned()
+        .collect();
+    json!({"nodes": nodes, "artifacts": artifacts, "edges": edges})
+}
+
+/// A Codex tile's read and write scope. Tiles are not canvas nodes, so the link
+/// is task assignment: notes whose task names the tile, plus each task's context
+/// nodes. Legacy conversation cards are never in scope.
+fn tile_context(tx: &Transaction, canvas_id: &str, tile_id: &str) -> Result<Value, RuntimeError> {
+    let codex: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM session_tile WHERE id = ?1 AND canvas_id = ?2 AND preset = 'codex')",
+        (tile_id, canvas_id),
+        |r| r.get(0),
+    )?;
+    if !codex {
+        return Err(RuntimeError::new(
+            "SCOPE_DENIED",
+            "This Codex tile is no longer on its canvas.",
+        ));
+    }
+    let mut stmt = tx.prepare(
+        "SELECT n.id FROM canvas_node n JOIN text_task t ON t.artifact_id = n.artifact_id
+           WHERE n.canvas_id = ?1 AND t.assigned_tile_id = ?2
+         UNION SELECT c.node_id FROM task_context c JOIN text_task t ON t.artifact_id = c.artifact_id
+           WHERE c.canvas_id = ?1 AND t.assigned_tile_id = ?2
+         EXCEPT SELECT prompt_node_id FROM conversation_turn WHERE canvas_id = ?1 AND prompt_node_id IS NOT NULL
+         EXCEPT SELECT reply_node_id FROM conversation_turn WHERE canvas_id = ?1 AND reply_node_id IS NOT NULL",
+    )?;
+    let ids = stmt
+        .query_map((canvas_id, tile_id), |r| r.get::<_, String>(0))?
+        .collect::<Result<HashSet<_>, _>>()?;
+    let context = scoped_context(&canvas_state(tx, canvas_id)?, |n| {
+        ids.contains(n["id"].as_str().unwrap())
+    });
+    if context["nodes"].as_array().unwrap().is_empty() {
+        return Err(RuntimeError::new(
+            "SCOPE_DENIED",
+            "No canvas objects are linked to this Codex tile. Ask the user to assign a task note to this tile on the canvas.",
+        ));
+    }
+    if context.to_string().len() > crate::MAX_FRAME_BYTES {
+        return Err(invalid(
+            "The objects linked to this Codex tile exceed 16 KiB. Ask the user to link fewer objects.",
+        ));
+    }
+    Ok(context)
+}
+
+/// Mint identities for a session batch. A create's `nodeId` is an optional
+/// placeholder that later operations in the same batch may reference.
+fn mint(mut operations: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
+    let mut placeholders = std::collections::HashMap::new();
+    for operation in &mut operations {
+        // Anything else fails `apply_operations` parsing with its usual message.
+        let Some(object) = operation.as_object_mut() else {
+            continue;
+        };
+        match object.get("op").and_then(Value::as_str) {
+            Some("createText" | "createShape") => {
+                let node_id = new_id()?;
+                if let Some(Value::String(placeholder)) = object.get("nodeId") {
+                    placeholders.insert(placeholder.clone(), node_id.clone());
+                }
+                object.insert("nodeId".into(), json!(node_id));
+                object.insert("artifactId".into(), json!(new_id()?));
+            }
+            Some("connect") => {
+                object.insert("edgeId".into(), json!(new_id()?));
+            }
+            _ => {}
+        }
+        for key in ["nodeId", "sourceNodeId", "targetNodeId"] {
+            if let Some(minted) = object
+                .get(key)
+                .and_then(Value::as_str)
+                .and_then(|value| placeholders.get(value))
+            {
+                object.insert(key.into(), json!(minted));
+            }
+        }
+    }
+    Ok(operations)
+}
+
+/// Check a proposal against the saved canvas, then roll every change back.
+fn validate(
+    tx: &Transaction,
+    canvas_id: &str,
+    context: &Value,
+    operations: &[Value],
+) -> Result<(), RuntimeError> {
+    tx.execute_batch("SAVEPOINT proposal_validation")?;
+    let validated = apply_operations(tx, canvas_id, context, operations);
+    tx.execute_batch("ROLLBACK TO proposal_validation; RELEASE proposal_validation")?;
+    validated
 }
 
 /// Canvas map for the model: write scope first, then nearest the stored anchor.
@@ -288,7 +421,7 @@ fn json(raw: &str) -> Result<Value, RuntimeError> {
 
 fn turn(tx: &Transaction, canvas_id: &str, turn_id: &str) -> Result<Value, RuntimeError> {
     tx.query_row(
-        "SELECT id, sequence, model, prompt, reply, prompt_node_id, reply_node_id, anchor, status, operations, error, chat_id
+        "SELECT id, sequence, model, prompt, reply, prompt_node_id, reply_node_id, anchor, status, operations, error, chat_id, session_tile_id
          FROM conversation_turn WHERE canvas_id = ?1 AND id = ?2",
         (canvas_id, turn_id), |r| Ok(json!({
             "id": r.get::<_, String>(0)?, "sequence": r.get::<_, i64>(1)?,
@@ -296,7 +429,7 @@ fn turn(tx: &Transaction, canvas_id: &str, turn_id: &str) -> Result<Value, Runti
             "reply": r.get::<_, String>(4)?, "promptNodeId": r.get::<_, Option<String>>(5)?,
             "replyNodeId": r.get::<_, Option<String>>(6)?, "anchor": r.get::<_, String>(7)?,
             "status": r.get::<_, String>(8)?, "operations": r.get::<_, String>(9)?, "error": r.get::<_, String>(10)?,
-            "chatId": r.get::<_, String>(11)?
+            "chatId": r.get::<_, String>(11)?, "sessionTileId": r.get::<_, Option<String>>(12)?
         })))
         .optional()?.ok_or_else(|| not_found("Conversation turn"))
         .and_then(|mut t| {
@@ -312,7 +445,7 @@ fn history(
     before: i64,
     chat_id: Option<&str>,
 ) -> Result<Vec<Value>, RuntimeError> {
-    let mut stmt = tx.prepare("SELECT id FROM conversation_turn WHERE canvas_id = ?1 AND (?2 = 0 OR sequence < ?2) AND (?3 IS NULL OR chat_id = ?3) ORDER BY sequence DESC LIMIT 8")?;
+    let mut stmt = tx.prepare("SELECT id FROM conversation_turn WHERE canvas_id = ?1 AND session_tile_id IS NULL AND (?2 = 0 OR sequence < ?2) AND (?3 IS NULL OR chat_id = ?3) ORDER BY sequence DESC LIMIT 8")?;
     let ids = stmt
         .query_map((canvas_id, before, chat_id), |r| r.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
@@ -646,7 +779,7 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                     "This turn already exists. Reload the conversation instead of resending.",
                 ));
             }
-            let active: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_turn WHERE canvas_id = ?1 AND status IN ('generating','pending'))", [&p.canvas_id], |r| r.get(0))?;
+            let active: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_turn WHERE canvas_id = ?1 AND session_tile_id IS NULL AND status IN ('generating','pending'))", [&p.canvas_id], |r| r.get(0))?;
             if active {
                 return Err(RuntimeError::new("CONFLICT", "Resolve the current proposal or interrupt the active turn before sending another prompt."));
             }
@@ -668,37 +801,10 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
             }) {
                 return Err(not_found("Selected object"));
             }
-            let nodes: Vec<_> = state["nodes"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|n| agent_visible(&state, n))
-                .filter(|n| {
-                    (p.node_ids.is_empty()
-                        && !matches!(p.context_mode, Some(ContextMode::Selection)))
-                        || p.node_ids.iter().any(|id| n["id"] == *id)
-                })
-                .cloned()
-                .map(model_node)
-                .collect();
-            let artifacts: Vec<_> = state["artifacts"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|a| nodes.iter().any(|n| n["artifactId"] == a["id"]))
-                .cloned()
-                .collect();
-            let edges: Vec<_> = state["edges"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|e| {
-                    nodes.iter().any(|n| n["id"] == e["sourceNodeId"])
-                        && nodes.iter().any(|n| n["id"] == e["targetNodeId"])
-                })
-                .cloned()
-                .collect();
-            let context = json!({"nodes": nodes, "artifacts": artifacts, "edges": edges});
+            let context = scoped_context(&state, |n| {
+                (p.node_ids.is_empty() && !matches!(p.context_mode, Some(ContextMode::Selection)))
+                    || p.node_ids.iter().any(|id| n["id"] == *id)
+            });
             if context.to_string().len() > crate::MAX_FRAME_BYTES {
                 return Err(invalid(
                     "Canvas context exceeds 16 KiB. Select a smaller set of objects.",
@@ -713,7 +819,7 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
             } else if let Some(chat_id) = &p.chat_id {
                 id("chatId", chat_id)?;
                 let known: bool = tx.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM conversation_turn WHERE canvas_id = ?1 AND chat_id = ?2)",
+                    "SELECT EXISTS(SELECT 1 FROM conversation_turn WHERE canvas_id = ?1 AND chat_id = ?2 AND session_tile_id IS NULL)",
                     (&p.canvas_id, chat_id),
                     |r| r.get(0),
                 )?;
@@ -723,7 +829,7 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                 chat_id.clone()
             } else {
                 tx.query_row(
-                    "SELECT chat_id FROM conversation_turn WHERE canvas_id = ?1 ORDER BY sequence DESC LIMIT 1",
+                    "SELECT chat_id FROM conversation_turn WHERE canvas_id = ?1 AND session_tile_id IS NULL ORDER BY sequence DESC LIMIT 1",
                     [&p.canvas_id],
                     |r| r.get(0),
                 )
@@ -765,40 +871,14 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                 ));
             }
             let state = canvas_state(tx, &p.canvas_id)?;
-            let nodes: Vec<_> = state["nodes"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|n| agent_visible(&state, n))
-                .filter(|n| p.node_ids.iter().any(|id| n["id"] == *id))
-                .cloned()
-                .map(model_node)
-                .collect();
+            let body = scoped_context(&state, |n| p.node_ids.iter().any(|id| n["id"] == *id));
             // One message for missing and foreign IDs, so reads cannot probe other canvases.
-            if nodes.len() != p.node_ids.len() {
+            if body["nodes"].as_array().unwrap().len() != p.node_ids.len() {
                 return Err(RuntimeError::new(
                     "SCOPE_DENIED",
                     "Reads are limited to objects on this turn's canvas.",
                 ));
             }
-            let artifacts: Vec<_> = state["artifacts"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|a| nodes.iter().any(|n| n["artifactId"] == a["id"]))
-                .cloned()
-                .collect();
-            let edges: Vec<_> = state["edges"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|e| {
-                    nodes.iter().any(|n| n["id"] == e["sourceNodeId"])
-                        && nodes.iter().any(|n| n["id"] == e["targetNodeId"])
-                })
-                .cloned()
-                .collect();
-            let body = json!({"nodes": nodes, "edges": edges, "artifacts": artifacts});
             let bytes = body.to_string().len() as i64;
             let (calls, used): (i64, i64) = tx.query_row(
                 "SELECT count(*), coalesce(sum(bytes), 0) FROM conversation_read WHERE turn_id = ?1",
@@ -878,10 +958,7 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                     [&p.turn_id],
                     |r| r.get(0),
                 )?;
-                tx.execute_batch("SAVEPOINT proposal_validation")?;
-                let validated = apply_operations(tx, &p.canvas_id, &json(&context)?, &p.operations);
-                tx.execute_batch("ROLLBACK TO proposal_validation; RELEASE proposal_validation")?;
-                validated?;
+                validate(tx, &p.canvas_id, &json(&context)?, &p.operations)?;
             }
             let status = if p.status == "complete" && !p.operations.is_empty() {
                 "pending"
@@ -955,7 +1032,7 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
             id("workspaceId", &p.workspace_id)?;
             let mut stmt = tx.prepare(
                 "SELECT t.chat_id, (SELECT s.prompt FROM conversation_turn AS s WHERE s.id = t.chat_id), count(*), max(t.sequence)
-                 FROM conversation_turn AS t WHERE t.canvas_id = ?1
+                 FROM conversation_turn AS t WHERE t.canvas_id = ?1 AND t.session_tile_id IS NULL
                  GROUP BY t.chat_id ORDER BY max(t.sequence) DESC LIMIT ?2",
             )?;
             let chats = stmt
@@ -969,6 +1046,59 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(json!({ "chats": chats }))
+        }
+        "conversation.sessionProposals" => {
+            let p: Chats = parse(params)?;
+            id("workspaceId", &p.workspace_id)?;
+            // At most one per existing session tile, so this is bounded by the
+            // canvas's tiles; a removed tile's proposal stays stored but unlisted.
+            let mut stmt = tx.prepare(
+                "SELECT id FROM conversation_turn WHERE canvas_id = ?1 AND status = 'pending'
+                 AND session_tile_id IN (SELECT id FROM session_tile WHERE canvas_id = ?1)
+                 ORDER BY sequence",
+            )?;
+            let ids = stmt
+                .query_map([&p.canvas_id], |r| r.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            let turns = ids
+                .iter()
+                .map(|id| turn(tx, &p.canvas_id, id))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(json!({ "turns": turns }))
+        }
+        // Internal: only the canvas MCP endpoint reaches these, with a token's owner.
+        "conversation.tile" | "conversation.stage" => {
+            let p: Tile = parse(params)?;
+            id("workspaceId", &p.workspace_id)?;
+            id("tileId", &p.tile_id)?;
+            if method == "conversation.tile" {
+                return Ok(json!({ "context": tile_context(tx, &p.canvas_id, &p.tile_id)? }));
+            }
+            let pending: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM conversation_turn WHERE session_tile_id = ?1 AND status = 'pending')",
+                [&p.tile_id],
+                |r| r.get(0),
+            )?;
+            if pending {
+                return Err(RuntimeError::new(
+                    "CONFLICT",
+                    "A proposal is pending review. Wait until the user applies or discards it, then call canvas_edit again.",
+                ));
+            }
+            if p.operations.is_empty() || p.operations.len() > 32 {
+                return Err(invalid("Send 1–32 operations."));
+            }
+            let context = tile_context(tx, &p.canvas_id, &p.tile_id)?;
+            let operations = mint(p.operations)?;
+            validate(tx, &p.canvas_id, &context, &operations)?;
+            let turn_id = new_id()?;
+            // Session turns have no prompt or chat; chat_id names the turn so the column stays set.
+            tx.execute(
+                "INSERT INTO conversation_turn(id, canvas_id, model, prompt, anchor, context, status, operations, chat_id, session_tile_id)
+                 VALUES (?1, ?2, 'codex', '', '{\"x\":0,\"y\":0}', ?3, 'pending', ?4, ?1, ?5)",
+                (&turn_id, &p.canvas_id, context.to_string(), json!(operations).to_string(), &p.tile_id),
+            )?;
+            Ok(json!({ "turn": turn(tx, &p.canvas_id, &turn_id)? }))
         }
         _ => unreachable!(),
     }

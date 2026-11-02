@@ -18,7 +18,7 @@ pub struct SessionCapabilities {
     pub agents: Vec<AgentCapability>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct LaunchSpec {
     pub(crate) owner: SessionOwner,
     pub(crate) project_id: String,
@@ -26,7 +26,27 @@ pub struct LaunchSpec {
     pub(crate) argv: Vec<String>,
     pub(crate) directory: PathBuf,
     pub(crate) fallback: bool,
+    /// Canvas MCP token, passed only through the child environment.
+    pub(crate) token: Option<String>,
 }
+
+// Hand-written so a log line or panic message never prints the token.
+impl std::fmt::Debug for LaunchSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LaunchSpec")
+            .field("owner", &self.owner)
+            .field("project_id", &self.project_id)
+            .field("executable", &self.executable)
+            .field("argv", &self.argv)
+            .field("directory", &self.directory)
+            .field("fallback", &self.fallback)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
+/// Environment variable Codex reads its canvas MCP bearer token from.
+pub(crate) const TOKEN_VARIABLE: &str = "AGENTICA_MCP_TOKEN";
 
 #[cfg(target_os = "linux")]
 pub(super) fn executable(path: &std::path::Path) -> bool {
@@ -168,8 +188,10 @@ impl LaunchSpec {
         kind: &str,
         preset: Option<&str>,
         data_root: Option<&std::path::Path>,
+        canvas_url: Option<&str>,
     ) -> Result<Self, RuntimeError> {
         owner.validate()?;
+        let mut token = None;
         let directory = PathBuf::from(root);
         let canonical = directory.canonicalize().map_err(|_| {
             RuntimeError::new(
@@ -198,7 +220,25 @@ impl LaunchSpec {
                 let argv = vec!["-i".into()];
                 (shell_capability(), argv)
             }
-            ("cli-agent", Some(preset)) => agents::resolve(preset, data_root)?,
+            ("cli-agent", Some(preset)) => {
+                let (capability, mut argv) = agents::resolve(preset, data_root)?;
+                // Per-process config only: the user's ~/.codex/config.toml is never written.
+                if let (Some(url), "codex") = (canvas_url, preset) {
+                    let mut random = [0_u8; 32];
+                    getrandom::fill(&mut random)
+                        .map_err(|error| std::io::Error::other(error.to_string()))?;
+                    token = Some(random.iter().map(|byte| format!("{byte:02x}")).collect());
+                    // Unquoted: Codex reads non-TOML values as strings, and quotes
+                    // would not survive cmd.exe for Windows batch launchers.
+                    argv.extend([
+                        "-c".into(),
+                        format!("mcp_servers.agentica.url={url}"),
+                        "-c".into(),
+                        format!("mcp_servers.agentica.bearer_token_env_var={TOKEN_VARIABLE}"),
+                    ]);
+                }
+                (capability, argv)
+            }
             _ => {
                 return Err(RuntimeError::new(
                     "INVALID_PARAMS",
@@ -228,6 +268,7 @@ impl LaunchSpec {
             argv,
             directory,
             fallback: capability.fallback,
+            token,
         })
     }
 }
@@ -249,6 +290,7 @@ mod tests {
             "shell",
             None,
             None,
+            None,
         )
         .unwrap();
         assert_eq!(spec.directory, root);
@@ -265,6 +307,7 @@ mod tests {
             new_id().unwrap(),
             "relative",
             "shell",
+            None,
             None,
             None
         )
@@ -287,11 +330,19 @@ mod tests {
                 "cli-agent",
                 Some(&preset),
                 data_root,
+                Some("http://127.0.0.1:1421/mcp"),
             )
         };
+        // Only Codex gets the canvas endpoint, even when the backend offers it.
         let spec = custom(Some(data.path())).unwrap();
         assert_eq!(spec.executable, PathBuf::from("/bin/sh"));
         assert_eq!(spec.argv, ["-c", "; $(no-command)"]);
+        assert_eq!(spec.token, None);
+        let secret = LaunchSpec {
+            token: Some("canvas-secret".into()),
+            ..spec
+        };
+        assert!(!format!("{secret:?}").contains("canvas-secret"));
         // Another machine without the definition cannot start it.
         let other = tempfile::tempdir().unwrap();
         assert_eq!(
@@ -304,6 +355,7 @@ mod tests {
             new_id().unwrap(),
             root.to_str().unwrap(),
             "shell",
+            None,
             None,
             None
         )

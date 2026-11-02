@@ -16,6 +16,8 @@ use tokio::{net::TcpListener, sync::Mutex, time::Instant};
 
 use crate::sessions::{wire::MAX_SESSION_CONNECTIONS, SessionService};
 use crate::{Runtime, MAX_FRAME_BYTES};
+#[path = "canvas_mcp.rs"]
+mod canvas_mcp;
 #[path = "session_ws.rs"]
 mod session_ws;
 
@@ -68,6 +70,16 @@ async fn dispatch(State(state): State<Arc<HttpState>>, request: Request) -> Resp
     };
     let mut response = if !local_host {
         reject(StatusCode::FORBIDDEN, "Use the local Agentica frontend.")
+    } else if request.uri().path() == "/mcp" {
+        // Only the Codex process calls this; any browser sends an Origin.
+        if request.headers().contains_key("origin") {
+            reject(
+                StatusCode::FORBIDDEN,
+                "The canvas endpoint is not for browsers.",
+            )
+        } else {
+            canvas_mcp::serve(state, request).await
+        }
     } else if request.uri().path() != "/rpc"
         && (local_origin || !request.headers().contains_key("origin"))
     {
@@ -128,6 +140,25 @@ fn serve_frontend(request: Request) -> Response {
     reject(StatusCode::NOT_FOUND, "Unknown endpoint.")
 }
 
+/// The request body, at most one frame, read before the deadline.
+async fn body(request: Request, deadline: Instant) -> Result<axum::body::Bytes, Response> {
+    match tokio::time::timeout_at(deadline, to_bytes(request.into_body(), MAX_FRAME_BYTES)).await {
+        Ok(Ok(bytes)) => Ok(bytes),
+        Ok(Err(error))
+            if error
+                .source()
+                .is_some_and(|source| source.is::<http_body_util::LengthLimitError>()) =>
+        {
+            Err(reject(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "Requests must fit in 16 KiB.",
+            ))
+        }
+        Ok(Err(_)) => Err(reject(StatusCode::BAD_REQUEST, "Cannot read request body.")),
+        Err(_) => Err(reject(StatusCode::REQUEST_TIMEOUT, "Request timed out.")),
+    }
+}
+
 async fn dispatch_local(state: Arc<HttpState>, request: Request) -> Response {
     let deadline = Instant::now() + REQUEST_TIMEOUT;
     if request.uri().path_and_query().map(|path| path.as_str()) != Some("/rpc") {
@@ -183,24 +214,10 @@ async fn dispatch_local(state: Arc<HttpState>, request: Request) -> Response {
     if single_header(request.headers(), "content-type") != Some("application/json") {
         return reject(StatusCode::UNSUPPORTED_MEDIA_TYPE, "Use application/json.");
     }
-    let bytes =
-        match tokio::time::timeout_at(deadline, to_bytes(request.into_body(), MAX_FRAME_BYTES))
-            .await
-        {
-            Ok(Ok(bytes)) => bytes,
-            Ok(Err(error))
-                if error
-                    .source()
-                    .is_some_and(|source| source.is::<http_body_util::LengthLimitError>()) =>
-            {
-                return reject(
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    "Requests must fit in 16 KiB.",
-                );
-            }
-            Ok(Err(_)) => return reject(StatusCode::BAD_REQUEST, "Cannot read request body."),
-            Err(_) => return reject(StatusCode::REQUEST_TIMEOUT, "Request timed out."),
-        };
+    let bytes = match body(request, deadline).await {
+        Ok(bytes) => bytes,
+        Err(response) => return response,
+    };
     let route = crate::route(&bytes);
     // Read-only Git never waits for, or blocks, the workspace writer.
     if route == crate::Route::Changes {
@@ -288,6 +305,11 @@ pub async fn serve_with_services(
         FRONTEND_ORIGIN.to_owned(),
         format!("http://127.0.0.1:{}", listener.local_addr()?.port()),
     ]);
+    // The actual bound port, so Codex reaches this listener wherever it binds.
+    sessions.serve_canvas(format!(
+        "http://127.0.0.1:{}/mcp",
+        listener.local_addr()?.port()
+    ));
     let app = Router::new()
         .route("/sessions", session_ws::route())
         .fallback(dispatch)

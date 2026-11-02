@@ -125,6 +125,7 @@ pub(crate) const METHODS: &[&str] = &[
     "conversation.read",
     "conversation.list",
     "conversation.chats",
+    "conversation.sessionProposals",
     "artifact.applyBatch",
     "agent.capabilities",
     "agent.start",
@@ -805,6 +806,24 @@ impl Runtime {
         self.call(method, params)
     }
 
+    /// Canvas MCP side of a Codex session. Not reachable over RPC: `METHODS` omits
+    /// these, and the caller supplies the owner its session token is bound to.
+    pub fn canvas_internal(
+        &mut self,
+        method: &str,
+        owner: &crate::sessions::SessionOwner,
+        operations: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !matches!(method, "conversation.tile" | "conversation.stage") {
+            return Err(invalid("Not a canvas session method."));
+        }
+        self.call(
+            method,
+            json!({"workspaceId": owner.workspace_id, "canvasId": owner.canvas_id,
+                "tileId": owner.tile_id, "operations": operations}),
+        )
+    }
+
     /// Name, extension, and copied bytes for the desktop's open-with-system-app
     /// action. Read-only and limited to a file artifact in the currently open
     /// workspace. The extension comes from the stored type, never the name: a
@@ -875,7 +894,10 @@ impl Runtime {
             | "conversation.resolve"
             | "conversation.read"
             | "conversation.list"
-            | "conversation.chats" => {
+            | "conversation.chats"
+            | "conversation.sessionProposals"
+            | "conversation.tile"
+            | "conversation.stage" => {
                 let workspace_id = params
                     .get("workspaceId")
                     .and_then(Value::as_str)

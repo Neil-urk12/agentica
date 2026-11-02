@@ -11,6 +11,7 @@ import {
   overlayInsets,
   projectStatusItems,
   proposedContent,
+  sessionProposal,
   turnStatus,
   unionBox,
   usableArea,
@@ -388,4 +389,22 @@ test("note fields keep only what one save request can carry", () => {
   };
   assert.equal(fitTextField(middle), full);
   assert.equal(middle.selectionEnd, 100, "the caret stays at the typed text");
+});
+
+test("a Codex tile shows only its own pending proposal, and only in browser mode", () => {
+  const turn = (id, sessionTileId, status = "pending") => ({
+    id,
+    status,
+    sessionTileId,
+  });
+  const tile = "00000000-0000-4000-8000-0000000000aa";
+  const turns = [
+    turn("chat", null),
+    turn("other", "00000000-0000-4000-8000-0000000000bb"),
+    turn("done", tile, "applied"),
+    turn("mine", tile),
+  ];
+  assert.equal(sessionProposal(turns, tile, false)?.id, "mine");
+  assert.equal(sessionProposal(turns, tile, true), undefined);
+  assert.equal(sessionProposal(turns.slice(0, 3), tile, false), undefined);
 });

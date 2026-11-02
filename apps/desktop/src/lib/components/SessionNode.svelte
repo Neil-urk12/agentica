@@ -21,6 +21,16 @@
       onRemove: () => void;
       onRefresh: () => void;
       onResize: (width: number, height: number) => void;
+      /** A pending Codex canvas proposal (browser mode only). */
+      proposal?: {
+        count: number;
+        previewing: boolean;
+        busy: boolean;
+        error: string;
+        onPreview: () => void;
+        onApply: () => void;
+        onDiscard: () => void;
+      };
     };
     selected?: boolean;
   }
@@ -242,6 +252,42 @@ notification_condition = "always"`}</code
       >
     </div>
   {/if}
+  {#if data.proposal}
+    {@const proposal = data.proposal}
+    <div
+      class="attention-strip proposal-strip nodrag"
+      data-terminal-controls
+      role="group"
+      aria-label={`${title} canvas proposal`}
+    >
+      <span class="reason" role="status"
+        >Canvas proposal · {proposal.count}
+        {proposal.count === 1 ? "change" : "changes"} to review</span
+      >
+      <button
+        class="btn btn--soft"
+        type="button"
+        aria-pressed={proposal.previewing}
+        onclick={proposal.onPreview}
+        >{proposal.previewing ? "Hide preview" : "Preview"}</button
+      >
+      <button
+        class="btn btn--soft"
+        type="button"
+        disabled={proposal.busy}
+        onclick={proposal.onApply}>Apply</button
+      >
+      <button
+        class="btn btn--soft"
+        type="button"
+        disabled={proposal.busy}
+        onclick={proposal.onDiscard}>Discard</button
+      >
+    </div>
+    {#if proposal.error}<p class="session-notice" role="alert">
+        {proposal.error}
+      </p>{/if}
+  {/if}
   <footer>
     Ctrl+Shift+Esc returns to controls · Ctrl+Shift+C copies selection
   </footer>
@@ -434,6 +480,12 @@ notification_condition = "always"`}</code
   .attention-strip .btn {
     flex: none;
     background: var(--surface);
+  }
+  /* Same layout as attention, but a proposal is not a terminal signal. */
+  .proposal-strip,
+  .failed .proposal-strip {
+    background: var(--surface-soft);
+    border-top-color: var(--line-strong);
   }
   footer {
     padding: 4px 10px;

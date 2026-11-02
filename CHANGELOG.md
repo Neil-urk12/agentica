@@ -12,6 +12,51 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Codex canvas proposals in browser mode (2026-11-02)
+
+- Implemented: the detached backend serves `/mcp` (stateless streamable HTTP,
+  JSON replies, no SSE) with two tools, `canvas_read` and `canvas_edit`.
+  `initialize` always answers MCP `2025-06-18`, the only version it implements
+  (no batching), instead of echoing the client's.
+  Starting a Codex tile there adds `-c mcp_servers.agentica.url=…` (the
+  actual bound port) and `-c mcp_servers.agentica.bearer_token_env_var=AGENTICA_MCP_TOKEN`,
+  and puts a fresh 32-byte token only in the child environment. The user's
+  Codex config is never written, and no approval-bypass flag is added.
+  Desktop mode launches Codex as before.
+- Scope is task assignment, not edges: session tiles are not canvas nodes and
+  cannot be connected, so Codex reads and edits the notes whose task is
+  assigned to its tile, plus each task's context nodes. Conversation cards are
+  never in scope. An empty scope is a tool error that tells Codex to ask the user.
+- `canvas_edit` stages 1–32 operations through the chat proposal validation
+  (SAVEPOINT, then rollback) and stores them as a pending conversation turn with
+  `session_tile_id` set. It returns `staged` at once. The runtime mints all IDs;
+  a create's `nodeId` can be a placeholder that later operations in the same
+  batch reference, so one batch can create and connect. A second edit while one
+  is pending is refused.
+- Storage: `schema_v19.sql` adds `conversation_turn.session_tile_id` (one column
+  instead of a separate `source`: NULL means chat) and splits the active-turn
+  index, so chat keeps one active turn per canvas and each tile has at most one
+  pending proposal. No foreign key: `SET NULL` on tile removal would turn the
+  proposal into a chat turn. Chat list, chats, and latest-chat queries leave
+  session turns out. Session turns store `chat_id` = their own ID so the
+  protocol's `chatId` stays non-null.
+- Tokens live on the session record and are valid only while it is Running.
+  Exit, stop, restart (a new session and token), and shutdown revoke them with no
+  separate store. Lookup compares every token in constant time. `/mcp` refuses
+  requests carrying an `Origin` header (browsers) and the connection key.
+- Review: the Codex tile shows a "Canvas proposal" strip with Preview, Apply,
+  and Discard. Preview reuses the chat proposal preview, and Apply/Discard reuse
+  `conversation.resolve`, including its conflict check on touched objects.
+  The browser polls the new `conversation.sessionProposals` every 2 s while the
+  canvas has a Codex tile (shortcut until the stage call pushes an event).
+- Not built: revert and YOLO auto-apply. The canvas-agent spec describes them,
+  but the code has neither, so session proposals are always applied by hand.
+- Validated: Rust tests cover staging, scope, the 32-operation limit, pending
+  refusal, chat independence, apply, discard, apply conflict, the migration, and
+  an HTTP run with a fake `codex` (argv, env token, unauthorized cases, tools,
+  and revocation on restart and stop). A manual browser-mode run with real
+  Codex 0.166.0 (task 7.1) read linked notes, staged an edit, and applied it.
+
 ### Text styles for plain notes (2026-11-02)
 
 - Implemented: plain text notes take an optional node-level style: named

@@ -526,3 +526,253 @@ fn style_only_update_keeps_text_and_revision() {
     assert_eq!(artifact["revision"], 1);
     assert_eq!(artifact["style"], json!({"color":"red","weight":"bold"}));
 }
+
+/// A Codex tile on its own canvas, with one note assigned to it as a task.
+struct Session {
+    canvas: Canvas,
+    owner: agentica_runtime::sessions::SessionOwner,
+    linked: Value,
+    unlinked: Value,
+    _project: tempfile::TempDir,
+}
+
+fn session(runtime: &mut Runtime, workspace: &Value) -> Session {
+    let project = tempfile::tempdir().unwrap();
+    let canvas = Canvas::create(runtime, workspace);
+    let group = ok(runtime, "project.open", json!({"workspaceId":workspace,"canvasId":canvas.id,"expectedRevision":1,"path":project.path(),"x":0,"y":0,"width":800,"height":600}))["projectId"].clone();
+    let tile = ok(runtime, "project.createTile", json!({"workspaceId":workspace,"canvasId":canvas.id,"projectId":group,"expectedRevision":2,"kind":"cli-agent","preset":"codex","x":16,"y":96,"width":400,"height":300}))["tileId"].clone();
+    let linked = canvas.text(runtime, 1000.0, 0.0, "Linked");
+    let unlinked = canvas.text(runtime, 1400.0, 0.0, "Unlinked");
+    let node = json!({"workspaceId":workspace,"canvasId":canvas.id,"nodeId":linked});
+    let task = ok(
+        runtime,
+        "task.set",
+        json!({"enabled": true, "workspaceId":workspace,"canvasId":canvas.id,"nodeId":linked}),
+    )["task"]["revision"]
+        .clone();
+    let mut update = node.clone();
+    update["expectedRevision"] = task;
+    update["assignedTileId"] = tile.clone();
+    ok(runtime, "task.update", update);
+    Session {
+        owner: agentica_runtime::sessions::SessionOwner {
+            workspace_id: workspace.as_str().unwrap().into(),
+            canvas_id: canvas.id.as_str().unwrap().into(),
+            tile_id: tile.as_str().unwrap().into(),
+        },
+        canvas,
+        linked,
+        unlinked,
+        _project: project,
+    }
+}
+
+fn stage(runtime: &mut Runtime, session: &Session, operations: Value) -> Result<Value, String> {
+    runtime
+        .canvas_internal(
+            "conversation.stage",
+            &session.owner,
+            operations.as_array().unwrap().clone(),
+        )
+        .map_err(|error| error.message)
+}
+
+fn text_of(runtime: &mut Runtime, canvas: &Canvas, node: &Value) -> String {
+    let state = ok(
+        runtime,
+        "canvas.open",
+        json!({"workspaceId":canvas.workspace,"canvasId":canvas.id}),
+    );
+    let artifact = state["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["id"] == *node)
+        .unwrap()["artifactId"]
+        .clone();
+    state["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == artifact)
+        .unwrap()["text"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[test]
+fn codex_reads_only_objects_assigned_to_its_tile() {
+    let (_data, mut runtime, workspace) = setup();
+    let s = session(&mut runtime, &workspace);
+    let read = runtime
+        .canvas_internal("conversation.tile", &s.owner, vec![])
+        .unwrap();
+    let nodes: Vec<_> = read["context"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["id"].clone())
+        .collect();
+    assert_eq!(nodes, std::slice::from_ref(&s.linked));
+    assert!(!read.to_string().contains("Unlinked"));
+    // Over /rpc the internal methods do not exist.
+    let (code, _) = error(
+        &mut runtime,
+        "conversation.stage",
+        json!({"workspaceId":workspace,"canvasId":s.canvas.id,"tileId":s.owner.tile_id,"operations":[]}),
+    );
+    assert_eq!(code, "INVALID_REQUEST");
+    // A tile without assigned objects is told to ask for them.
+    let mut other = s.owner.clone();
+    other.tile_id = "10000000-0000-4000-8000-0000000000aa".into();
+    let empty = runtime
+        .canvas_internal("conversation.tile", &other, vec![])
+        .unwrap_err();
+    assert_eq!(empty.code, "SCOPE_DENIED");
+}
+
+#[test]
+fn codex_edits_stage_one_reviewed_proposal_per_tile() {
+    let (data, mut runtime, workspace) = setup();
+    let s = session(&mut runtime, &workspace);
+    let edit = json!({"op":"updateText","nodeId":s.linked,"text":"Edited"});
+    let create = json!({"op":"createText","nodeId":"new","x":0,"y":400,"width":200,"height":100,"text":"New"});
+    let link = json!({"op":"connect","sourceNodeId":"new","targetNodeId":s.linked});
+    let revision = s.canvas.revision(&mut runtime);
+
+    // Out of scope, oversized, and empty batches store nothing.
+    let outside = json!([{"op":"updateText","nodeId":s.unlinked,"text":"No"}]);
+    assert!(stage(&mut runtime, &s, outside)
+        .unwrap_err()
+        .contains("outside"));
+    let many: Vec<_> = (0..33).map(|_| edit.clone()).collect();
+    assert!(stage(&mut runtime, &s, json!(many))
+        .unwrap_err()
+        .contains("1–32"));
+    assert!(stage(&mut runtime, &s, json!([]))
+        .unwrap_err()
+        .contains("1–32"));
+
+    // A valid batch is staged without changing the canvas; placeholders link new objects.
+    let staged = stage(&mut runtime, &s, json!([edit, create, link])).unwrap();
+    let turn = &staged["turn"];
+    assert_eq!(turn["status"], "pending");
+    assert_eq!(turn["sessionTileId"], json!(s.owner.tile_id));
+    let created = turn["operations"][1]["nodeId"].clone();
+    assert_ne!(created, "new");
+    assert_eq!(turn["operations"][2]["sourceNodeId"], created);
+    assert_eq!(s.canvas.revision(&mut runtime), revision);
+    assert_eq!(text_of(&mut runtime, &s.canvas, &s.linked), "Linked");
+
+    // One pending proposal per tile; chat is unaffected and never lists it.
+    let again = stage(&mut runtime, &s, json!([edit])).unwrap_err();
+    assert!(again.contains("pending review"), "{again}");
+    let refs = json!({"workspaceId":workspace,"canvasId":s.canvas.id});
+    let mut list = refs.clone();
+    list["before"] = json!(0);
+    s.canvas.start(&mut runtime, TURN, json!([]));
+    assert_eq!(
+        ok(&mut runtime, "conversation.list", list)["turns"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        ok(&mut runtime, "conversation.chats", refs.clone())["chats"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let pending = ok(&mut runtime, "conversation.sessionProposals", refs.clone());
+    assert_eq!(pending["turns"][0]["id"], turn["id"]);
+    s.canvas.finish(&mut runtime, TURN, "complete", "Done");
+
+    // Apply is the only path to the canvas.
+    let mut resolve = s.canvas.turn(turn["id"].as_str().unwrap());
+    resolve["action"] = json!("apply");
+    ok(&mut runtime, "conversation.resolve", resolve);
+    assert_eq!(text_of(&mut runtime, &s.canvas, &s.linked), "Edited");
+    assert_eq!(text_of(&mut runtime, &s.canvas, &created), "New");
+    assert!(
+        ok(&mut runtime, "conversation.sessionProposals", refs.clone())["turns"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    // A manual edit after staging makes Apply a conflict; Discard frees the tile.
+    let next = stage(
+        &mut runtime,
+        &s,
+        json!([{"op":"updateText","nodeId":s.linked,"text":"Later"}]),
+    )
+    .unwrap();
+    let state = ok(&mut runtime, "canvas.open", refs.clone());
+    let artifact = state["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["id"] == s.linked)
+        .unwrap()["artifactId"]
+        .clone();
+    let text_revision = state["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == artifact)
+        .unwrap()["revision"]
+        .clone();
+    ok(
+        &mut runtime,
+        "artifact.saveText",
+        json!({"workspaceId":workspace,"artifactId":artifact,"expectedRevision":text_revision,"text":"By hand"}),
+    );
+    let mut resolve = s.canvas.turn(next["turn"]["id"].as_str().unwrap());
+    resolve["action"] = json!("apply");
+    let (code, _) = error(&mut runtime, "conversation.resolve", resolve.clone());
+    assert_eq!(code, "CONFLICT");
+    assert_eq!(text_of(&mut runtime, &s.canvas, &s.linked), "By hand");
+    resolve["action"] = json!("discard");
+    ok(&mut runtime, "conversation.resolve", resolve);
+    stage(&mut runtime, &s, json!([edit])).unwrap();
+
+    // Legacy conversation cards are never in scope, even when assigned.
+    rusqlite::Connection::open(
+        data.path()
+            .join("workspaces")
+            .join(workspace.as_str().unwrap())
+            .join("workspace.sqlite3"),
+    )
+    .unwrap()
+    .execute(
+        "UPDATE conversation_turn SET prompt_node_id = ?1 WHERE id = ?2",
+        (s.linked.as_str().unwrap(), TURN),
+    )
+    .unwrap();
+    let card = runtime
+        .canvas_internal("conversation.tile", &s.owner, vec![])
+        .unwrap_err();
+    assert_eq!(card.code, "SCOPE_DENIED");
+
+    // Removing the tile drops its still-pending proposal from the listing.
+    assert_eq!(
+        ok(&mut runtime, "conversation.sessionProposals", refs.clone())["turns"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let mut remove = refs.clone();
+    remove["tileId"] = json!(s.owner.tile_id);
+    remove["expectedRevision"] = json!(s.canvas.revision(&mut runtime));
+    ok(&mut runtime, "project.deleteTile", remove);
+    assert!(
+        ok(&mut runtime, "conversation.sessionProposals", refs)["turns"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}

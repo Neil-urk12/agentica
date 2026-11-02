@@ -571,6 +571,8 @@ export const ConversationTurnSchema = z.strictObject({
   error: Text,
   /** The chat this turn belongs to: the ID of the chat's first turn. */
   chatId: IdSchema,
+  /** The Codex tile that staged this proposal; null for chat turns. */
+  sessionTileId: IdSchema.nullable(),
 });
 export type ConversationTurn = z.infer<typeof ConversationTurnSchema>;
 export const ChangeSectionSchema = z.enum(["staged", "unstaged", "untracked"]);
@@ -728,6 +730,7 @@ const ParamSchemas = {
     chatId: IdSchema.optional(),
   }),
   "conversation.chats": z.strictObject({ ...CanvasRef }),
+  "conversation.sessionProposals": z.strictObject({ ...CanvasRef }),
   "artifact.applyBatch": ArtifactBatchSchema,
   "agent.capabilities": z.strictObject({}),
   "agent.start": AgentStartSchema,
@@ -1165,6 +1168,10 @@ export const ResultSchemas = {
         }),
       )
       .max(100),
+  }),
+  /** Pending Codex proposals on the canvas, at most one per session tile. */
+  "conversation.sessionProposals": z.strictObject({
+    turns: z.array(ConversationTurnSchema),
   }),
   "artifact.applyBatch": z.strictObject({
     artifacts: z.array(TextArtifactSchema).min(1).max(32),

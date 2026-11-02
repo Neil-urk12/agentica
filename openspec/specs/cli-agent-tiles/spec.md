@@ -18,7 +18,7 @@ The system SHALL offer Codex as the initial CLI-agent preset inside a project gr
 
 ### Requirement: Availability and explicit direct launch
 
-The backend SHALL resolve the Codex executable from its launch environment and report missing or unusable installation separately from unsupported platform and process failure. Adding a tile SHALL create a stopped saved configuration. Only explicit Start or Restart SHALL launch Codex, as an executable plus argv rather than a shell-concatenated command. Availability checks SHALL NOT start an interactive agent, initiate authentication, or execute project code. This slice SHALL use the CLI's normal interactive invocation without automatically loading a task or adding approval-bypass flags.
+The backend SHALL resolve the Codex executable from its launch environment and report missing or unusable installation separately from unsupported platform and process failure. Adding a tile SHALL create a stopped saved configuration. Only explicit Start or Restart SHALL launch Codex, as an executable plus argv rather than a shell-concatenated command. Availability checks SHALL NOT start an interactive agent, initiate authentication, or execute project code. Launch SHALL use the CLI's normal interactive invocation without automatically loading a task or adding approval-bypass flags. In browser mode, launch SHALL also pass per-process configuration overrides that register the Agentica canvas MCP endpoint, plus the session token in an environment variable. It SHALL NOT write the user's Codex configuration files.
 
 #### Scenario: Codex is not installed
 
@@ -36,6 +36,12 @@ The backend SHALL resolve the Codex executable from its launch environment and r
 
 - **WHEN** Codex is started for a valid project path containing spaces or shell metacharacters
 - **THEN** the path is passed as working-directory data and cannot inject a launch command
+
+#### Scenario: Browser-mode launch registers the canvas endpoint
+
+- **WHEN** a Codex tile starts under the detached backend
+- **THEN** argv contains only the existing arguments plus `-c` overrides naming the canvas MCP URL and the token environment variable, and no approval-bypass flag
+- **AND** the user's `~/.codex/config.toml` is unchanged
 
 ### Requirement: Native authentication and approval ownership
 
@@ -75,7 +81,7 @@ Agent tiles SHALL display authoritative supervisor process state independently o
 
 ### Requirement: Separate native hosting from managed agent execution
 
-Native CLI hosting SHALL use a session contract distinct from existing artifact-scoped managed-agent APIs. This change SHALL NOT enable managed `agent.start`, change its unsupported capability claim, add model-triggered process launch tools, or claim enforced canvas artifact permissions for a native CLI. Existing OpenRouter/custom-provider conversations and proposal review SHALL remain independently usable while CLI sessions run.
+Native CLI hosting SHALL use a session contract distinct from existing artifact-scoped managed-agent APIs. It SHALL NOT enable managed `agent.start`, change its unsupported capability claim, or add model-triggered process launch tools. In browser mode, a native Codex session MAY read the objects linked to its tile through task assignment and stage canvas proposals through the canvas MCP endpoint. Every such change SHALL go through the reviewed proposal path, scoped to those linked objects. Existing OpenRouter/custom-provider conversations and proposal review SHALL remain independently usable while CLI sessions run.
 
 #### Scenario: Managed execution is queried after native hosting is added
 
@@ -87,6 +93,11 @@ Native CLI hosting SHALL use a session contract distinct from existing artifact-
 - **WHEN** a user submits and reviews a canvas conversation while Codex runs in another tile
 - **THEN** the existing conversation and proposal rules apply independently
 - **AND** no prompt, terminal output, or approval is automatically passed between those interfaces
+
+#### Scenario: Codex changes reach the canvas only as proposals
+
+- **WHEN** a Codex session calls the canvas MCP endpoint to change the canvas
+- **THEN** the change is stored as a pending proposal and the canvas is unchanged until the user applies it
 
 ### Requirement: Documented opt-in Codex notification setup
 

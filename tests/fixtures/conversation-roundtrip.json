@@ -998,6 +998,26 @@
         "turns": [],
         "nextBefore": 0
       }
+    },
+    {
+      "method": "conversation.sessionProposals",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc"
+      },
+      "expect": {
+        "turns": []
+      }
+    },
+    {
+      "method": "conversation.stage",
+      "params": {
+        "workspaceId": "$cw",
+        "canvasId": "$cc",
+        "tileId": "10000000-0000-4000-8000-000000000001",
+        "operations": []
+      },
+      "error": "INVALID_REQUEST"
     }
   ]
 }

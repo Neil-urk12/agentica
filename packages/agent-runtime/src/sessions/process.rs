@@ -75,6 +75,9 @@ fn spawn(
     #[cfg(not(windows))]
     command.cwd(&spec.directory);
     command.env("TERM", "xterm-256color");
+    if let Some(token) = &spec.token {
+        command.env(super::launch::TOKEN_VARIABLE, token);
+    }
     // Create the job before spawning so a job failure never leaves a process.
     #[cfg(windows)]
     let job = windows::Job::new()?;

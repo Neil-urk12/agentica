@@ -928,3 +928,37 @@ test("conversation chats contracts match the runtime", () => {
   assert.equal(chats("😀".repeat(CONVERSATION_READ.title / 2)), true);
   assert.equal(chats("x".repeat(CONVERSATION_READ.title + 1)), false);
 });
+
+test("Codex session proposals are listed but cannot be staged over RPC", () => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const turn = {
+    id,
+    sequence: 1,
+    model: "codex",
+    prompt: "",
+    reply: "",
+    promptNodeId: null,
+    replyNodeId: null,
+    anchor: { x: 0, y: 0 },
+    status: "pending",
+    operations: [],
+    error: "",
+    chatId: id,
+    sessionTileId: id,
+  };
+  const proposals = ResultSchemas["conversation.sessionProposals"];
+  assert.equal(proposals.safeParse({ turns: [turn] }).success, true);
+  const { sessionTileId: _, ...missing } = turn;
+  assert.equal(proposals.safeParse({ turns: [missing] }).success, false);
+  for (const method of ["conversation.stage", "conversation.tile"])
+    assert.equal(
+      RuntimeRequestSchema.safeParse({
+        protocolVersion: 1,
+        id: "codex",
+        method,
+        params: { workspaceId: id, canvasId: id, tileId: id },
+      }).success,
+      false,
+      method,
+    );
+});

@@ -13,6 +13,8 @@ pub struct SessionService {
     unavailable: Option<String>,
     data_root: Option<PathBuf>,
     metadata_gate: Mutex<()>,
+    /// Canvas MCP URL, set only by the detached backend once it is bound.
+    canvas_url: std::sync::OnceLock<String>,
 }
 
 impl SessionService {
@@ -23,7 +25,18 @@ impl SessionService {
             supervisor: result.ok(),
             data_root,
             metadata_gate: Mutex::new(()),
+            canvas_url: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Offer the canvas MCP endpoint to Codex sessions started from now on.
+    pub fn serve_canvas(&self, url: String) {
+        let _ = self.canvas_url.set(url);
+    }
+
+    /// The tile a running Codex session's canvas token belongs to.
+    pub fn canvas_owner(&self, token: &str) -> Option<SessionOwner> {
+        self.supervisor.as_ref()?.canvas_owner(token)
     }
 
     fn supervisor(&self) -> Result<&SessionSupervisor, RuntimeError> {
@@ -68,6 +81,7 @@ impl SessionService {
             &kind,
             preset.as_deref(),
             self.data_root.as_deref(),
+            self.canvas_url.get().map(String::as_str),
         )
     }
 
@@ -419,6 +433,7 @@ mod tests {
             argv: vec!["--noprofile".into(), "--norc".into(), "-i".into()],
             directory: root.path().into(),
             fallback: false,
+            token: None,
         };
         let status = supervisor.start(spec, "stream-release", 24, 80).unwrap();
         let attachment = supervisor.attach(&owner, &status.session_id, 0).unwrap();

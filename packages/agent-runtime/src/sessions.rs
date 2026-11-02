@@ -106,6 +106,8 @@ struct Session {
     stop: Arc<std::sync::atomic::AtomicBool>,
     scanner: attention::Scanner,
     focused: bool,
+    /// Canvas MCP token; valid only while this session is running.
+    token: Option<String>,
 }
 
 impl Session {
@@ -259,9 +261,29 @@ impl SessionSupervisor {
                 stop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 scanner: attention::Scanner::default(),
                 focused: false,
+                token: None,
             },
         );
         Ok((status, true))
+    }
+
+    /// The tile a canvas MCP token belongs to. Exit, stop, restart (which
+    /// replaces the session), and shutdown all revoke it by leaving Running.
+    pub fn canvas_owner(&self, token: &str) -> Option<SessionOwner> {
+        use subtle::ConstantTimeEq;
+        let sessions = self.sessions.lock().ok()?;
+        let mut found = None;
+        // Compare every token so timing does not reveal which one matched.
+        for session in sessions.values() {
+            let matched = session
+                .token
+                .as_deref()
+                .is_some_and(|known| bool::from(known.as_bytes().ct_eq(token.as_bytes())));
+            if matched && session.status.state == ProcessState::Running {
+                found = Some(session.status.owner.clone());
+            }
+        }
+        found
     }
 
     pub fn status(&self, owner: &SessionOwner) -> Result<Option<SessionStatus>, RuntimeError> {
@@ -327,6 +349,7 @@ impl SessionSupervisor {
             session.status.shell_fallback = spec.fallback;
             session.status.rows = rows;
             session.status.cols = cols;
+            session.token = spec.token.clone();
             Ok(session.stop.clone())
         })?;
         let worker = self.clone();
@@ -976,6 +999,7 @@ mod tests {
             argv: vec!["--noprofile".into(), "--norc".into(), "-i".into()],
             directory: root.into(),
             fallback: false,
+            token: None,
         }
     }
 
@@ -1469,6 +1493,7 @@ mod tests {
             // Spawn revalidates the canonical (verbatim) form saved by projects.
             directory: root.canonicalize().unwrap(),
             fallback: false,
+            token: None,
         }
     }
 
