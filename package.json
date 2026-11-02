@@ -26,7 +26,7 @@
     "test:unit": "pnpm --filter @agentica/protocol build && node --test \"tests/*.test.mjs\"",
     "test:unit:coverage": "pnpm --filter @agentica/protocol build && mkdir -p coverage && node --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=coverage/js.lcov \"tests/*.test.mjs\"",
     "test:preview:browser": "node --test --test-concurrency=1 tests/preview-policy.browser.mjs tests/preview-hmr.browser.mjs tests/preview-workflow.browser.mjs",
-    "test": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop build && cargo test --locked -p agentica-runtime --features bundled-frontend && cargo build --locked -p agentica-runtime --features bundled-frontend && node --test \"tests/*.test.mjs\" tests/http.browser.mjs tests/landing-stats.browser.mjs",
+    "test": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop build && cargo test --locked -p agentica-runtime --features bundled-frontend && cargo build --locked -p agentica-runtime --features bundled-frontend && node --test \"tests/*.test.mjs\" tests/http.browser.mjs tests/landing-stats.browser.mjs tests/canvas-export.browser.mjs",
     "build:backend": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop build && cargo build --locked --release -p agentica-runtime --bin agentica-backend --features bundled-frontend",
     "format": "oxfmt",
     "format:check": "oxfmt --check",

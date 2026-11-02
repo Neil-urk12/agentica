@@ -19,6 +19,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-http",
  "tauri-plugin-opener",
+ "tempfile",
  "tokio",
 ]
 

@@ -120,13 +120,14 @@ Each workspace is a directory under the data root holding `writer.lock` and
 
 Manual and end-to-end validation, with dates and evidence:
 
-| Record                                   | Covers                                         |
-| ---------------------------------------- | ---------------------------------------------- |
-| [Verification index](verification.md)    | Summary of every validation run                |
-| [M0-09 Linux](m0-09-linux.md)            | Desktop and browser launch lifecycle on Linux  |
-| [M0-11 Linux](m0-11-linux.md)            | Detached delivery and an RPM package prototype |
-| [M1 validation](m1-validation.md)        | Typed operations and the execution boundary    |
-| [Windows handoff](windows-validation.md) | Steps still to run on Windows                  |
+| Record                                              | Covers                                                                                     |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| [Verification index](verification.md)               | Summary of every validation run                                                            |
+| [Canvas Markdown export](canvas-markdown-export.md) | Serializer, Chrome download, native writes; Linux manual checks; macOS and Windows pending |
+| [M0-09 Linux](m0-09-linux.md)                       | Desktop and browser launch lifecycle on Linux                                              |
+| [M0-11 Linux](m0-11-linux.md)                       | Detached delivery and an RPM package prototype                                             |
+| [M1 validation](m1-validation.md)                   | Typed operations and the execution boundary                                                |
+| [Windows handoff](windows-validation.md)            | Steps still to run on Windows                                                              |
 
 Changes review feedback persistence is validated on Linux (Fedora 44) in browser
 mode by the `tests/http.browser.mjs` case "review feedback survives browser reload

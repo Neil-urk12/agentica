@@ -9,6 +9,7 @@ import {
 } from "@agentica/protocol";
 import { Editor } from "../apps/desktop/src/lib/editor.ts";
 import { stageOperations } from "../apps/desktop/src/lib/canvas-agent.ts";
+import { canvasMarkdown } from "../apps/desktop/src/lib/canvas-export.ts";
 
 // The runtime's TypeScript parameter property needs transformation, not stripping.
 const runtimeUrl = new URL(
@@ -262,6 +263,8 @@ async function setup(t, intercept = async () => {}) {
     },
     nodes: [{ id: nodeId, artifactId, x: 10, y: 20, width: 240, height: 160 }],
     edges: [],
+    projectGroups: [],
+    sessionTiles: [],
     artifacts: [
       {
         id: artifactId,
@@ -2686,3 +2689,41 @@ test("a failed file import discards its staged upload and keeps the canvas saved
     false,
   );
 });
+
+for (const saving of ["failed", "in-flight"]) {
+  test(`Markdown export captures staged edits while autosave is ${saving}`, async (t) => {
+    const started = deferred();
+    const finish = deferred();
+    const { editor, calls } = await setup(t, async (method) => {
+      if (method !== "artifact.saveText") return;
+      if (saving === "failed") throw new Error("Save unavailable");
+      started.resolve();
+      await finish.promise;
+    });
+    editor.editText(artifactId, "Latest unsaved note 😀");
+    editor.placeNode(nodeId, { x: 777, y: -30 });
+    const save = editor.save();
+    if (saving === "failed") await save;
+    else await started.promise;
+    const before = structuredClone(editor.state);
+    const requestCount = calls.length;
+    const exported = canvasMarkdown(editor.state.document);
+    assert.ok(exported.markdown.includes("Latest unsaved note 😀"));
+    assert.equal(editor.state.document.nodes[0].x, 777);
+    assert.equal(
+      calls.length,
+      requestCount,
+      "export must not call the runtime",
+    );
+    assert.deepEqual(
+      editor.state,
+      before,
+      "export must not change saving, errors, dirty state or content",
+    );
+    assert.equal(editor.state.dirty, true);
+    editor.editText(artifactId, "Later edit after capture");
+    assert.ok(!exported.markdown.includes("Later edit after capture"));
+    finish.resolve();
+    await save;
+  });
+}

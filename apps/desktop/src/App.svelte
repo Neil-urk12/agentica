@@ -51,6 +51,7 @@
   } from "./lib/tasks";
   import { clock } from "./lib/clock.svelte";
   import { Editor, type DrawingSegment } from "./lib/editor";
+  import CanvasExport from "./lib/components/CanvasExport.svelte";
   import { applyTheme, readTheme, type Theme } from "./lib/theme";
   import Composer from "./lib/components/Composer.svelte";
   import Reader from "./lib/components/Reader.svelte";
@@ -3303,6 +3304,7 @@
 
       <div class="topbar__actions">
         {#if editorState.document}
+          <CanvasExport canvas={editorState.document} />
           <AttentionQueue
             bind:open={queueOpen}
             entries={attentionEntries}

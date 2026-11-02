@@ -12,6 +12,27 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Single-canvas Markdown sharing (2026-11-02)
+
+- Added an Export Markdown header action: full note source, task checkboxes,
+  drawing labels, and numbered connections in stable spatial order. Attachments,
+  live previews, project frames, and session tiles have explicit omission notices.
+  PNG, bundled assets, and import remain out of scope.
+- Export serializes current editor content rather than clipped DOM or workspace
+  backup data, so unsaved text is included without changing autosave state. A
+  captured file stays fixed while later edits continue. Private chat-panel history,
+  runtime settings, commands, terminal output, and project paths are excluded;
+  sensitive text authored in notes is shared as written, not redacted.
+- Browser mode requests one UTF-8 `.md` download; desktop uses a main-window-only
+  native save dialog with temporary-file replacement to preserve existing files
+  on failure. Reused the already-locked `tempfile` package as a direct desktop
+  dependency; no storage or runtime-protocol changes.
+- Automated serializer, editor, real-Chrome component/download, and native-write
+  tests pass, along with type/lint checks and desktop build/Clippy. Full-app browser
+  download and native save/cancel/retry were manually verified on Linux; macOS and
+  Windows remain unverified. See the
+  [verification record](docs/development/canvas-markdown-export.md).
+
 ### Codex canvas proposals in browser mode (2026-11-02)
 
 - Implemented: the detached backend serves `/mcp` (stateless streamable HTTP,

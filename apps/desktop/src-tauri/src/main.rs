@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod markdown_export;
 use agentica_runtime::{
     changes, default_data_root,
     mcp::{self, McpService},
@@ -186,6 +187,31 @@ async fn open_file(
     })
     .await
     .map_err(|error| format!("File task failed: {error}"))?
+}
+
+/// Save prepared Markdown only to the destination chosen in a native dialog.
+#[tauri::command]
+async fn export_markdown(
+    markdown: String,
+    suggested_name: String,
+    window: tauri::WebviewWindow,
+) -> Result<bool, String> {
+    use tauri_plugin_dialog::DialogExt;
+    if window.label() != "main" {
+        return Err("Markdown export is limited to the local main window.".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let selection = window
+            .dialog()
+            .file()
+            .set_parent(&window)
+            .set_file_name(markdown_export::suggested_file_name(&suggested_name))
+            .add_filter("Markdown", &["md"])
+            .blocking_save_file();
+        markdown_export::save_selection(selection, &markdown)
+    })
+    .await
+    .map_err(|error| format!("Markdown export task failed: {error}"))?
 }
 
 /// Back up a workspace to a file the user picks in a native dialog. The path
@@ -422,6 +448,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             session_subscribe,
             session_shutdown,
             open_file,
+            export_markdown,
             backup_workspace,
             restore_workspace
         ])
