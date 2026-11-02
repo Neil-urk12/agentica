@@ -12,6 +12,11 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Fix file size rounding at the MB boundary (2026-10-30)
+
+- Display `1.0 MB` when a file's size would round up to `1024 KB`, keeping
+  file nodes and pickers from showing a kilobyte value that reaches the next unit.
+
 ### Codex canvas proposals in browser mode (2026-11-02)
 
 - Implemented: the detached backend serves `/mcp` (stateless streamable HTTP,
