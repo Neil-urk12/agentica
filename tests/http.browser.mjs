@@ -3212,6 +3212,20 @@ wait
       "notifications_none",
     ]);
 
+    // A session picked in the node list has no inspector fields, and the
+    // inspector says so instead of asking for a selection.
+    for (const toggle of ["Toggle nodes", "Toggle inspector"])
+      await run(`document.querySelector('[aria-label="${toggle}"]').click()`);
+    // Session tiles are listed last.
+    await run(`[...document.querySelectorAll('.drawer__item')].at(-1).click()`);
+    await waitFor(
+      browser,
+      `document.querySelector('.inspector')?.textContent.includes('Projects and sessions have no editable properties here.')`,
+      "the no-properties hint for a selected session",
+    );
+    for (const toggle of ["Toggle nodes", "Toggle inspector"])
+      await run(`document.querySelector('[aria-label="${toggle}"]').click()`);
+
     // Assigning draws a wire but never starts the tile.
     await run(
       `document.querySelector('${node} .task-assignee .select__trigger').click()`,

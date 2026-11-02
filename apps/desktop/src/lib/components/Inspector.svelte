@@ -10,6 +10,8 @@
   interface Props {
     selected: CanvasNode | undefined;
     artifact: Artifact | undefined;
+    /** Something is selected, possibly a project or session with no fields. */
+    hasSelection: boolean;
     busy: boolean;
     canDraw: boolean;
     canFit: boolean;
@@ -28,6 +30,7 @@
   let {
     selected,
     artifact,
+    hasSelection,
     busy,
     canDraw,
     canFit,
@@ -203,6 +206,8 @@
         />
       {/each}
     </fieldset>
+  {:else if hasSelection}
+    <p class="muted">Projects and sessions have no editable properties here.</p>
   {:else}
     <p class="muted">Select a node</p>
   {/if}

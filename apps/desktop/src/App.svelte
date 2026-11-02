@@ -310,7 +310,20 @@
   let sidebarSplit = $state(
     readWidth("agentica.sidebarSplit", SPLIT_MIN, 100 - SPLIT_MIN, 50),
   );
-  let sidebarEl: HTMLElement | undefined = $state();
+  let sidebarHeight = $state(0);
+  // Each section keeps about 8rem (128px), so the reachable range narrows in
+  // short sidebars; the divider reports and applies this same range.
+  const splitMin = $derived(
+    sidebarHeight
+      ? Math.min(
+          50,
+          Math.max(SPLIT_MIN, Math.ceil((128 / sidebarHeight) * 100)),
+        )
+      : SPLIT_MIN,
+  );
+  const shownSplit = $derived(
+    Math.min(100 - splitMin, Math.max(splitMin, sidebarSplit)),
+  );
   const CHAT_MIN_WIDTH = 320;
   const CHAT_MAX_WIDTH = 720;
   let chatWidth = $state(
@@ -511,19 +524,19 @@
     void queueCanvas;
     queueOpen = false;
   });
-  let openProjectButton: HTMLButtonElement | undefined = $state();
+  let settingsButton: HTMLButtonElement | undefined = $state();
   /** Terminal and agent tiles; Changes tiles never raise attention. */
   const sessionTileCount = $derived(
     editorState.document?.sessionTiles.filter((tile) => tile.kind !== "changes")
       .length ?? 0,
   );
   // Deleting the last session tile unmounts the waiting control; an open queue
-  // closes and focus lands on a stable top-bar action instead of the page.
+  // closes and focus lands on Settings, the one top-bar action never disabled.
   $effect(() => {
     if (sessionTileCount || !untrack(() => queueOpen)) return;
     queueOpen = false;
     void tick().then(() => {
-      if (document.activeElement === document.body) openProjectButton?.focus();
+      if (document.activeElement === document.body) settingsButton?.focus();
     });
   });
   const dark = $derived(theme === "dark");
@@ -669,11 +682,12 @@
 
   /** Move the nodes/inspector divider, keeping each section about 8rem tall. */
   function resizeSplit(next: number) {
-    const height = sidebarEl?.clientHeight ?? 0;
-    const min = height
-      ? Math.min(50, Math.max(SPLIT_MIN, Math.ceil((128 / height) * 100)))
-      : SPLIT_MIN;
-    sidebarSplit = storeWidth("agentica.sidebarSplit", min, 100 - min, next);
+    sidebarSplit = storeWidth(
+      "agentica.sidebarSplit",
+      splitMin,
+      100 - splitMin,
+      next,
+    );
   }
 
   /** Pointer-capture drag for resize grips; reports the offset from the start. */
@@ -3176,7 +3190,6 @@
           />
         {/if}
         <button
-          bind:this={openProjectButton}
           class="btn btn--soft"
           type="button"
           disabled={!canEdit || pickingProject}
@@ -3233,6 +3246,7 @@
           <Icon name="grid_view" size={20} />
         </button>
         <button
+          bind:this={settingsButton}
           class="icon-btn"
           type="button"
           title="Settings"
@@ -3333,10 +3347,10 @@
         {@const both = drawerOpen && inspectorOpen}
         <div
           class="sidebar"
-          bind:this={sidebarEl}
+          bind:clientHeight={sidebarHeight}
           style="--drawer-w: {drawerWidth}px; --nodes-grow: {both
-            ? sidebarSplit
-            : 1}; --inspector-grow: {both ? 100 - sidebarSplit : 1}"
+            ? shownSplit
+            : 1}; --inspector-grow: {both ? 100 - shownSplit : 1}"
         >
           {#if drawerOpen}
             <NodeDrawer
@@ -3357,20 +3371,20 @@
               tabindex="0"
               aria-orientation="horizontal"
               aria-label="Resize nodes and inspector"
-              aria-valuemin={SPLIT_MIN}
-              aria-valuemax={100 - SPLIT_MIN}
-              aria-valuenow={sidebarSplit}
+              aria-valuemin={splitMin}
+              aria-valuemax={100 - splitMin}
+              aria-valuenow={shownSplit}
               title="Drag to resize"
               onpointerdown={(event) => {
-                const start = sidebarSplit;
-                const height = sidebarEl?.clientHeight || 1;
+                const start = shownSplit;
+                const height = sidebarHeight || 1;
                 dragGrip(event, (_, dy) =>
                   resizeSplit(start + (dy / height) * 100),
                 );
               }}
               onkeydown={(event) =>
                 nudge(event, "ArrowDown", "ArrowUp", 2, (step) =>
-                  resizeSplit(sidebarSplit + step),
+                  resizeSplit(shownSplit + step),
                 )}
             ></div>
           {/if}
@@ -3378,6 +3392,7 @@
             <Inspector
               {selected}
               {artifact}
+              hasSelection={!!selectedId}
               busy={editorState.busy}
               {canDraw}
               {canFit}
