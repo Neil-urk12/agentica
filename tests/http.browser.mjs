@@ -1988,12 +1988,53 @@ test("box selection groups, moves, ungroups, and deletes canvas objects", async 
     const selected = `[...document.querySelectorAll('.svelte-flow__node.selected')].map((node) => node.dataset.id).sort().join(',')`;
     const pair = [first, second].sort().join(",");
 
+    // Style clicks in one task run before either save can acknowledge.
+    await clickAt(
+      browser,
+      await boxOf(browser, `.svelte-flow__node[data-id="${first}"]`),
+    );
+    const styleCard = `.toolbar [aria-label="Text style"]`;
+    await waitFor(
+      browser,
+      `!!document.querySelector('${styleCard}')`,
+      "one note's style controls",
+    );
+    await evaluate(
+      browser,
+      `document.querySelector('[aria-label="Color red"]').click(); document.querySelector('[aria-label="Bold"]').click();`,
+    );
+    await waitFor(
+      browser,
+      `document.querySelector('[aria-label="Color red"]')?.getAttribute('aria-pressed') === 'true' && document.querySelector('[aria-label="Bold"]')?.getAttribute('aria-pressed') === 'true'`,
+      "both saved text style fields",
+    );
+    const styledState = await rpc("canvas.open", reference);
+    const styled = styledState.artifacts.find(
+      (artifact) =>
+        artifact.id ===
+        styledState.nodes.find((node) => node.id === first).artifactId,
+    );
+    assert.deepEqual(styled.style, { color: "red", weight: "bold" });
+    assert.equal(styled.revision, 1);
+
+    await clickAt(browser, at(450, 200));
+    await waitFor(
+      browser,
+      `!document.querySelector('${styleCard}')`,
+      "no style controls after deselection",
+    );
+
     // Dragging over empty canvas selects only objects fully inside the box.
     await dragBetween(browser, at(450, 200), at(1150, 470));
     await waitFor(
       browser,
       `${selected} === ${JSON.stringify(pair)}`,
       "the boxed pair",
+    );
+    await waitFor(
+      browser,
+      `!document.querySelector('${styleCard}')`,
+      "no style controls for multiple selected notes",
     );
     assert.match(
       await evaluate(

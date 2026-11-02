@@ -29,6 +29,7 @@
     type RuntimeParams,
     type SessionStatus,
     type CanvasOperation,
+    type TextStyle,
   } from "@agentica/protocol";
   import {
     callRuntime,
@@ -636,6 +637,40 @@
   const canFit = $derived(
     (!!textArtifact && !selectedTurn) || !!selectedBox?.label,
   );
+  // Styles belong to plain notes: not instructions, conversation cards, or tasks.
+  const canStyle = $derived(
+    nodes.filter((node) => node.selected).length === 1 &&
+      nodes.some((node) => node.selected && node.id === selectedId) &&
+      !!textArtifact &&
+      textArtifact.purpose !== "instruction" &&
+      !selectedTurn &&
+      !selected?.task,
+  );
+  /** The last style picked in the toolbar; new notes start with it. */
+  let lastTextStyle = $state<TextStyle | undefined>();
+  const TEXT_SIZE_ORDER = ["s", "m", "l", "xl"];
+
+  async function styleText(artifactId: string, patch: TextStyle) {
+    const before = textArtifact?.style?.size ?? "m";
+    if (!(await editor.setTextStyle(artifactId, patch))) return;
+    const saved = editor.state.document?.artifacts.find(
+      (item) => item.id === artifactId,
+    );
+    if (saved?.type !== "text") return;
+    lastTextStyle = saved.style;
+    const grew =
+      TEXT_SIZE_ORDER.indexOf(saved.style?.size ?? "m") >
+      TEXT_SIZE_ORDER.indexOf(before);
+    if (!grew || !selected || selected.artifactId !== artifactId) return;
+    // Measure after the larger text has laid out; fitting reuses the
+    // explicit fit path, which refuses when limits or neighbors block it.
+    await tick();
+    await new Promise(requestAnimationFrame);
+    const body = canvasEl?.querySelector<HTMLElement>(
+      `.svelte-flow__node[data-id="${CSS.escape(selected.id)}"] .card-body`,
+    );
+    if (body && body.scrollHeight > body.clientHeight + 1) fitSelected();
+  }
 
   type Point = { x: number; y: number };
   type Gesture = { kind: "path" | "rectangle" | "ellipse"; points: Point[] };
@@ -1721,7 +1756,11 @@
                       onRemove: () => void removeObject(node.id),
                     }
                   : artifact.type === "text"
-                    ? { text: artifact.text, purpose: artifact.purpose }
+                    ? {
+                        text: artifact.text,
+                        purpose: artifact.purpose,
+                        style: artifact.style,
+                      }
                     : {
                         text: "Web preview unavailable.",
                       }),
@@ -3496,12 +3535,21 @@
               const rect = canvasEl.getBoundingClientRect();
               // One note per pick of the Text tool; further clicks select.
               selectTool("select");
-              void editor.addText({
-                x:
-                  (event.clientX - rect.left - viewport.x) / viewport.zoom -
-                  120,
-                y: (event.clientY - rect.top - viewport.y) / viewport.zoom - 80,
-              });
+              void editor.addText(
+                {
+                  x:
+                    (event.clientX - rect.left - viewport.x) / viewport.zoom -
+                    120,
+                  y:
+                    (event.clientY - rect.top - viewport.y) / viewport.zoom -
+                    80,
+                },
+                "",
+                undefined,
+                undefined,
+                undefined,
+                lastTextStyle,
+              );
             }}
             onconnect={({ source, target }) => {
               if (tool === "arrow") void editor.createEdge(source, target);
@@ -3722,6 +3770,14 @@
             color={strokeColor}
             width={strokeWidth}
             fileDisabled={!canEdit || importing}
+            textStyle={canStyle ? textArtifact?.style : lastTextStyle}
+            onTextStyle={!connected
+              ? undefined
+              : canStyle && textArtifact
+                ? (style) => void styleText(textArtifact.id, style)
+                : tool === "text"
+                  ? (patch) => (lastTextStyle = { ...lastTextStyle, ...patch })
+                  : undefined}
             onSelect={selectTool}
             onColor={(value) => (strokeColor = value)}
             onWidth={(value) => (strokeWidth = value)}

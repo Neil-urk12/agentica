@@ -1,5 +1,7 @@
 <script lang="ts">
+  import type { TextStyle } from "@agentica/protocol";
   import Icon from "./Icon.svelte";
+  import TextStyleControls from "./TextStyleControls.svelte";
   import {
     ACTION_TOOLS,
     PRIMARY_TOOLS,
@@ -13,6 +15,9 @@
     color: string;
     width: number;
     fileDisabled?: boolean;
+    /** Shown with the Text tool or a selected plain note, like the draw options. */
+    textStyle?: TextStyle;
+    onTextStyle?: (patch: TextStyle) => void;
     onSelect: (tool: Tool) => void;
     onColor: (color: string) => void;
     onWidth: (width: number) => void;
@@ -25,6 +30,8 @@
     color,
     width,
     fileDisabled = false,
+    textStyle,
+    onTextStyle,
     onSelect,
     onColor,
     onWidth,
@@ -124,6 +131,14 @@
           {/each}
         </div>
       </div>
+    </div>
+  {:else if onTextStyle}
+    <div
+      class="toolbar__card toolbar__card--options"
+      role="group"
+      aria-label="Text style"
+    >
+      <TextStyleControls style={textStyle ?? {}} onChange={onTextStyle} />
     </div>
   {/if}
 </div>

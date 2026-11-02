@@ -142,6 +142,7 @@ pub(crate) const METHODS: &[&str] = &[
     "node.createText",
     "edge.create",
     "artifact.saveText",
+    "artifact.saveTextStyle",
     "node.createDrawing",
     "node.createWebPreview",
     "artifact.saveWebPreview",
@@ -408,6 +409,8 @@ struct CreateTextNode {
     text: String,
     #[serde(default)]
     purpose: TextPurpose,
+    #[serde(default)]
+    style: TextStyle,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -452,6 +455,104 @@ struct SaveText {
     artifact_id: String,
     expected_revision: f64,
     text: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SaveTextStyle {
+    workspace_id: String,
+    artifact_id: String,
+    style: TextStyle,
+}
+
+/// Node-level visual style of a plain text note; every field is optional and
+/// the enums reject unknown values, so a stored style is always renderable.
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TextStyle {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    color: Option<TextColor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    size: Option<TextSize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    weight: Option<TextWeight>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    align: Option<TextAlign>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum TextColor {
+    Default,
+    Red,
+    Orange,
+    Green,
+    Blue,
+    Violet,
+    Grey,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum TextSize {
+    S,
+    M,
+    L,
+    Xl,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum TextWeight {
+    Regular,
+    Bold,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum TextAlign {
+    Start,
+    Center,
+    End,
+}
+
+impl TextStyle {
+    /// Stored form: compact JSON, or NULL when no field is set.
+    fn stored(&self) -> Option<String> {
+        let empty = self.color.is_none()
+            && self.size.is_none()
+            && self.weight.is_none()
+            && self.align.is_none();
+        (!empty).then(|| serde_json::to_string(self).expect("text style serializes"))
+    }
+}
+
+/// Replace a text artifact's style without touching its revision: task
+/// staleness compares text revisions, and a style clash loses no text.
+pub(crate) fn save_text_style(
+    tx: &Transaction,
+    artifact_id: &str,
+    style: &TextStyle,
+) -> Result<(), RuntimeError> {
+    let kind: Option<String> = tx
+        .query_row(
+            "SELECT type FROM artifact WHERE id = ?1",
+            [artifact_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    match kind.as_deref() {
+        None => Err(not_found("Artifact")),
+        Some("text") => {
+            tx.execute(
+                "UPDATE text_content SET style = ?2
+                 WHERE id = (SELECT content_id FROM artifact WHERE id = ?1)",
+                (artifact_id, style.stored()),
+            )?;
+            Ok(())
+        }
+        Some(_) => Err(not_found("Text artifact")),
+    }
 }
 
 #[derive(Deserialize)]
@@ -1030,6 +1131,7 @@ impl Runtime {
                         false,
                         params.purpose.as_str(),
                     )?;
+                    save_text_style(tx, &artifact_id, &params.style)?;
                     Ok(json!({
                         "revision": bump(tx, &params.canvas_id, expected)?,
                         "node": {
@@ -1391,6 +1493,14 @@ impl Runtime {
                     Ok(json!({ "artifact": save_text(tx, &params.artifact_id, expected, &params.text)? }))
                 })
             }
+            "artifact.saveTextStyle" => {
+                let params: SaveTextStyle = parse(params)?;
+                id("artifactId", &params.artifact_id)?;
+                self.transact(&params.workspace_id, |tx| {
+                    save_text_style(tx, &params.artifact_id, &params.style)?;
+                    Ok(json!({ "artifact": artifact(tx, &params.artifact_id)? }))
+                })
+            }
             "artifact.saveWebPreview" => {
                 let p: SaveWebPreview = parse(params)?;
                 id("artifactId", &p.artifact_id)?;
@@ -1551,17 +1661,26 @@ fn artifact(tx: &Transaction, artifact_id: &str) -> Result<Value, RuntimeError> 
             )
         }
         "text" => {
-            let (body, purpose): (String, String) = tx.query_row(
-                "SELECT body, purpose FROM text_content WHERE id = ?1",
+            let (body, purpose, style): (String, String, Option<String>) = tx.query_row(
+                "SELECT body, purpose, style FROM text_content WHERE id = ?1",
                 [&content_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )?;
-            Ok(json!({
+            let mut value = json!({
                 "id": artifact_id, "type": "text",
                 "schemaVersion": schema_version,
                 "revision": revision,
                 "text": body, "purpose": purpose,
-            }))
+            });
+            if let Some(style) = style {
+                value["style"] = serde_json::from_str(&style).map_err(|error| {
+                    RuntimeError::new(
+                        "STORAGE_ERROR",
+                        format!("A stored text style is unreadable: {error}."),
+                    )
+                })?;
+            }
+            Ok(value)
         }
         "file" => {
             let (name, mime, size, file_text, text_status): (String, String, i64, String, String) =
@@ -1946,6 +2065,76 @@ mod tests {
             "x": 0, "y": 0, "width": 240, "height": 160,
             "text": text,
         })
+    }
+
+    #[test]
+    fn text_style_saves_without_a_revision_bump() {
+        let root = tempfile::tempdir().unwrap();
+        let mut runtime = Runtime::new(Some(root.path().to_path_buf()));
+        let workspace = call(&mut runtime, "workspace.create", json!({ "name": "Work" }))
+            ["workspace"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let canvas = call(
+            &mut runtime,
+            "canvas.create",
+            json!({ "workspaceId": workspace, "title": "Plan" }),
+        )["canvas"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let plain = call(
+            &mut runtime,
+            "node.createText",
+            text_params(&workspace, &canvas, 1, "Plain"),
+        );
+        assert!(plain["artifact"].get("style").is_none());
+
+        let mut params = text_params(&workspace, &canvas, 2, "Styled");
+        params["style"] = json!({ "size": "l", "weight": "bold" });
+        let styled = call(&mut runtime, "node.createText", params);
+        let id = styled["artifact"]["id"].as_str().unwrap().to_owned();
+        assert_eq!(
+            styled["artifact"]["style"],
+            json!({ "size": "l", "weight": "bold" })
+        );
+
+        let saved = call(
+            &mut runtime,
+            "artifact.saveTextStyle",
+            json!({ "workspaceId": workspace, "artifactId": id,
+                "style": { "color": "red", "align": "center" } }),
+        );
+        assert_eq!(
+            saved["artifact"]["style"],
+            json!({ "color": "red", "align": "center" })
+        );
+        assert_eq!(saved["artifact"]["revision"], 1);
+        assert_eq!(saved["artifact"]["text"], "Styled");
+
+        // An empty style clears the column instead of storing `{}`.
+        let cleared = call(
+            &mut runtime,
+            "artifact.saveTextStyle",
+            json!({ "workspaceId": workspace, "artifactId": id, "style": {} }),
+        );
+        assert!(cleared["artifact"].get("style").is_none());
+
+        for style in [
+            json!({ "color": "#ff0000" }),
+            json!({ "size": "xxl" }),
+            json!({ "font": "mono" }),
+        ] {
+            let error = runtime
+                .call(
+                    "artifact.saveTextStyle",
+                    json!({ "workspaceId": workspace, "artifactId": id, "style": style }),
+                )
+                .unwrap_err();
+            assert_eq!(error.code, "INVALID_PARAMS", "{style}");
+        }
     }
 
     #[test]

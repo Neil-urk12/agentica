@@ -121,6 +121,41 @@ const hang = (_url, request) =>
     ),
   );
 
+test("staging applies text styles and keeps text on a style-only update", () => {
+  const created = checkedToolOperation({
+    op: "createText",
+    x: 500,
+    y: 0,
+    width: 240,
+    height: 160,
+    text: "Heading",
+    style: { size: "xl", weight: "bold" },
+  });
+  const staged = stageOperations(context, [
+    created,
+    { op: "updateText", nodeId: id(1), style: { color: "red" } },
+  ]);
+  assert.equal(staged.artifacts[0].text, context.artifacts[0].text);
+  assert.deepEqual(staged.artifacts[0].style, { color: "red" });
+  assert.deepEqual(staged.artifacts.at(-1).style, {
+    size: "xl",
+    weight: "bold",
+  });
+  assert.throws(
+    () => checkedToolOperation({ op: "updateText", nodeId: id(1) }),
+    /text, the style, or both/,
+  );
+  assert.throws(
+    () =>
+      checkedToolOperation({
+        op: "updateText",
+        nodeId: id(1),
+        style: { color: "#ff0000" },
+      }),
+    /Invalid canvas operation/,
+  );
+});
+
 test("staging creates stable editable objects and connectors without changing the source", () => {
   const before = structuredClone(context);
   const created = checkedToolOperation({

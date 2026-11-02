@@ -251,6 +251,24 @@ const TileLayout = z.strictObject({
 });
 
 export const TextPurposeSchema = z.enum(["note", "instruction"]);
+/** Node-level look of a plain text note; absent fields render as the default. Mirrors `TextStyle` in commands.rs. */
+export const TEXT_COLORS = [
+  "default",
+  "red",
+  "orange",
+  "green",
+  "blue",
+  "violet",
+  "grey",
+] as const;
+export const TEXT_SIZES = ["s", "m", "l", "xl"] as const;
+export const TextStyleSchema = z.strictObject({
+  color: z.enum(TEXT_COLORS).optional(),
+  size: z.enum(TEXT_SIZES).optional(),
+  weight: z.enum(["regular", "bold"]).optional(),
+  align: z.enum(["start", "center", "end"]).optional(),
+});
+export type TextStyle = z.infer<typeof TextStyleSchema>;
 const ArtifactRef = { artifactId: IdSchema, expectedRevision: Revision };
 export const ArtifactOperationSchema = z.discriminatedUnion("op", [
   z.strictObject({ op: z.literal("text.replace"), ...ArtifactRef, text: Text }),
@@ -380,6 +398,7 @@ export const CanvasOperationSchema = z.discriminatedUnion("op", [
     artifactId: IdSchema,
     ...Geometry,
     text: Text,
+    style: TextStyleSchema.optional(),
   }),
   z.strictObject({
     op: z.literal("createShape"),
@@ -390,7 +409,19 @@ export const CanvasOperationSchema = z.discriminatedUnion("op", [
     color: DrawingColor,
     label: z.string().max(LIMITS.label).optional(),
   }),
-  z.strictObject({ op: z.literal("updateText"), nodeId: IdSchema, text: Text }),
+  z
+    .strictObject({
+      op: z.literal("updateText"),
+      nodeId: IdSchema,
+      text: Text.optional(),
+      // A style-only update keeps the text revision.
+      style: TextStyleSchema.optional(),
+    })
+    .refine(
+      (operation) =>
+        operation.text !== undefined || operation.style !== undefined,
+      "Change the text, the style, or both",
+    ),
   z.strictObject({
     op: z.literal("updateShape"),
     nodeId: IdSchema,
@@ -797,6 +828,7 @@ const ParamSchemas = {
     ...Geometry,
     text: Text,
     purpose: TextPurposeSchema.optional(),
+    style: TextStyleSchema.optional(),
   }),
   "edge.create": z
     .strictObject({
@@ -815,6 +847,11 @@ const ParamSchemas = {
     artifactId: IdSchema,
     expectedRevision: Revision,
     text: Text,
+  }),
+  "artifact.saveTextStyle": z.strictObject({
+    ...WorkspaceRef,
+    artifactId: IdSchema,
+    style: TextStyleSchema,
   }),
   "node.createDrawing": z.strictObject({
     ...CanvasRef,
@@ -995,6 +1032,7 @@ export const TextArtifactSchema = z.strictObject({
   revision: Revision,
   text: z.string(),
   purpose: TextPurposeSchema.optional(),
+  style: TextStyleSchema.optional(),
 });
 export const DrawingArtifactSchema = z.strictObject({
   id: IdSchema,
@@ -1223,6 +1261,7 @@ export const ResultSchemas = {
   }),
   "edge.create": z.strictObject({ revision: Revision, edge: EdgeSchema }),
   "artifact.saveText": z.strictObject({ artifact: TextArtifactSchema }),
+  "artifact.saveTextStyle": z.strictObject({ artifact: TextArtifactSchema }),
   "node.createDrawing": z.strictObject({
     revision: Revision,
     node: NodeSchema,

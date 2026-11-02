@@ -210,6 +210,40 @@
       "expect": { "artifact": { "id": "$firstArtifact", "revision": 2 } }
     },
     {
+      "method": "artifact.saveTextStyle",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "artifactId": "$firstArtifact",
+        "style": {
+          "color": "blue",
+          "size": "l",
+          "weight": "bold",
+          "align": "center"
+        }
+      },
+      "expect": {
+        "artifact": {
+          "id": "$firstArtifact",
+          "revision": 2,
+          "style": {
+            "color": "blue",
+            "size": "l",
+            "weight": "bold",
+            "align": "center"
+          }
+        }
+      }
+    },
+    {
+      "method": "artifact.saveTextStyle",
+      "params": {
+        "workspaceId": "$workspaceId",
+        "artifactId": "$firstArtifact",
+        "style": { "color": "#0000ff" }
+      },
+      "error": "INVALID_PARAMS"
+    },
+    {
       "method": "canvas.save",
       "params": {
         "workspaceId": "$workspaceId",

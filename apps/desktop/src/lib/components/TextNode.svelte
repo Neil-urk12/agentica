@@ -1,16 +1,20 @@
 <script lang="ts">
   import { Handle, NodeResizer, Position } from "@xyflow/svelte";
-  import { LIMITS, type Task } from "@agentica/protocol";
+  import { LIMITS, type Task, type TextStyle } from "@agentica/protocol";
   import { fitTextField, turnStatus } from "../canvas-view";
   import Icon from "./Icon.svelte";
   import Markdown from "./Markdown.svelte";
   import Select from "./Select.svelte";
+
+  // Body sizes; `m` matches the default --type-body, Markdown headings scale in em.
+  const SIZE_PX = { s: "12px", m: "14px", l: "18px", xl: "24px" } as const;
 
   interface Props {
     selected?: boolean;
     data: {
       text: string;
       purpose?: string;
+      style?: TextStyle;
       role?: "You" | "Agent";
       status?: string;
       error?: string;
@@ -79,6 +83,8 @@
             : "Text",
   );
   const framed = $derived(kind !== "text" || !!data.preview || !!todo);
+  // Only plain notes take a style; cards keep their role treatment.
+  const look = $derived(kind === "text" && !todo ? data.style : undefined);
   // Plain text shows its box unless it is a lone heading (a canvas title);
   // a wired title is outlined too, so its wires end on a visible edge.
   const title = $derived(/^ {0,3}#{1,6}[ \t]+\S.*$/.test(data.text.trim()));
@@ -126,6 +132,14 @@
   class:is-done={todo?.done}
   class:preview={data.preview}
   class:handles-hidden={!data.connectable}
+  style:color={look?.color && look.color !== "default"
+    ? `var(--text-${look.color})`
+    : undefined}
+  style:--type-body={look?.size ? SIZE_PX[look.size] : undefined}
+  style:font-weight={look?.weight === "bold" ? "700" : undefined}
+  style:text-align={look?.align && look.align !== "start"
+    ? look.align
+    : undefined}
 >
   <Handle type="target" position={Position.Top} />
   {#if framed}

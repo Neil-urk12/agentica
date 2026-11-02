@@ -233,6 +233,8 @@ enum Operation {
         width: f64,
         height: f64,
         text: String,
+        #[serde(default)]
+        style: TextStyle,
     },
     #[serde(rename = "createShape")]
     CreateShape {
@@ -248,7 +250,13 @@ enum Operation {
         label: String,
     },
     #[serde(rename = "updateText")]
-    UpdateText { node_id: String, text: String },
+    UpdateText {
+        node_id: String,
+        #[serde(default)]
+        text: Option<String>,
+        #[serde(default)]
+        style: Option<TextStyle>,
+    },
     #[serde(rename = "updateShape")]
     UpdateShape {
         node_id: String,
@@ -451,6 +459,7 @@ fn apply_operations(
                 width,
                 height,
                 text,
+                style,
             } => {
                 insert_node(
                     tx,
@@ -466,6 +475,7 @@ fn apply_operations(
                     &text,
                     false,
                 )?;
+                save_text_style(tx, &artifact_id, &style)?;
                 created.insert(node_id);
             }
             Operation::CreateShape {
@@ -522,16 +532,22 @@ fn apply_operations(
             Operation::UpdateText {
                 node_id,
                 text: body,
+                style,
             } => {
+                if body.is_none() && style.is_none() {
+                    return Err(invalid("Change the text, the style, or both."));
+                }
                 let node = scoped_node(tx, canvas_id, &node_id, context, &created, &mut checked)?;
-                text(&body)?;
                 let a = artifact(tx, node["artifactId"].as_str().unwrap())?;
-                save_text(
-                    tx,
-                    a["id"].as_str().unwrap(),
-                    a["revision"].as_i64().unwrap(),
-                    &body,
-                )?;
+                let artifact_id = a["id"].as_str().unwrap();
+                if let Some(body) = body {
+                    text(&body)?;
+                    save_text(tx, artifact_id, a["revision"].as_i64().unwrap(), &body)?;
+                }
+                // Style alone keeps the text revision, matching artifact.saveTextStyle.
+                if let Some(style) = style {
+                    save_text_style(tx, artifact_id, &style)?;
+                }
             }
             Operation::UpdateShape {
                 node_id,

@@ -1768,6 +1768,7 @@ export class Editor {
     size?: { width: number; height: number },
     origin?: { workspaceId: string; canvasId: string },
     purpose?: RuntimeParams<"node.createText">["purpose"],
+    style?: RuntimeParams<"node.createText">["style"],
   ): Promise<RuntimeResult<"node.createText"> | undefined> {
     let created: RuntimeResult<"node.createText"> | undefined;
     await this.enqueue(async () => {
@@ -1796,6 +1797,7 @@ export class Editor {
           height: size?.height ?? 160,
           text,
           ...(purpose ? { purpose } : {}),
+          ...(style ? { style } : {}),
         };
 
         const result = await this.call(
@@ -1814,6 +1816,48 @@ export class Editor {
       });
     });
     return created;
+  }
+
+  /**
+   * Merge a field patch with the latest saved style inside the queue, so
+   * rapid edits preserve one another. Undefined restores a field's default.
+   * Keeps the text revision and stays outside text drafts and undo history.
+   */
+  async setTextStyle(
+    artifactId: string,
+    patch: RuntimeParams<"artifact.saveTextStyle">["style"],
+  ): Promise<boolean> {
+    let saved = false;
+    await this.enqueue(async () => {
+      await this.settleSave();
+      if (this.state.error || this.disposed) return;
+      await this.mutation(async () => {
+        const workspaceId = this.state.workspace?.workspace.id;
+        const artifact = this.state.document?.artifacts.find(
+          (item) => item.id === artifactId,
+        );
+        if (!workspaceId || artifact?.type !== "text") return;
+        const style = { ...artifact.style, ...patch };
+        const result = await this.call(
+          this.key(),
+          false,
+          "artifact.saveTextStyle",
+          { workspaceId, artifactId, style },
+        );
+        const current = this.state.document;
+        if (!current) return;
+        this.publish({
+          document: {
+            ...current,
+            artifacts: current.artifacts.map((item) =>
+              item.id === artifactId ? result.artifact : item,
+            ),
+          },
+        });
+        saved = true;
+      });
+    });
+    return saved;
   }
 
   /** Only acknowledged URLs may navigate a live frame, even while a draft is dirty. */

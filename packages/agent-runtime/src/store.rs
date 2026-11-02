@@ -32,6 +32,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("schema_v15.sql"),
     include_str!("schema_v16.sql"),
     include_str!("schema_v17.sql"),
+    include_str!("schema_v18.sql"),
 ];
 pub const STORAGE_VERSION: i64 = MIGRATIONS.len() as i64;
 
@@ -1377,6 +1378,7 @@ mod tests {
             .map(|table| {
                 // Later versions add columns; compare the legacy ones.
                 let columns = match *table {
+                    "text_content" => "id, body, purpose",
                     "canvas_node" => "id, canvas_id, kind, artifact_id, x, y, width, height",
                     "conversation_turn" => {
                         "sequence, id, canvas_id, model, prompt, reply, prompt_node_id, reply_node_id, anchor, context, status, operations, error"

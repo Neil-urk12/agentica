@@ -58,6 +58,13 @@
   --primary-from: #5b5bd6;
   --primary-to: #4a4ac4;
   --on-primary: #ffffff;
+  /* Named text style colors; each meets 4.5:1 on the canvas in its theme. */
+  --text-red: #c62828;
+  --text-orange: #b45309;
+  --text-green: #15803d;
+  --text-blue: #1d4ed8;
+  --text-violet: #6d28d9;
+  --text-grey: #5f6377;
   color-scheme: light;
   font-family: "Poppins", "Segoe UI", system-ui, sans-serif;
   font-synthesis: none;
@@ -109,6 +116,12 @@
   --primary-from: #f59e0b;
   --primary-to: #e8900a;
   --on-primary: #1a1a1a;
+  --text-red: #f87171;
+  --text-orange: #fb923c;
+  --text-green: #4ade80;
+  --text-blue: #60a5fa;
+  --text-violet: #a78bfa;
+  --text-grey: #a1a1aa;
   color-scheme: dark;
 }
 
@@ -1430,9 +1443,10 @@ button.pill:disabled {
 
 /* ----------------------------------------------------------------- toolbar */
 
+/* Tool options (draw, text style) sit above the main toolbar, never beside it. */
 .toolbar {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column-reverse;
   justify-content: center;
   align-items: center;
   gap: 0.5rem;
@@ -1452,6 +1466,9 @@ button.pill:disabled {
 }
 
 .toolbar__card--options {
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 100%;
   gap: 0.85rem;
 }
 
@@ -3307,6 +3324,13 @@ span.card-more {
   font-size: 0.78rem;
   font-weight: 600;
   color: var(--ink-soft);
+}
+
+/* Letter and icon labels on toolbar option buttons (text style card). */
+.toolbar__text {
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: var(--type-meta);
 }
 
 /* ------------------------------------------------------------- responsive */

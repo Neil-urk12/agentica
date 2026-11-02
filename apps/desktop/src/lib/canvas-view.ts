@@ -1,4 +1,4 @@
-import { LIMITS, MAX_FRAME_BYTES } from "@agentica/protocol";
+import { LIMITS, MAX_FRAME_BYTES, type TextStyle } from "@agentica/protocol";
 
 const encoder = new TextEncoder();
 const jsonBytes = (value: unknown) =>
@@ -342,9 +342,20 @@ export function fitTextHeight(
 export type ProposedContent = { title: string; text: string };
 
 type ContentOperation =
-  | { op: "createText" | "updateText"; text: string }
+  | { op: "createText" | "updateText"; text?: string; style?: TextStyle }
   | { op: "createShape" | "updateShape"; kind: string; label?: string }
   | { op: string };
+
+/** Plain words for a text style, e.g. "red, size xl, bold, centered". */
+export function describeTextStyle(style: TextStyle): string {
+  const parts = [
+    style.color && style.color !== "default" && style.color,
+    style.size && `size ${style.size}`,
+    style.weight === "bold" && "bold",
+    style.align && style.align !== "start" && `aligned ${style.align}`,
+  ].filter(Boolean);
+  return parts.length ? parts.join(", ") : "default style";
+}
 
 export function proposedContent(
   operations: readonly ContentOperation[],
@@ -352,12 +363,17 @@ export function proposedContent(
   const items: ProposedContent[] = [];
   operations.forEach((operation, index) => {
     const step = `Change ${index + 1}`;
-    if ("text" in operation)
-      items.push({
-        title: `${step}: ${operation.op === "createText" ? "new text" : "updated text"}`,
-        text: operation.text,
-      });
-    else if ("label" in operation && operation.label)
+    if ("text" in operation || "style" in operation) {
+      const kind = operation.op === "createText" ? "new text" : "updated text";
+      // A style-only update still gets a line, so it never reads as empty.
+      if ("text" in operation && operation.text !== undefined)
+        items.push({ title: `${step}: ${kind}`, text: operation.text });
+      if ("style" in operation && operation.style)
+        items.push({
+          title: `${step}: ${kind} style`,
+          text: describeTextStyle(operation.style),
+        });
+    } else if ("label" in operation && operation.label)
       items.push({
         title: `${step}: ${operation.kind} label`,
         text: operation.label,

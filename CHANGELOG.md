@@ -12,6 +12,47 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Text styles for plain notes (2026-11-02)
+
+- Implemented: plain text notes take an optional node-level style: named
+  color (default, red, orange, green, blue, violet, grey), size S/M/L/XL,
+  regular or bold weight, and start/center/end alignment. A style card
+  above the canvas toolbar (like the draw options) shows the controls with
+  the Text tool active or one plain note selected; instruction notes,
+  conversation cards, and task cards keep their own look and ignore style.
+- Changed: tool option cards (draw options and the new style card) now stack
+  above the main toolbar instead of wrapping beside it.
+  New notes from
+  the Text tool start with the last style picked (in memory only).
+- Colors are names mapped to per-theme `--text-*` tokens rather than hex, so a
+  note stays legible after a theme switch. Size sets the body size and
+  Markdown headings scale with it; inline `**bold**` still works.
+- Storage: `schema_v18.sql` adds a nullable `text_content.style` JSON column;
+  older rows read as unstyled. `artifact.saveTextStyle` writes only the style
+  and does not bump the artifact revision, because task "edited since sent"
+  and "context changed" compare text revisions and a recolor is not an edit.
+  Concurrent style saves are last-write-wins; a clash loses no text.
+- Agent: `canvas_read` returns a note's style (the outline does not).
+  `createText` takes an optional `style`; `updateText` takes `text`, `style`,
+  or both, and a style-only update keeps the text revision. Proposal previews
+  render styles and the review disclosure lists style changes. The system
+  prompt says styles are visual only.
+- Picking a larger size grows the note to fit through the existing Fit text
+  path; when limits or a neighbor block it, the overflow cue and notice stay.
+- Fixed: toolbar controls send individual field changes, merged with the latest
+  saved style inside the editor queue, so rapid clicks preserve earlier choices
+  and restoring a default keeps other fields. The style card targets exactly one
+  selected plain note; a stale inspector target or multiple selected objects
+  cannot change only one member of the selection.
+- Planned, not implemented: font family (needs a bundled font), opacity,
+  layer order, and multi-select styling. Style changes are not in undo
+  history. When proposal revert lands, it must compare styles explicitly.
+- Validated: Rust tests for style save without a revision bump, invalid style
+  rejection, and style-only proposal apply; shared round-trip fixture over the
+  desktop and HTTP transports; `node --test` for staging and disclosure. Editor
+  tests cover queued field edits and default resets; the rendered browser test
+  covers rapid style clicks, deselection, and multiple selected notes.
+
 ### Stacked canvas sidebar and quieter waiting control (2026-11-02)
 
 - Implemented: the inspector moves into the left sidebar below the node list,

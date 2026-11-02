@@ -493,3 +493,36 @@ fn chats_keep_separate_model_context_and_can_be_resumed() {
         ])
     );
 }
+
+#[test]
+fn style_only_update_keeps_text_and_revision() {
+    let (_data, mut runtime, workspace) = setup();
+    let canvas = Canvas::create(&mut runtime, &workspace);
+    let note = canvas.text(&mut runtime, 0.0, 0.0, "Keep me");
+    canvas.start(&mut runtime, TURN, json!([note]));
+
+    let mut finish = canvas.turn(TURN);
+    finish["reply"] = json!("Styled");
+    finish["status"] = json!("complete");
+    finish["error"] = json!("");
+    finish["operations"] = json!([{"op":"updateText","nodeId":note}]);
+    let (code, _) = error(&mut runtime, "conversation.finish", finish.clone());
+    assert_eq!(code, "INVALID_PARAMS");
+
+    finish["operations"] =
+        json!([{"op":"updateText","nodeId":note,"style":{"color":"red","weight":"bold"}}]);
+    ok(&mut runtime, "conversation.finish", finish);
+    let mut resolve = canvas.turn(TURN);
+    resolve["action"] = json!("apply");
+    ok(&mut runtime, "conversation.resolve", resolve);
+
+    let state = ok(
+        &mut runtime,
+        "canvas.open",
+        json!({"workspaceId":workspace,"canvasId":canvas.id}),
+    );
+    let artifact = &state["artifacts"][0];
+    assert_eq!(artifact["text"], "Keep me");
+    assert_eq!(artifact["revision"], 1);
+    assert_eq!(artifact["style"], json!({"color":"red","weight":"bold"}));
+}

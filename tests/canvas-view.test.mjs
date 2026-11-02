@@ -265,6 +265,26 @@ test("proposed content lists text and labels for read-only review", () => {
   );
 });
 
+test("proposed content lists style changes so style-only edits are visible", () => {
+  assert.deepEqual(
+    proposedContent([
+      {
+        op: "updateText",
+        style: { color: "red", size: "xl", weight: "bold", align: "center" },
+      },
+      { op: "createText", text: "Plain", style: {} },
+    ]),
+    [
+      {
+        title: "Change 1: updated text style",
+        text: "red, size xl, bold, aligned center",
+      },
+      { title: "Change 2: new text", text: "Plain" },
+      { title: "Change 2: new text style", text: "default style" },
+    ],
+  );
+});
+
 test("zoom keyboard shortcuts identify zoom in, zoom out, and reset factors", () => {
   // Zoom in via Ctrl/Cmd + '+' or '='
   assert.equal(

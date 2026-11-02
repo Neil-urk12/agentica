@@ -38,6 +38,59 @@ const nodeId = "00000000-0000-4000-8000-000000000003";
 const artifactId = "00000000-0000-4000-8000-000000000004";
 const CHAT_ID = "00000000-0000-4000-8000-000000000005";
 
+test("rapid text style field edits merge after an in-flight save", async (t) => {
+  const started = deferred();
+  const finish = deferred();
+  let delayed = false;
+  const { editor, disk, calls } = await setup(t, async (method) => {
+    if (method === "artifact.saveTextStyle" && !delayed) {
+      delayed = true;
+      started.resolve();
+      await finish.promise;
+    }
+  });
+  const red = editor.setTextStyle(artifactId, { color: "red" });
+  await started.promise;
+  const bold = editor.setTextStyle(artifactId, { weight: "bold" });
+  const centered = editor.setTextStyle(artifactId, { align: "center" });
+  finish.resolve();
+  assert.deepEqual(await Promise.all([red, bold, centered]), [
+    true,
+    true,
+    true,
+  ]);
+  const style = { color: "red", weight: "bold", align: "center" };
+  assert.deepEqual(disk.artifacts[0].style, style);
+  assert.deepEqual(editor.state.document.artifacts[0].style, style);
+  assert.equal(disk.artifacts[0].text, "Original");
+  assert.equal(disk.artifacts[0].revision, 1);
+  assert.equal(editor.state.dirty, false);
+  assert.deepEqual(
+    calls
+      .filter((call) => call.method === "artifact.saveTextStyle")
+      .map((call) => call.params.style),
+    [{ color: "red" }, { color: "red", weight: "bold" }, style],
+  );
+});
+
+test("restoring a text style field's default preserves other fields", async (t) => {
+  const { editor, disk } = await setup(t);
+  await editor.setTextStyle(artifactId, { color: "red", weight: "bold" });
+  assert.equal(
+    await editor.setTextStyle(artifactId, { color: undefined }),
+    true,
+  );
+  assert.deepEqual(disk.artifacts[0].style, { weight: "bold" });
+  assert.equal(
+    await editor.setTextStyle(artifactId, { weight: undefined }),
+    true,
+  );
+  assert.equal(disk.artifacts[0].style, undefined);
+  assert.equal(editor.state.document.artifacts[0].style, undefined);
+  assert.equal(disk.artifacts[0].revision, 1);
+  assert.equal(editor.state.dirty, false);
+});
+
 test("preview saves use artifact revisions and leave other previews unchanged on conflict", async (t) => {
   let conflict = false;
   const { editor, disk } = await setup(t, async (method) => {
@@ -388,6 +441,15 @@ async function setup(t, intercept = async () => {}) {
         ...disk,
         nodes: disk.nodes.map((node) => ({ task: null, ...node })),
       });
+    if (method === "artifact.saveTextStyle") {
+      const artifact = disk.artifacts.find(
+        (item) => item.id === params.artifactId,
+      );
+      const style = JSON.parse(JSON.stringify(params.style));
+      delete artifact.style;
+      if (Object.keys(style).length) artifact.style = style;
+      return { artifact: structuredClone(artifact) };
+    }
     if (method === "artifact.saveText") {
       assert.equal(params.expectedRevision, disk.artifacts[0].revision);
       disk.artifacts[0] = {
