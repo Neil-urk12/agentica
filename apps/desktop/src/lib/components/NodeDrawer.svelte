@@ -11,23 +11,14 @@
     items: NodeItem[];
     selectedId: string;
     busy: boolean;
-    width: number;
     onSelect: (id: string) => void;
     onClose: () => void;
-    onResize: (width: number) => void;
     onDelete: (id: string) => void;
   }
 
-  let {
-    items,
-    selectedId,
-    busy,
-    width,
-    onSelect,
-    onClose,
-    onResize,
-    onDelete,
-  }: Props = $props();
+  // The sidebar wrapper owns the width grip, so this list fits any placement.
+  let { items, selectedId, busy, onSelect, onClose, onDelete }: Props =
+    $props();
 
   const ICONS: Record<string, string> = {
     project: "folder_open",
@@ -56,38 +47,9 @@
     rectangle: "Rectangle",
     ellipse: "Ellipse",
   };
-
-  /** Drag the right edge to change the drawer width. */
-  function startResize(event: PointerEvent) {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    const grip = event.currentTarget as HTMLElement;
-    const startX = event.clientX;
-    const startWidth = width;
-    grip.setPointerCapture(event.pointerId);
-    const move = (moveEvent: PointerEvent) =>
-      onResize(startWidth + (moveEvent.clientX - startX));
-    const end = () => {
-      grip.removeEventListener("pointermove", move);
-      grip.removeEventListener("pointerup", end);
-      grip.removeEventListener("pointercancel", end);
-    };
-    grip.addEventListener("pointermove", move);
-    grip.addEventListener("pointerup", end);
-    grip.addEventListener("pointercancel", end);
-  }
-
-  /** Resize from the keyboard too: arrows nudge, shift arrows jump. */
-  function resizeByKey(event: KeyboardEvent) {
-    const step = event.shiftKey ? 32 : 8;
-    if (event.key === "ArrowRight") onResize(width + step);
-    else if (event.key === "ArrowLeft") onResize(width - step);
-    else return;
-    event.preventDefault();
-  }
 </script>
 
-<aside class="drawer" style="--drawer-w: {width}px" aria-label="Nodes">
+<aside class="drawer" aria-label="Nodes">
   <div class="drawer__head">
     <h2><Icon name="toc" size={18} />Nodes</h2>
     <span class="drawer__count">{items.length}</span>
@@ -145,13 +107,4 @@
       </ul>
     {/if}
   </div>
-
-  <button
-    class="drawer__grip"
-    type="button"
-    aria-label="Resize nodes panel"
-    title="Drag to resize"
-    onpointerdown={startResize}
-    onkeydown={resizeByKey}
-  ></button>
 </aside>

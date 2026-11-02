@@ -1248,7 +1248,7 @@ button.pill:disabled {
   pointer-events: none;
 }
 
-.canvas__nodes,
+.canvas__nodes .icon-btn,
 .canvas__side .icon-btn {
   background: var(--surface-glass);
   border-color: var(--line-strong);
@@ -1265,6 +1265,9 @@ button.pill:disabled {
 
 .canvas__nodes {
   left: 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
 }
 
 .canvas__side {
@@ -1588,17 +1591,50 @@ button.pill:disabled {
 
 /* ------------------------------------------------------------------ drawer */
 
-.drawer {
+/* The left sidebar stacks the node list over the inspector. Each section's
+   grow factor is its share of the divider split, or 1 when it is alone. */
+.sidebar {
   position: relative;
   width: var(--drawer-w, 15rem);
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: 0.7rem;
-  padding: 1rem 0.9rem 1.2rem;
+  min-height: 0;
   overflow: hidden;
   background: var(--surface);
   border-right: 1px solid var(--line);
+}
+
+.sidebar__divider {
+  flex: none;
+  /* A 1px line inside a 7px hit area that overlaps both sections. */
+  box-sizing: content-box;
+  height: 1px;
+  margin: -3px 0;
+  position: relative;
+  z-index: 1;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  background: var(--line) padding-box;
+  cursor: row-resize;
+  touch-action: none;
+  transition: background 0.14s ease;
+}
+
+.sidebar__divider:hover,
+.sidebar__divider:focus-visible {
+  background: var(--accent);
+  outline: none;
+}
+
+.drawer {
+  flex: var(--nodes-grow, 1) 1 0;
+  min-height: 8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 1rem 0.9rem 1.2rem;
+  overflow: hidden;
 }
 
 .drawer__head {
@@ -1616,6 +1652,7 @@ button.pill:disabled {
 
 .drawer__grip {
   position: absolute;
+  z-index: 2;
   top: 0;
   right: 0;
   width: 7px;
@@ -1763,15 +1800,13 @@ button.pill:disabled {
 /* --------------------------------------------------------------- inspector */
 
 .inspector {
-  width: 20rem;
-  flex: none;
+  flex: var(--inspector-grow, 1) 1 0;
+  min-height: 8rem;
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
   padding: 1rem 1.1rem 1.5rem;
   overflow-y: auto;
-  background: var(--surface);
-  border-left: 1px solid var(--line);
 }
 
 .chat {
@@ -3318,13 +3353,6 @@ span.card-more {
   .split {
     grid-template-columns: minmax(0, 1fr);
   }
-  .inspector {
-    position: absolute;
-    inset: 0 0 0 auto;
-    z-index: 20;
-    width: min(20rem, 90%);
-    box-shadow: var(--shadow-lg);
-  }
   .chat {
     position: absolute;
     inset: 0 0 0 auto;
@@ -3333,11 +3361,13 @@ span.card-more {
     max-width: none;
     box-shadow: var(--shadow-lg);
   }
-  .drawer {
+  /* The overlay starts right of the toggle stack so both toggles stay usable. */
+  .sidebar {
     position: absolute;
-    inset: 0 auto 0 0;
+    inset: 0 auto 0 3.4rem;
     z-index: 20;
-    width: min(var(--drawer-w, 15rem), 90%);
+    width: min(var(--drawer-w, 15rem), calc(100% - 3.4rem));
+    border-left: 1px solid var(--line);
     box-shadow: var(--shadow-lg);
   }
   .stage {
@@ -3362,10 +3392,15 @@ span.card-more {
   .topbar__divider {
     display: none;
   }
+  /* Right-packed, so the waiting control can come and go without moving the
+     other actions. */
   .topbar__actions {
     width: 100%;
     margin-left: 0;
-    justify-content: space-between;
+    justify-content: flex-end;
+  }
+  .topbar__actions > .waiting {
+    margin-right: auto;
   }
 }
 

@@ -1361,6 +1361,37 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
       `!!document.querySelector(".inspector")`,
       "the inspector to open from its canvas control",
     );
+    // The inspector opens alone in the left sidebar while chat stays open on
+    // the right, and offers no node picker of its own.
+    assert.deepEqual(
+      await evaluate(
+        browser,
+        `(() => {
+          const canvas = document.querySelector(".canvas").getBoundingClientRect();
+          const toggle = document.querySelector('[aria-label="Toggle inspector"]');
+          const sidebar = document.querySelector(".sidebar").getBoundingClientRect();
+          const chat = document.querySelector(".chat");
+          return {
+            toggleLeft: toggle.getBoundingClientRect().right < canvas.left + canvas.width / 2,
+            pressed: toggle.getAttribute("aria-pressed"),
+            sidebarLeft: sidebar.right <= canvas.left + 1,
+            alone: !document.querySelector(".sidebar .drawer, .sidebar__divider"),
+            chatOpen: !!chat && !chat.hidden,
+            picker: !!document.querySelector(".inspector select"),
+            rightToggles: document.querySelectorAll('.canvas__side [aria-label="Toggle inspector"]').length,
+          };
+        })()`,
+      ),
+      {
+        toggleLeft: true,
+        pressed: "true",
+        sidebarLeft: true,
+        alone: true,
+        chatOpen: true,
+        picker: false,
+        rightToggles: 0,
+      },
+    );
     const composite = `[data-id="${compositeId}"]`;
     assert.equal(
       await evaluate(
@@ -1480,7 +1511,12 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
 
     // Drag from each drawing's handle to the text node, as a user would.
     const press = async (key, code, modifiers = 0) => {
-      const windowsVirtualKeyCode = { Enter: 13, Tab: 9, KeyA: 65 }[code];
+      const windowsVirtualKeyCode = {
+        Enter: 13,
+        Tab: 9,
+        KeyA: 65,
+        ArrowDown: 40,
+      }[code];
       for (const type of ["keyDown", "keyUp"])
         await browser.send(
           "Input.dispatchKeyEvent",
@@ -1538,9 +1574,10 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
     // Select the seeded text note and edit it through the inspector. The
     // backend has an empty PATH (no Codex).
     await clickAt(browser, await boxOf(browser, `[data-id="${textNodeId}"]`));
+    const selectedNote = `document.querySelector('[data-id="${textNodeId}"]')?.classList.contains("node--selected") && !document.querySelector(".inspector select")`;
     await waitFor(
       browser,
-      `document.querySelector("#text-node")?.value === ${JSON.stringify(textNodeId)} && !!document.querySelector("#text-content")`,
+      `${selectedNote} && !!document.querySelector("#text-content")`,
       "the selected note in the inspector",
     );
     await evaluate(browser, `document.querySelector("#text-content").focus()`);
@@ -1564,6 +1601,29 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
         `document.querySelector("label[for='text-content']").textContent`,
       ),
       "Text content",
+    );
+
+    // Open the node list above the inspector and move the divider down.
+    await clickAt(browser, await boxOf(browser, '[aria-label="Toggle nodes"]'));
+    const divider = `document.querySelector('[role="separator"][aria-label="Resize nodes and inspector"]')?.getAttribute("aria-valuenow")`;
+    await waitFor(
+      browser,
+      `${divider} === "50" && document.querySelector(".sidebar .drawer + .sidebar__divider + .inspector") !== null`,
+      "the node list stacked above the inspector",
+    );
+    await evaluate(
+      browser,
+      `document.querySelector(".sidebar__divider").focus()`,
+    );
+    for (let i = 0; i < 3; i++) await press("ArrowDown", "ArrowDown");
+    const split = await evaluate(browser, divider);
+    assert.equal(split, "56", "Down moves the divider");
+    assert.ok(
+      await evaluate(
+        browser,
+        `document.querySelector(".sidebar .drawer").offsetHeight > document.querySelector(".sidebar .inspector").offsetHeight`,
+      ),
+      "the node list takes the larger share",
     );
 
     // Closing and reopening the canvas must bring the connections back.
@@ -1595,14 +1655,29 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
       false,
       "the inspector closes again when the canvas reopens",
     );
-    await clickAt(
-      browser,
-      await boxOf(browser, '[aria-label="Toggle inspector"]'),
-    );
+    // Selecting on the canvas never opens a hidden sidebar.
+    await clickAt(browser, await boxOf(browser, `[data-id="${textNodeId}"]`));
     await waitFor(
       browser,
-      `document.querySelector("#text-node")?.value === ${JSON.stringify(textNodeId)} && document.querySelector("#text-content")?.value === "Draft a release plan from these notes."`,
+      `document.querySelector('[data-id="${textNodeId}"]')?.classList.contains("node--selected")`,
+      "the note to be selected again",
+    );
+    assert.equal(
+      await evaluate(browser, `!!document.querySelector(".sidebar")`),
+      false,
+      "selection leaves the sidebar hidden",
+    );
+    for (const toggle of ["Toggle nodes", "Toggle inspector"])
+      await clickAt(browser, await boxOf(browser, `[aria-label="${toggle}"]`));
+    await waitFor(
+      browser,
+      `${selectedNote} && document.querySelector("#text-content")?.value === "Draft a release plan from these notes."`,
       "the selected note to reopen in the inspector",
+    );
+    assert.equal(
+      await evaluate(browser, divider),
+      split,
+      "the divider split survives reopening the canvas",
     );
     assert.equal(
       await evaluate(browser, `document.querySelector("#node-x").value`),
@@ -2507,6 +2582,26 @@ test("chat panel history, reviewed canvas edits, recovery and cancellation work 
       `document.querySelector('.chat').hidden && (() => { const r = document.querySelector('.drawing.preview').getBoundingClientRect(); return r.left >= 0 && r.right <= 360; })()`,
       "Show dismissing the narrow overlay",
     );
+    // The narrow sidebar overlay leaves both toggles usable and replaces chat.
+    const reachable = (label) =>
+      `(() => { const b = document.querySelector('[aria-label="${label}"]'); const r = b.getBoundingClientRect(); return r.left >= 0 && r.right <= 360 && document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('button') === b; })()`;
+    await toggleChat();
+    await evaluate(
+      browser,
+      `document.querySelector('[aria-label="Toggle nodes"]').click()`,
+    );
+    await waitFor(
+      browser,
+      `getComputedStyle(document.querySelector('.sidebar')).position === 'absolute' && document.querySelector('.chat').hidden && document.documentElement.scrollWidth <= 360 && ${reachable("Toggle nodes")} && ${reachable("Toggle inspector")}`,
+      "the narrow sidebar overlay closing chat with both toggles reachable",
+    );
+    await toggleChat();
+    await waitFor(
+      browser,
+      `!document.querySelector('.sidebar') && !document.querySelector('.chat').hidden`,
+      "chat replacing the narrow sidebar overlay",
+    );
+    await toggleChat();
     await metrics(1600, 1000);
     await toggleChat();
     await review("Discard");
@@ -3108,6 +3203,14 @@ wait
       `!!document.querySelector('${node} .task-bar')`,
       "the task controls",
     );
+    // An idle session tile shows the muted, icon-only waiting control.
+    const waiting = `(() => { const b = document.querySelector('.topbar__actions .waiting > button'); return b ? [b.className.includes('icon-btn'), b.getAttribute('aria-label'), b.getAttribute('title'), b.textContent.trim()] : null; })()`;
+    assert.deepEqual(await run(waiting), [
+      true,
+      "Nothing waiting",
+      "Nothing waiting",
+      "notifications_none",
+    ]);
 
     // Assigning draws a wire but never starts the tile.
     await run(
@@ -3189,6 +3292,11 @@ wait
       `document.querySelector('${node} .task-attention')?.textContent.includes('Approval requested')`,
       "the mirrored attention hint",
     );
+    await waitFor(
+      browser,
+      `document.querySelector('.topbar__actions .waiting__trigger')?.textContent.replace(/\\s+/g, '') === '1waiting'`,
+      "the waiting pill",
+    );
     await run(confirm);
     await waitFor(
       browser,
@@ -3225,6 +3333,45 @@ wait
       `${status}.includes('to a removed agent') && document.querySelector('${node} .task-assignee')?.dataset.value === '' && !document.querySelector('.task-wire')`,
       "the task without its removed agent",
     );
+    // Without session tiles the control is gone and Ctrl+J opens nothing.
+    const openProject = `document.querySelector('.topbar__actions [title="Open project"]').getBoundingClientRect().left`;
+    assert.equal(await run(`!!document.querySelector('.waiting')`), false);
+    await run(`document.activeElement?.blur()`);
+    for (const type of ["keyDown", "keyUp"])
+      await browser.send(
+        "Input.dispatchKeyEvent",
+        {
+          type,
+          key: "j",
+          code: "KeyJ",
+          modifiers: 2,
+          windowsVirtualKeyCode: 74,
+        },
+        browser.sessionId,
+      );
+    await delay(200);
+    assert.equal(
+      await run(`!!document.querySelector('#waiting-queue, .waiting')`),
+      false,
+      "the shortcut does nothing without sessions",
+    );
+    // Adding a terminal brings the control back without moving other actions.
+    const before = await run(openProject);
+    await editor.openWorkspace(workspaceId);
+    await editor.openCanvas(canvasId);
+    await editor.addSessionTile(
+      editor.state.document.projectGroups.at(-1).id,
+      "shell",
+    );
+    assert.equal(editor.state.error, "");
+    await editor.closeWorkspace();
+    await openApp();
+    await waitFor(
+      browser,
+      `document.querySelector('.waiting > button')?.getAttribute('aria-label') === 'Nothing waiting'`,
+      "the waiting control for the new terminal",
+    );
+    assert.equal(await run(openProject), before);
     assert.match(
       await run(`document.querySelector('${node} .card-body').textContent`),
       /Fix the flaky http test/,

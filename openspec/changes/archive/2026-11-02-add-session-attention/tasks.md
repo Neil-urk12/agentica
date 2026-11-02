@@ -36,6 +36,7 @@
 - [x] 5.1 Add README guidance on what attention indicators do and do not mean, plus the opt-in Codex `[tui]` setup and its global-config trade-off
 - [x] 5.2 Add a concise CHANGELOG entry with the backend-scanning and labeling rationale
 - [ ] 5.3 Manually verify on Linux in desktop and browser modes: a `printf '\a'` and a `cargo test` bell in an off-viewport shell tile, a Codex approval and turn notification with the documented setup, Go then Dismiss, focus-clears, browser refresh preserving attention, and no attention from prompt title sequences
+  - Archived on 2026-11-02 with this check still open; it remains to be done by hand.
   - Browser checks completed at 680×800 in both themes: real shell and cargo-test bells, offscreen attention, keyboard Go and Dismiss, refresh/reopen retention, collapsed counts, and Go preserving collapse. Focus reporting/gating, prompt-title filtering, and connection loss pass unit and real-PTY integration tests.
   - Still unverified: desktop GUI interactions and live Codex approval/turn notifications with the documented opt-in configuration.
 - [x] 5.4 Run `pnpm check`, `pnpm lint`, `pnpm test`, `pnpm build`, `pnpm format:check`, `pnpm check:rust`, and `pnpm test:rust`

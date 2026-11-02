@@ -12,6 +12,38 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Stacked canvas sidebar and quieter waiting control (2026-11-02)
+
+- Implemented: the inspector moves into the left sidebar below the node list,
+  so chat keeps the right side and both can stay open. Before, chat and the
+  inspector shared one slot and opening either closed the other.
+- Two stacked toggles at the canvas's top-left ("Toggle nodes", "Toggle
+  inspector", with `aria-pressed`) replace the single nodes button and the
+  right-side inspector toggle. One visible section fills the sidebar; two are
+  split by a divider (drag, or Up/Down) whose position is stored as a percent
+  under `agentica.sidebarSplit` (default 50). Each section keeps about 8rem.
+  The existing `agentica.drawerWidth` still sets the sidebar width.
+- Removed: the inspector's "Selected node" dropdown, which repeated the node
+  list. With nothing selected the inspector shows "Select a node". Selecting
+  a node never opens a hidden sidebar.
+- At ≤820px the sidebar is an overlay that starts right of the toggles, so
+  both stay reachable at 360px, and only one of sidebar and chat is open.
+- The inspector is now `Inspector.svelte` and the width grip moved from
+  `NodeDrawer` to the sidebar wrapper, so both pieces are placement-free.
+  Planned, not implemented: a VS Code–style activity-bar layout preset that
+  reuses them.
+- The top-bar waiting control is hidden when the canvas has no terminal or
+  agent tiles (Changes tiles don't count), and Ctrl/Cmd+J does nothing then.
+  With sessions but nothing waiting it is a muted icon-only bell named
+  `Nothing waiting`; the `<N> waiting` pill is unchanged. If the last session
+  tile goes while the queue is open, the queue closes and focus moves to Open
+  project. At ≤680px the top-bar actions pack right instead of spreading, so
+  the control appearing or disappearing never moves the other actions.
+- Validated: browser tests cover the left toggle with chat staying open, the
+  canvas/node-list selection without a dropdown, the divider split surviving a
+  canvas reopen, and the three waiting-control states including the inert
+  shortcut.
+
 ### Contract fixture: stored-state task errors (2026-11-01)
 
 - Fixed: the HTTP contract test failed at `task.update` with a drawing node,

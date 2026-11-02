@@ -127,6 +127,7 @@
   import WorkspacePicker from "./lib/components/WorkspacePicker.svelte";
   import CanvasPicker from "./lib/components/CanvasPicker.svelte";
   import NodeDrawer from "./lib/components/NodeDrawer.svelte";
+  import Inspector from "./lib/components/Inspector.svelte";
   import {
     DEFAULT_STROKE_COLOR,
     DEFAULT_STROKE_WIDTH,
@@ -283,8 +284,9 @@
   );
   let busy = $state(false);
   let inspectorOpen = $state(false);
-  // Chat and the inspector share the side slot; each canvas opens with chat.
-  // Hiding chat keeps the composer mounted, so drafts and turns continue.
+  // The inspector sits in the left sidebar, so chat keeps the right side and
+  // both can stay open. Each canvas opens with chat. Hiding chat keeps the
+  // composer mounted, so drafts and turns continue.
   let chatOpen = $state(true);
   let chatPanel: ChatPanel | undefined = $state();
   let chatToggle: HTMLButtonElement | undefined = $state();
@@ -303,6 +305,12 @@
   let drawerWidth = $state(
     readWidth("agentica.drawerWidth", DRAWER_MIN_WIDTH, DRAWER_MAX_WIDTH, 240),
   );
+  /** Node list share of the sidebar height, in percent of both sections. */
+  const SPLIT_MIN = 10;
+  let sidebarSplit = $state(
+    readWidth("agentica.sidebarSplit", SPLIT_MIN, 100 - SPLIT_MIN, 50),
+  );
+  let sidebarEl: HTMLElement | undefined = $state();
   const CHAT_MIN_WIDTH = 320;
   const CHAT_MAX_WIDTH = 720;
   let chatWidth = $state(
@@ -503,6 +511,21 @@
     void queueCanvas;
     queueOpen = false;
   });
+  let openProjectButton: HTMLButtonElement | undefined = $state();
+  /** Terminal and agent tiles; Changes tiles never raise attention. */
+  const sessionTileCount = $derived(
+    editorState.document?.sessionTiles.filter((tile) => tile.kind !== "changes")
+      .length ?? 0,
+  );
+  // Deleting the last session tile unmounts the waiting control; an open queue
+  // closes and focus lands on a stable top-bar action instead of the page.
+  $effect(() => {
+    if (sessionTileCount || !untrack(() => queueOpen)) return;
+    queueOpen = false;
+    void tick().then(() => {
+      if (document.activeElement === document.body) openProjectButton?.focus();
+    });
+  });
   const dark = $derived(theme === "dark");
   const connected = $derived(status === "connected");
   const working = $derived(editorState.busy || editorState.saving || busy);
@@ -642,6 +665,63 @@
       DRAWER_MAX_WIDTH,
       next,
     );
+  }
+
+  /** Move the nodes/inspector divider, keeping each section about 8rem tall. */
+  function resizeSplit(next: number) {
+    const height = sidebarEl?.clientHeight ?? 0;
+    const min = height
+      ? Math.min(50, Math.max(SPLIT_MIN, Math.ceil((128 / height) * 100)))
+      : SPLIT_MIN;
+    sidebarSplit = storeWidth("agentica.sidebarSplit", min, 100 - min, next);
+  }
+
+  /** Pointer-capture drag for resize grips; reports the offset from the start. */
+  function dragGrip(
+    event: PointerEvent,
+    onMove: (dx: number, dy: number) => void,
+  ) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const grip = event.currentTarget as HTMLElement;
+    const { clientX: startX, clientY: startY } = event;
+    grip.setPointerCapture(event.pointerId);
+    const move = (moveEvent: PointerEvent) =>
+      onMove(moveEvent.clientX - startX, moveEvent.clientY - startY);
+    const end = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", end);
+      grip.removeEventListener("pointercancel", end);
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", end);
+    grip.addEventListener("pointercancel", end);
+  }
+
+  /** Keyboard resize for grips: arrows nudge, shift arrows jump four steps. */
+  function nudge(
+    event: KeyboardEvent,
+    grow: string,
+    shrink: string,
+    step: number,
+    onStep: (delta: number) => void,
+  ) {
+    const delta = event.shiftKey ? step * 4 : step;
+    if (event.key === grow) onStep(delta);
+    else if (event.key === shrink) onStep(-delta);
+    else return;
+    event.preventDefault();
+  }
+
+  const compactWidth = () => matchMedia("(max-width: 820px)").matches;
+
+  /** Show or hide one sidebar section; compact windows close chat on open. */
+  function toggleSidebar(section: "nodes" | "inspector") {
+    const opened =
+      section === "nodes"
+        ? (drawerOpen = !drawerOpen)
+        : (inspectorOpen = !inspectorOpen);
+    if (opened && compactWidth()) chatOpen = false;
   }
 
   function resizeChat(next: number) {
@@ -1254,7 +1334,7 @@
       ...canvasEl.querySelectorAll<HTMLElement>(
         ".canvas-dock > *, .canvas-nav, .canvas__nodes, .canvas__side",
       ),
-      ...document.querySelectorAll<HTMLElement>(".drawer, .inspector, .chat"),
+      ...document.querySelectorAll<HTMLElement>(".sidebar, .chat"),
     ].map((element) => element.getBoundingClientRect());
     return usableArea(
       { width: rect.width, height: rect.height },
@@ -1326,7 +1406,7 @@
 
   async function showChanges() {
     // A narrow chat overlay would cover the revealed objects.
-    if (chatOpen && matchMedia("(max-width: 820px)").matches) {
+    if (chatOpen && compactWidth()) {
       chatOpen = false;
       await tick();
     }
@@ -2045,7 +2125,7 @@
   });
 
   // The canvas highlight follows the app's selection, wherever it changed:
-  // drawer list, inspector dropdown, or a click on the canvas itself.
+  // the node list or a click on the canvas itself.
   $effect(() => {
     const id = selectedId;
     const next = nodes.map((node) => {
@@ -2653,6 +2733,8 @@
       !dialogOpen &&
       stage === "editor" &&
       editorState.document &&
+      // Without session tiles the waiting control is hidden; so is its shortcut.
+      sessionTileCount > 0 &&
       isQueueShortcut(event, apple)
     ) {
       if (target?.closest("[data-terminal]") || isTyping(event.target)) return;
@@ -3088,11 +3170,13 @@
             entries={attentionEntries}
             projects={editorState.document.projectGroups}
             name={(tile) => sessions.name(tile)}
+            sessions={sessionTileCount}
             onJump={focusObject}
             onMarkSeen={(owner) => void sessions.dismiss(owner)}
           />
         {/if}
         <button
+          bind:this={openProjectButton}
           class="btn btn--soft"
           type="button"
           disabled={!canEdit || pickingProject}
@@ -3245,17 +3329,96 @@
     {/if}
 
     <div class="stage">
-      {#if drawerOpen && editorState.document}
-        <NodeDrawer
-          items={nodeItems}
-          {selectedId}
-          busy={working}
-          width={drawerWidth}
-          onSelect={selectObject}
-          onClose={() => (drawerOpen = false)}
-          onResize={resizeDrawer}
-          onDelete={(id) => void removeObject(id)}
-        />
+      {#if (drawerOpen || inspectorOpen) && editorState.document}
+        {@const both = drawerOpen && inspectorOpen}
+        <div
+          class="sidebar"
+          bind:this={sidebarEl}
+          style="--drawer-w: {drawerWidth}px; --nodes-grow: {both
+            ? sidebarSplit
+            : 1}; --inspector-grow: {both ? 100 - sidebarSplit : 1}"
+        >
+          {#if drawerOpen}
+            <NodeDrawer
+              items={nodeItems}
+              {selectedId}
+              busy={working}
+              onSelect={selectObject}
+              onClose={() => (drawerOpen = false)}
+              onDelete={(id) => void removeObject(id)}
+            />
+          {/if}
+          {#if both}
+            <!-- A focusable separator is the ARIA window-splitter pattern. -->
+            <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+            <div
+              class="sidebar__divider"
+              role="separator"
+              tabindex="0"
+              aria-orientation="horizontal"
+              aria-label="Resize nodes and inspector"
+              aria-valuemin={SPLIT_MIN}
+              aria-valuemax={100 - SPLIT_MIN}
+              aria-valuenow={sidebarSplit}
+              title="Drag to resize"
+              onpointerdown={(event) => {
+                const start = sidebarSplit;
+                const height = sidebarEl?.clientHeight || 1;
+                dragGrip(event, (_, dy) =>
+                  resizeSplit(start + (dy / height) * 100),
+                );
+              }}
+              onkeydown={(event) =>
+                nudge(event, "ArrowDown", "ArrowUp", 2, (step) =>
+                  resizeSplit(sidebarSplit + step),
+                )}
+            ></div>
+          {/if}
+          {#if inspectorOpen}
+            <Inspector
+              {selected}
+              {artifact}
+              busy={editorState.busy}
+              {canDraw}
+              {canFit}
+              turn={!!selectedTurn}
+              {fitNotice}
+              onClose={() => (inspectorOpen = false)}
+              onOpenFile={(artifactId) => {
+                if (!editorState.document) return;
+                void openCanvasFile(
+                  connectionKey.trim(),
+                  editorState.workspace!.workspace.id,
+                  artifactId,
+                ).catch((error: unknown) => {
+                  promptError =
+                    error instanceof Error
+                      ? error.message
+                      : "The file could not be opened.";
+                });
+              }}
+              onRead={(nodeId) => openNodeReader(nodeId)}
+              onCompact={compactSelected}
+              onFit={fitSelected}
+              onEditText={(id, text) => editor.editText(id, text)}
+              onPlace={(id, geometry) => editor.placeNode(id, geometry)}
+            />
+          {/if}
+          <button
+            class="drawer__grip"
+            type="button"
+            aria-label="Resize sidebar"
+            title="Drag to resize"
+            onpointerdown={(event) => {
+              const start = drawerWidth;
+              dragGrip(event, (dx) => resizeDrawer(start + dx));
+            }}
+            onkeydown={(event) =>
+              nudge(event, "ArrowRight", "ArrowLeft", 8, (step) =>
+                resizeDrawer(drawerWidth + step),
+              )}
+          ></button>
+        </div>
       {/if}
 
       <main
@@ -3369,16 +3532,30 @@
         {/key}
 
         {#if editorState.document}
-          <button
-            class="icon-btn canvas__nodes"
-            class:icon-btn--active={drawerOpen}
-            type="button"
-            title="Toggle nodes"
-            aria-label="Toggle nodes"
-            onclick={() => (drawerOpen = !drawerOpen)}
-          >
-            <Icon name="toc" size={20} />
-          </button>
+          <div class="canvas__nodes">
+            <button
+              class="icon-btn"
+              class:icon-btn--active={drawerOpen}
+              type="button"
+              title="Toggle nodes"
+              aria-label="Toggle nodes"
+              aria-pressed={drawerOpen}
+              onclick={() => toggleSidebar("nodes")}
+            >
+              <Icon name="toc" size={20} />
+            </button>
+            <button
+              class="icon-btn"
+              class:icon-btn--active={inspectorOpen}
+              type="button"
+              title="Toggle inspector"
+              aria-label="Toggle inspector"
+              aria-pressed={inspectorOpen}
+              onclick={() => toggleSidebar("inspector")}
+            >
+              <Icon name="tune" size={20} />
+            </button>
+          </div>
           <div class="canvas__side">
             <button
               class="icon-btn canvas__chat"
@@ -3393,7 +3570,8 @@
               onclick={async () => {
                 chatOpen = !chatOpen;
                 if (!chatOpen) return;
-                inspectorOpen = false;
+                // Compact windows show one overlay at a time.
+                if (compactWidth()) drawerOpen = inspectorOpen = false;
                 await tick();
                 chatPanel?.focus();
               }}
@@ -3405,19 +3583,6 @@
                   aria-hidden="true"
                 ></span>
               {/if}
-            </button>
-            <button
-              class="icon-btn"
-              class:icon-btn--active={inspectorOpen}
-              type="button"
-              title="Toggle inspector"
-              aria-label="Toggle inspector"
-              onclick={() => {
-                inspectorOpen = !inspectorOpen;
-                if (inspectorOpen) chatOpen = false;
-              }}
-            >
-              <Icon name="tune" size={20} />
             </button>
           </div>
         {/if}
@@ -3670,198 +3835,6 @@
               })}
           />
         </ChatPanel>
-      {/if}
-
-      {#if inspectorOpen && editorState.document}
-        <aside class="inspector" aria-label="Inspector">
-          <div class="inspector__head">
-            <h2><Icon name="tune" size={18} />Inspector</h2>
-            <button
-              class="icon-btn"
-              type="button"
-              title="Hide inspector"
-              aria-label="Hide inspector"
-              onclick={() => (inspectorOpen = false)}
-            >
-              <Icon name="close" size={18} />
-            </button>
-          </div>
-
-          <div class="field">
-            <label for="text-node">Selected node</label>
-            {#if editorState.document.nodes.length > 0}
-              <select id="text-node" bind:value={selectedId}>
-                {#each nodeItems as node (node.id)}
-                  <option value={node.id}>{node.label}</option>
-                {/each}
-              </select>
-            {:else}
-              <p class="muted">No nodes yet — use “Add text”.</p>
-            {/if}
-          </div>
-
-          {#if selected && artifact}
-            {#if fileArtifact}
-              <div class="field">
-                <span class="field__label">File</span>
-                <p class="muted">
-                  {fileArtifact.name} · {fileKindLabel(fileArtifact.mime)} · {formatFileSize(
-                    fileArtifact.size,
-                  )}
-                </p>
-                <p class="muted">
-                  Copied into this workspace. Selected file text is included in
-                  the next prompt for the agent.
-                </p>
-                <div class="inspector__actions">
-                  <button
-                    class="btn btn--soft"
-                    type="button"
-                    onclick={() => {
-                      if (!editorState.document) return;
-                      void openCanvasFile(
-                        connectionKey.trim(),
-                        editorState.workspace!.workspace.id,
-                        fileArtifact.id,
-                      ).catch((error: unknown) => {
-                        promptError =
-                          error instanceof Error
-                            ? error.message
-                            : "The file could not be opened.";
-                      });
-                    }}
-                  >
-                    <Icon name="open_in_new" size={16} />{desktopMode
-                      ? "Open with system app"
-                      : "Download a copy"}
-                  </button>
-                  {#if fileArtifact.text}
-                    <button
-                      class="btn btn--soft"
-                      type="button"
-                      onclick={() => openNodeReader(selected.id)}
-                    >
-                      <Icon name="open_in_full" size={16} />Read extracted text
-                    </button>
-                  {/if}
-                </div>
-                {#if !fileArtifact.text}
-                  <p class="muted">
-                    No text could be extracted; images and legacy Word files are
-                    preview-only.
-                  </p>
-                {/if}
-              </div>
-            {/if}
-            {#if textArtifact}
-              <div class="field">
-                <label for="text-content"
-                  >{textArtifact.purpose === "instruction"
-                    ? "Agent instructions"
-                    : "Text content"}</label
-                >
-                <textarea
-                  id="text-content"
-                  value={textArtifact.text}
-                  maxlength={LIMITS.text}
-                  disabled={editorState.busy}
-                  rows="7"
-                  placeholder={textArtifact.purpose === "instruction"
-                    ? "Describe the task and the result you want…"
-                    : "Write something…"}
-                  oninput={(event) =>
-                    editor.editText(
-                      textArtifact.id,
-                      fitTextField(event.currentTarget),
-                    )}></textarea>
-              </div>
-              {#if textArtifact.purpose === "instruction"}
-                <div class="field">
-                  <label for="instruction-reference"
-                    >Instruction reference</label
-                  >
-                  <input
-                    id="instruction-reference"
-                    readonly
-                    value={textArtifact.id}
-                  />
-                  <p class="muted">
-                    Saved as a note. Editing instructions does not start an
-                    agent.
-                  </p>
-                </div>
-              {/if}
-            {/if}
-            {#if textArtifact || (artifact.type === "drawing" && artifact.drawing.shapes.some((shape) => shape.kind !== "path" && shape.label))}
-              <div class="field">
-                <span class="field__label">Content</span>
-                <div class="inspector__actions">
-                  <button
-                    class="btn btn--soft"
-                    type="button"
-                    onclick={() => openNodeReader(selected.id)}
-                  >
-                    <Icon name="open_in_full" size={16} />Read full content
-                  </button>
-                  {#if selectedTurn}
-                    {@const compact = compactSize(selected)}
-                    <button
-                      class="btn btn--soft"
-                      type="button"
-                      disabled={!canDraw ||
-                        (compact.width === selected.width &&
-                          compact.height === selected.height)}
-                      onclick={compactSelected}
-                    >
-                      <Icon name="compress" size={16} />Compact conversation
-                    </button>
-                  {/if}
-                  {#if canFit}
-                    <button
-                      class="btn btn--soft"
-                      type="button"
-                      disabled={!canDraw}
-                      onclick={fitSelected}
-                    >
-                      <Icon name="height" size={16} />Fit text
-                    </button>
-                  {/if}
-                </div>
-                {#if fitNotice}<p class="muted" role="status">
-                    {fitNotice}
-                  </p>{/if}
-              </div>
-            {/if}
-            <fieldset class="grid" disabled={editorState.busy}>
-              <legend>Placement &amp; size</legend>
-              {#each ["x", "y", "width", "height"] as field}
-                {@const property = field as "x" | "y" | "width" | "height"}
-                <label for={`node-${field}`}>{field}</label>
-                <input
-                  id={`node-${field}`}
-                  type="number"
-                  step="any"
-                  min={field === "width" || field === "height"
-                    ? LIMITS.minSize
-                    : -LIMITS.coordinate}
-                  max={field === "width" || field === "height"
-                    ? LIMITS.maxSize
-                    : LIMITS.coordinate}
-                  value={selected[property]}
-                  oninput={(event) => {
-                    if (
-                      event.currentTarget.validity.valid &&
-                      event.currentTarget.value !== ""
-                    )
-                      editor.placeNode(selected.id, {
-                        [property]: event.currentTarget.valueAsNumber,
-                      });
-                  }}
-                />
-              {/each}
-            </fieldset>
-          {/if}
-        </aside>
       {/if}
     </div>
 

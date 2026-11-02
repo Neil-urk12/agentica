@@ -27,6 +27,8 @@
     projects: ProjectGroup[];
     /** The tile's program name: `Terminal` or its agent's label. */
     name: (tile: SessionTile) => string;
+    /** Session tiles on the canvas; with none, the control is not rendered. */
+    sessions: number;
     open?: boolean;
     onJump: (tileId: string) => void;
     onMarkSeen: (owner: SessionOwner) => void;
@@ -35,6 +37,7 @@
     entries,
     projects,
     name,
+    sessions,
     open = $bindable(false),
     onJump,
     onMarkSeen,
@@ -50,8 +53,8 @@
       ? `${count} ${count === 1 ? "session" : "sessions"} waiting for you`
       : "Nothing waiting",
   );
-  let wrapper: HTMLElement;
-  let trigger: HTMLButtonElement;
+  let wrapper = $state<HTMLElement>();
+  let trigger = $state<HTMLButtonElement>();
   let closeButton = $state<HTMLButtonElement>();
   let list = $state<HTMLUListElement>();
   let activeId = $state("");
@@ -95,7 +98,7 @@
       });
     } else if (!open && wasOpen) {
       wasOpen = false;
-      if (restoreOnClose) trigger.focus();
+      if (restoreOnClose) trigger?.focus();
       restoreOnClose = true;
     }
   });
@@ -104,7 +107,7 @@
     if (!open) return;
     const release = clock.hold();
     const outside = (event: PointerEvent) => {
-      if (!wrapper.contains(event.target as Node)) close(false);
+      if (!wrapper?.contains(event.target as Node)) close(false);
     };
     document.addEventListener("pointerdown", outside, true);
     return () => {
@@ -156,105 +159,110 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<span class="waiting" bind:this={wrapper} onkeydown={onKeydown}>
-  <button
-    bind:this={trigger}
-    class="btn btn--soft waiting__trigger"
-    class:waiting__trigger--active={count > 0}
-    type="button"
-    aria-haspopup="dialog"
-    aria-expanded={open}
-    aria-controls={panelId}
-    aria-keyshortcuts={queueAriaShortcut(apple)}
-    aria-label={sentence}
-    title={`Waiting for you (${queueShortcutLabel(apple)})`}
-    onclick={() => (open ? close() : (open = true))}
-  >
-    <!-- Narrow top bars keep only the dot and count, or the idle icon. -->
-    {#if count}<span class="dot" aria-hidden="true"></span>{count}<span
-        class="label">waiting</span
-      >{:else}<span class="idle"
-        ><Icon name="notifications_none" size={18} /></span
-      ><span class="label">Nothing waiting</span>{/if}
-  </button>
-  <span class="sr-only" role="status" aria-live="polite" aria-atomic="true"
-    >{sentence}</span
-  >
-  {#if open}
-    <div
-      id={panelId}
-      class="waiting__panel"
-      role="dialog"
-      aria-labelledby={headingId}
+<!-- Canvases without session tiles have nothing to wait on: no control. -->
+{#if sessions > 0}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <span class="waiting" bind:this={wrapper} onkeydown={onKeydown}>
+    <button
+      bind:this={trigger}
+      class={count ? "btn btn--soft waiting__trigger" : "icon-btn"}
+      type="button"
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      aria-controls={panelId}
+      aria-keyshortcuts={queueAriaShortcut(apple)}
+      aria-label={sentence}
+      title={count
+        ? `Waiting for you (${queueShortcutLabel(apple)})`
+        : "Nothing waiting"}
+      onclick={() => (open ? close() : (open = true))}
     >
-      <header>
-        <h2 id={headingId}>Waiting for you</h2>
-        <button
-          bind:this={closeButton}
-          class="icon-btn"
-          type="button"
-          aria-label="Close"
-          title="Close"
-          onclick={() => close()}><Icon name="close" size={18} /></button
-        >
-      </header>
-      {#if !sorted.length}
-        <p class="queue-empty">
-          Nothing is waiting. Sessions that ask a question or stop will show up
-          here.
-        </p>
-      {:else}
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-        <ul bind:this={list} aria-labelledby={headingId} onkeydown={listKey}>
-          {#each sorted as entry, index (entry.tile.id)}
-            {@const name = nameOf(entry)}
-            {@const project = projectOf(entry)}
-            {@const reason = attentionLabel(entry.status)}
-            {@const waited = waitedLabel(entry.status.attention.at, clock.now)}
-            <!-- Rows are roving focus stops: Up/Down move, Enter jumps. -->
-            <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-            <li
-              class="row"
-              data-tile={entry.tile.id}
-              tabindex={entry.tile.id === tabStop ? 0 : -1}
-              aria-label={`${name} in ${project}: ${reason}${waited ? `, ${waited}` : ""}`}
-              onfocus={() => (activeId = entry.tile.id)}
-            >
-              <span
-                class="dot"
-                class:dot--bad={entry.status.attention.kind === "failed"}
-                aria-hidden="true"
-              ></span>
-              <div class="who">
-                <strong>{name}</strong><span class="project">{project}</span>
-              </div>
-              {#if waited && entry.status.attention.at !== null}<time
-                  datetime={new Date(entry.status.attention.at).toISOString()}
-                  >{waited}</time
-                >{/if}
-              <p class="reason">{reason}</p>
-              <div class="row-actions">
-                <button
-                  class="btn btn--soft"
-                  type="button"
-                  aria-label={`Jump to ${name} in ${project}`}
-                  onclick={() => jump(entry)}>Jump to</button
-                >
-                <button
-                  class="btn btn--ghost"
-                  type="button"
-                  aria-label={`Mark ${name} in ${project} as seen`}
-                  onclick={() => markSeen(index)}>Mark seen</button
-                >
-              </div>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </div>
-  {/if}
-</span>
+      <!-- Narrow top bars keep only the dot and count. -->
+      {#if count}<span class="dot" aria-hidden="true"></span>{count}<span
+          class="label">waiting</span
+        >{:else}<Icon name="notifications_none" size={18} />{/if}
+    </button>
+    <span class="sr-only" role="status" aria-live="polite" aria-atomic="true"
+      >{sentence}</span
+    >
+    {#if open}
+      <div
+        id={panelId}
+        class="waiting__panel"
+        role="dialog"
+        aria-labelledby={headingId}
+      >
+        <header>
+          <h2 id={headingId}>Waiting for you</h2>
+          <button
+            bind:this={closeButton}
+            class="icon-btn"
+            type="button"
+            aria-label="Close"
+            title="Close"
+            onclick={() => close()}><Icon name="close" size={18} /></button
+          >
+        </header>
+        {#if !sorted.length}
+          <p class="queue-empty">
+            Nothing is waiting. Sessions that ask a question or stop will show
+            up here.
+          </p>
+        {:else}
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+          <ul bind:this={list} aria-labelledby={headingId} onkeydown={listKey}>
+            {#each sorted as entry, index (entry.tile.id)}
+              {@const name = nameOf(entry)}
+              {@const project = projectOf(entry)}
+              {@const reason = attentionLabel(entry.status)}
+              {@const waited = waitedLabel(
+                entry.status.attention.at,
+                clock.now,
+              )}
+              <!-- Rows are roving focus stops: Up/Down move, Enter jumps. -->
+              <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+              <li
+                class="row"
+                data-tile={entry.tile.id}
+                tabindex={entry.tile.id === tabStop ? 0 : -1}
+                aria-label={`${name} in ${project}: ${reason}${waited ? `, ${waited}` : ""}`}
+                onfocus={() => (activeId = entry.tile.id)}
+              >
+                <span
+                  class="dot"
+                  class:dot--bad={entry.status.attention.kind === "failed"}
+                  aria-hidden="true"
+                ></span>
+                <div class="who">
+                  <strong>{name}</strong><span class="project">{project}</span>
+                </div>
+                {#if waited && entry.status.attention.at !== null}<time
+                    datetime={new Date(entry.status.attention.at).toISOString()}
+                    >{waited}</time
+                  >{/if}
+                <p class="reason">{reason}</p>
+                <div class="row-actions">
+                  <button
+                    class="btn btn--soft"
+                    type="button"
+                    aria-label={`Jump to ${name} in ${project}`}
+                    onclick={() => jump(entry)}>Jump to</button
+                  >
+                  <button
+                    class="btn btn--ghost"
+                    type="button"
+                    aria-label={`Mark ${name} in ${project} as seen`}
+                    onclick={() => markSeen(index)}>Mark seen</button
+                  >
+                </div>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+    {/if}
+  </span>
+{/if}
 
 <style>
   .waiting {
@@ -265,19 +273,17 @@
     gap: 8px;
     min-height: 2.2rem;
     padding: 0 0.85rem;
-    font-weight: 500;
-    color: var(--ink-soft);
-    background: transparent;
-    border-color: var(--line);
     white-space: nowrap;
-  }
-  .waiting__trigger--active {
     font-weight: 600;
     color: var(--ink);
     background: var(--warn-soft);
     border-color: var(--warn-line);
   }
-  .waiting__trigger:focus-visible {
+  .waiting > .icon-btn {
+    color: var(--ink-soft);
+  }
+  .waiting__trigger:focus-visible,
+  .waiting > .icon-btn:focus-visible {
     outline: 2px solid var(--focus);
     outline-offset: 2px;
   }
@@ -290,14 +296,6 @@
   }
   .dot--bad {
     background: var(--bad);
-  }
-  .idle {
-    display: none;
-  }
-  @media (max-width: 700px) {
-    .idle {
-      display: inline-flex;
-    }
   }
   .waiting__panel {
     position: absolute;
@@ -327,11 +325,11 @@
     font-size: 15px;
     font-weight: 600;
   }
-  .icon-btn {
+  header .icon-btn {
     width: 28px;
     height: 28px;
   }
-  .icon-btn:focus-visible {
+  header .icon-btn:focus-visible {
     outline: 2px solid var(--focus);
     outline-offset: 1px;
   }
