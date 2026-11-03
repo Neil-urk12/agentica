@@ -12,6 +12,15 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Desktop Markdown export permission (2026-11-03)
+
+- Fixed: desktop Export Markdown failed with "export_markdown not allowed.
+  Command not found." The command was registered with the Tauri builder but
+  missing from the app manifest (`build.rs`) and the main-window capability, so
+  the ACL rejected it. Both now list it; the save dialog still opens from Rust,
+  so no dialog permission is granted to the webview. Verified by a desktop build
+  that resolves the new permission; the native save was not re-run here.
+
 ### Single-canvas Markdown sharing (2026-11-02)
 
 - Added an Export Markdown header action: full note source, task checkboxes,
