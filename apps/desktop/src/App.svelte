@@ -53,6 +53,7 @@
   import { Editor, type DrawingSegment } from "./lib/editor";
   import CanvasExport from "./lib/components/CanvasExport.svelte";
   import { applyTheme, readTheme, type Theme } from "./lib/theme";
+  import { readLayout, saveLayout, type Layout } from "./lib/layout";
   import Composer from "./lib/components/Composer.svelte";
   import Reader from "./lib/components/Reader.svelte";
   import ReviewBar from "./lib/components/ReviewBar.svelte";
@@ -336,6 +337,8 @@
   // true opens settings without a section (narrow windows show the category list).
   let settingsOpen = $state<boolean | SettingsSection>(false);
   let theme = $state<Theme>(readTheme());
+  // Chrome only: switching never touches panels, the canvas, or sessions.
+  let layout = $state<Layout>(readLayout());
   let recoveryCopy = $state("");
   let closeNotice = $state("");
   let tool = $state<Tool>("select");
@@ -541,7 +544,7 @@
       .length ?? 0,
   );
   // Deleting the last session tile unmounts the waiting control; an open queue
-  // closes and focus lands on Settings, the one top-bar action never disabled.
+  // closes and focus lands on the visible Settings control (never disabled).
   $effect(() => {
     if (sessionTileCount || !untrack(() => queueOpen)) return;
     queueOpen = false;
@@ -3304,7 +3307,9 @@
 
       <div class="topbar__actions">
         {#if editorState.document}
-          <CanvasExport canvas={editorState.document} />
+          {#if layout === "classic"}
+            <CanvasExport canvas={editorState.document} />
+          {/if}
           <AttentionQueue
             bind:open={queueOpen}
             entries={attentionEntries}
@@ -3315,16 +3320,9 @@
             onMarkSeen={(owner) => void sessions.dismiss(owner)}
           />
         {/if}
-        <button
-          class="btn btn--soft"
-          type="button"
-          disabled={!canEdit || pickingProject}
-          title="Open project"
-          onclick={() => void openProject()}
-          ><Icon name="folder_open" size={18} /><span class="label"
-            >Open project</span
-          ></button
-        >
+        {#if layout === "classic"}
+          {@render openProjectControl(false)}
+        {/if}
         <!-- One control: a status at rest, an action only when one can run. -->
         <span class="save-status" role="status" aria-live="polite">
           {#if editorState.saving}
@@ -3360,27 +3358,11 @@
             >
           {/if}
         </span>
-        <span class="topbar__divider"></span>
-        <button
-          class="icon-btn"
-          type="button"
-          title="Canvas gallery"
-          aria-label="Canvas gallery"
-          disabled={working}
-          onclick={() => void backToCanvases()}
-        >
-          <Icon name="grid_view" size={20} />
-        </button>
-        <button
-          bind:this={settingsButton}
-          class="icon-btn"
-          type="button"
-          title="Settings"
-          aria-label="Settings"
-          onclick={() => (settingsOpen = true)}
-        >
-          <Icon name="settings" size={20} />
-        </button>
+        {#if layout === "classic"}
+          <span class="topbar__divider"></span>
+          {@render galleryControl()}
+          {@render settingsControl()}
+        {/if}
       </div>
     </header>
 
@@ -3468,7 +3450,82 @@
       </div>
     {/if}
 
-    <div class="stage">
+    {#snippet openProjectControl(rail: boolean)}
+      <button
+        class={rail ? "icon-btn" : "btn btn--soft"}
+        type="button"
+        disabled={!canEdit || pickingProject}
+        title="Open project"
+        aria-label="Open project"
+        onclick={() => void openProject()}
+        ><Icon name="folder_open" size={rail ? 20 : 18} />{#if !rail}<span
+            class="label">Open project</span
+          >{/if}</button
+      >
+    {/snippet}
+    {#snippet galleryControl()}
+      <button
+        class="icon-btn"
+        type="button"
+        title="Canvas gallery"
+        aria-label="Canvas gallery"
+        disabled={working}
+        onclick={() => void backToCanvases()}
+      >
+        <Icon name="grid_view" size={20} />
+      </button>
+    {/snippet}
+    {#snippet settingsControl()}
+      <button
+        bind:this={settingsButton}
+        class="icon-btn"
+        type="button"
+        title="Settings"
+        aria-label="Settings"
+        onclick={() => (settingsOpen = true)}
+      >
+        <Icon name="settings" size={20} />
+      </button>
+    {/snippet}
+    {#snippet sidebarToggles()}
+      <button
+        class="icon-btn"
+        class:icon-btn--active={drawerOpen}
+        type="button"
+        title="Toggle nodes"
+        aria-label="Toggle nodes"
+        aria-pressed={drawerOpen}
+        onclick={() => toggleSidebar("nodes")}
+      >
+        <Icon name="toc" size={20} />
+      </button>
+      <button
+        class="icon-btn"
+        class:icon-btn--active={inspectorOpen}
+        type="button"
+        title="Toggle inspector"
+        aria-label="Toggle inspector"
+        aria-pressed={inspectorOpen}
+        onclick={() => toggleSidebar("inspector")}
+      >
+        <Icon name="tune" size={20} />
+      </button>
+    {/snippet}
+
+    <div class="stage" data-layout={layout}>
+      {#if layout === "activity-bar"}
+        <nav class="rail" aria-label="Activity bar">
+          {#if editorState.document}
+            <div class="rail__group">
+              {@render galleryControl()}
+              {@render sidebarToggles()}
+              {@render openProjectControl(true)}
+              <CanvasExport canvas={editorState.document} rail />
+            </div>
+          {/if}
+          <div class="rail__group">{@render settingsControl()}</div>
+        </nav>
+      {/if}
       {#if (drawerOpen || inspectorOpen) && editorState.document}
         {@const both = drawerOpen && inspectorOpen}
         <div
@@ -3682,30 +3739,9 @@
         {/key}
 
         {#if editorState.document}
-          <div class="canvas__nodes">
-            <button
-              class="icon-btn"
-              class:icon-btn--active={drawerOpen}
-              type="button"
-              title="Toggle nodes"
-              aria-label="Toggle nodes"
-              aria-pressed={drawerOpen}
-              onclick={() => toggleSidebar("nodes")}
-            >
-              <Icon name="toc" size={20} />
-            </button>
-            <button
-              class="icon-btn"
-              class:icon-btn--active={inspectorOpen}
-              type="button"
-              title="Toggle inspector"
-              aria-label="Toggle inspector"
-              aria-pressed={inspectorOpen}
-              onclick={() => toggleSidebar("inspector")}
-            >
-              <Icon name="tune" size={20} />
-            </button>
-          </div>
+          {#if layout === "classic"}
+            <div class="canvas__nodes">{@render sidebarToggles()}</div>
+          {/if}
           <div class="canvas__side">
             <button
               class="icon-btn canvas__chat"
@@ -4121,7 +4157,17 @@
       {sessions}
       section={settingsOpen === true ? undefined : settingsOpen}
       onChange={(next) => (theme = next)}
-      onClose={() => (settingsOpen = false)}
+      {layout}
+      onLayoutChange={(next) => {
+        layout = next;
+        return saveLayout(next);
+      }}
+      onClose={async () => {
+        settingsOpen = false;
+        // The opener is gone if the preset moved Settings; use the visible one.
+        await tick();
+        if (document.activeElement === document.body) settingsButton?.focus();
+      }}
     />
   {/if}
 </div>

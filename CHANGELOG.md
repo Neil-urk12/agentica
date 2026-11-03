@@ -12,6 +12,17 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Dialogs closed before their first frame (2026-11-03)
+
+- Fixed: a dialog closed before its first frame was drawn turned modal again
+  for its fade-out and took focus; if its opener was gone, such as Settings
+  after a layout preset switch, focus was then lost. Svelte delivers the
+  opening `introstart` on that first frame, so it arrived after the close and
+  looked like a mid-fade reopen. A real reopen clears the dialog's `inert` flag
+  first, so Modal now restores modality only for a dialog that is not inert.
+  Verified by a rendered check that closes Settings before its first frame and
+  by repeated layout preset test runs.
+
 ### Desktop Markdown export permission (2026-11-03)
 
 - Fixed: desktop Export Markdown failed with "export_markdown not allowed.
@@ -20,6 +31,37 @@ installers and publishes the release. Keep validation evidence in the
   the ACL rejected it. Both now list it; the save dialog still opens from Rust,
   so no dialog permission is granted to the webview. Verified by a desktop build
   that resolves the new permission; the native save was not re-run here.
+
+### Layout presets (2026-11-03)
+
+- Added Settings → Appearance → Layout with two presets: **Classic** (unchanged,
+  default) and **Activity bar**, a left rail with Canvas gallery, Nodes,
+  Inspector, Open project, and Export Markdown at the top and Settings at the
+  bottom. Save status and the waiting-sessions bell stay in the top bar: one is
+  a status beside the title, the other a top-anchored dropdown panel. The rail
+  reuses the same toggle handlers and the existing stacked sidebar, so sections
+  stay independent rather than VS Code's one-view-at-a-time model; each action
+  has exactly one visible instance.
+- The choice is a device-local frontend preference (`agentica.layout`), not
+  canvas data: it should follow the user across canvases and needs no runtime or
+  protocol change. Missing, unknown, or unreadable values fall back to Classic;
+  a rejected write still applies for the session and Settings says so.
+- Switching changes only chrome around one stable stage (no keyed or duplicated
+  panel trees), so canvas, selection, viewport, tool, chat draft, panel sizes,
+  and running sessions survive. Closing Settings refocuses the visible Settings
+  control when the preset removed its opener. The normal-flow rail sits outside
+  the measured canvas element, so fit/jump/placement geometry needed no change;
+  compact sidebar and chat overlays start beside the rail. The rail stacks above
+  the canvas dock, because the tool card already overflows a 360px canvas, and
+  above the compact overlays, which otherwise covered its export messages.
+- Verified: preference unit tests, and a rendered Chrome test against the real
+  backend covering both presets, repeated switching with a running fake Codex
+  session (no relaunch, no remounts), keyboard selection, focus return, failed
+  writes, reload persistence, invalid values, fit geometry, rail export messages
+  above compact overlays, and both themes at 360–1600px. Not covered by
+  automation: the attention-queue Settings fallback in Activity bar (it uses the
+  same bound control) and an in-flight unsaved edit during a switch. Both
+  layouts were smoke-checked manually in the Tauri desktop app.
 
 ### Single-canvas Markdown sharing (2026-11-02)
 

@@ -1261,6 +1261,40 @@ button.pill:disabled {
   pointer-events: none;
 }
 
+/* Activity bar preset: a normal-flow rail, so the canvas element already
+   excludes its width from measured geometry. */
+.stage[data-layout="activity-bar"] {
+  --rail-w: 3rem;
+}
+
+.rail {
+  /* Above the canvas dock, whose tools can spill past a narrow canvas, and the
+     compact overlays (20), which start beside the rail but would cover its
+     export messages. */
+  position: relative;
+  z-index: 21;
+  flex: none;
+  width: var(--rail-w);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+}
+
+.rail__group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+/* Pressed state is a bar as well as a color, so it never relies on hue. */
+.rail .icon-btn[aria-pressed="true"] {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
 .canvas__nodes .icon-btn,
 .canvas__side .icon-btn {
   background: var(--surface-glass);
@@ -3393,6 +3427,14 @@ span.card-more {
     width: min(var(--drawer-w, 15rem), calc(100% - 3.4rem));
     border-left: 1px solid var(--line);
     box-shadow: var(--shadow-lg);
+  }
+  /* Overlays start beside the rail and never cover it. */
+  .stage[data-layout="activity-bar"] .sidebar {
+    left: var(--rail-w);
+    width: min(var(--drawer-w, 15rem), calc(100% - var(--rail-w)));
+  }
+  .stage[data-layout="activity-bar"] .chat {
+    width: min(var(--chat-w, 24rem), calc(100% - var(--rail-w)));
   }
   .stage {
     position: relative;

@@ -94,8 +94,9 @@
     onClose?.();
   }}
   onintrostart={() => {
-    // Reopened mid-fade: Svelte reuses the element, so restore modality.
-    if (!released) return;
+    // Reopened mid-fade: Svelte reuses the element and clears `inert` first. The
+    // first opening's late introstart (closed before a frame) finds it inert.
+    if (!released || dialog.inert) return;
     released = restored = false;
     dialog.inert = false;
     dialog.close();

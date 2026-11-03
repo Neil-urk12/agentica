@@ -32,6 +32,23 @@ that field's own undo. Creating, deleting, connecting, applied proposals, and
 panning or zooming are not undoable. History belongs to the open canvas and is
 cleared when you leave it; a step for an object deleted since is skipped.
 
+### Layout
+
+**Settings → Appearance → Layout** chooses where the canvas controls sit:
+
+- **Classic** (default): floating Nodes and Inspector buttons at the canvas's
+  top-left, and Settings in the top bar.
+- **Activity bar**: a slim rail on the left with Canvas gallery, Nodes,
+  Inspector, Open project, and Export Markdown at the top and Settings at the
+  bottom. The two buttons still toggle their sections independently, so both can
+  be open, stacked in one sidebar.
+
+The choice applies immediately, keeps open panels, sizes, selection, drafts, and
+running sessions, and is remembered on this device for every canvas. If the
+browser can't store it, Settings says it applies to this window only. Chat,
+drawing tools, save status, and the waiting-sessions bell stay where they are,
+and the workspace and canvas pickers look the same in both layouts.
+
 ### Selecting, grouping, and deleting
 
 With the Select tool, drag across empty canvas to draw a selection box; objects

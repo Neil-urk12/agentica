@@ -4072,3 +4072,493 @@ test("Ctrl+Z undoes an accidental drag in the rendered app and saves it", async 
     await stopBackend(backend.child);
   }
 });
+
+test("layout presets switch live without resetting work, sessions, or compact overlays", async () => {
+  const root = mkdtempSync(join(tmpdir(), "agentica-layout-"));
+  const project = join(root, "project");
+  const bin = join(root, "bin");
+  const launches = join(root, "launches");
+  for (const directory of [project, bin]) mkdirSync(directory);
+  // Stand-in for Codex that records each launch, so a restart is visible.
+  writeFileSync(
+    join(bin, "codex"),
+    `#!/bin/sh\nPATH=/usr/bin:/bin\necho launch >> '${launches}'\nprintf 'fake codex ready\\r\\n'\nexec cat\n`,
+  );
+  chmodSync(join(bin, "codex"), 0o755);
+  const backend = await startBackend({ ...env, PATH: bin });
+  key = backend.connectionKey;
+  let browser;
+  const run = (script) => evaluate(browser, script);
+  const call = async (_key, _connect, method, params) => {
+    const reply = await send(port, {
+      body: JSON.stringify(
+        RuntimeRequestSchema.parse({
+          protocolVersion: 1,
+          id: crypto.randomUUID(),
+          method,
+          params,
+        }),
+      ),
+      timeout: 15000,
+    });
+    const response = RuntimeResponseSchema.parse(JSON.parse(reply.text));
+    if (response.error)
+      throw new Error(`${response.error.code}: ${response.error.message}`);
+    return ResultSchemas[method].parse(response.result);
+  };
+  const editor = new Editor(
+    call,
+    () => key,
+    () => {},
+  );
+  const press = async (key, code, keyCode) => {
+    for (const type of ["keyDown", "keyUp"])
+      await browser.send(
+        "Input.dispatchKeyEvent",
+        {
+          type,
+          key,
+          code,
+          windowsVirtualKeyCode: keyCode,
+          ...(type === "keyDown" && key === "Enter" ? { text: "\r" } : {}),
+        },
+        browser.sessionId,
+      );
+  };
+  const metrics = (width, height = 900) =>
+    browser.send(
+      "Emulation.setDeviceMetricsOverride",
+      { width, height, deviceScaleFactor: 1, mobile: false },
+      browser.sessionId,
+    );
+  const launchCount = () =>
+    existsSync(launches)
+      ? readFileSync(launches, "utf8").trim().split("\n").length
+      : 0;
+  const settingsCount = `document.querySelectorAll('[aria-label="Settings"]').length`;
+  const pickerSettings = `[...document.querySelectorAll('button')].find((b) => b.textContent.trim().endsWith('Settings') && b.checkVisibility())`;
+  const reachable = (label, width) =>
+    `(() => { const b = document.querySelector('[aria-label="${label}"]'); if (!b) return false; const r = b.getBoundingClientRect(); return r.left >= 0 && r.right <= ${width} && document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('button') === b; })()`;
+  // The rail's export status must paint above compact overlays.
+  const exportShown = `(() => { const s = document.querySelector('.rail .canvas-export__status'); const r = s?.getBoundingClientRect(); return !!s?.textContent && document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === s; })()`;
+  const moved = ["Canvas gallery", "Open project", "Export Markdown"];
+  const railLabels = ["Toggle nodes", "Toggle inspector", "Settings", ...moved];
+  const openSettings = async (opener) => {
+    await run(`(${opener}).focus()`);
+    await press("Enter", "Enter", 13);
+    await waitFor(
+      browser,
+      `!!document.querySelector('dialog[open] .settings')`,
+      "Settings",
+    );
+    await run(
+      `[...document.querySelectorAll('.settings__tab')].find((b) => b.textContent.includes('Appearance')).click()`,
+    );
+  };
+  // Two native radios: an arrow key always selects the other preset.
+  const flipLayout = async (expected) => {
+    await run(`document.querySelector('input[name="layout"]:checked').focus()`);
+    await press("ArrowDown", "ArrowDown", 40);
+    await waitFor(
+      browser,
+      `document.querySelector('input[name="layout"]:checked')?.value === '${expected}' && !!document.querySelector('#layout-note')?.textContent.trim()`,
+      `the ${expected} choice`,
+    );
+    return run(`document.querySelector('#layout-note').textContent.trim()`);
+  };
+  const closeSettings = async () => {
+    await press("Escape", "Escape", 27);
+    await waitFor(
+      browser,
+      `!document.querySelector('dialog[open] .settings')`,
+      "Settings closed",
+    );
+  };
+  const openCanvas = async () => {
+    await browser.send(
+      "Page.navigate",
+      { url: `http://127.0.0.1:${port}/` },
+      browser.sessionId,
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector("#connection-key")`,
+      "the connection form",
+    );
+    await run(`(() => {
+      const input = document.querySelector("#connection-key");
+      input.value = ${JSON.stringify(key)};
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    })()`);
+    await clickAt(
+      browser,
+      await boxOf(browser, ".connbar button[type='submit']"),
+    );
+    await waitFor(
+      browser,
+      `!!document.querySelector(".home__ready")`,
+      "the connected status",
+    );
+  };
+  const enterCanvas = async () => {
+    await openCard(browser, "Layout workspace");
+    await openCard(browser, "Layout canvas");
+    await waitFor(
+      browser,
+      `!!document.querySelector('.svelte-flow')`,
+      "the canvas",
+    );
+  };
+  try {
+    await editor.createWorkspace("Layout workspace");
+    const workspaceId = editor.state.workspace.workspace.id;
+    await editor.createCanvas("Layout canvas");
+    const canvasId = editor.state.document.canvas.id;
+    await editor.openProject(project);
+    const projectId = editor.state.document.projectGroups.at(-1).id;
+    await editor.addSessionTile(projectId, "cli-agent", "codex");
+    const tileId = editor.state.document.sessionTiles.at(-1).id;
+    const nodeId = (await editor.addText({ x: -400, y: 0 }, "Layout note")).node
+      .id;
+    assert.equal(editor.state.error, "");
+    const geometry = () => {
+      const { x, y, width, height } = editor.state.document.nodes.find(
+        (node) => node.id === nodeId,
+      );
+      return { x, y, width, height };
+    };
+    const savedGeometry = geometry();
+    await editor.closeWorkspace();
+
+    browser = await launchBrowser();
+    await metrics(1600);
+    await openCanvas();
+
+    // Classic by default; the picker keeps its own Settings and no rail.
+    assert.equal(await run(`localStorage.getItem('agentica.layout')`), null);
+    assert.equal(await run(`!!document.querySelector('.rail')`), false);
+    await openSettings(pickerSettings);
+    assert.equal(
+      await run(`document.querySelector('input[name="layout"]:checked').value`),
+      "classic",
+    );
+    assert.match(await flipLayout("activity-bar"), /^Saved/);
+    await closeSettings();
+    assert.equal(
+      await run(`document.activeElement === (${pickerSettings})`),
+      true,
+    );
+    assert.equal(await run(`!!document.querySelector('.rail')`), false);
+    assert.equal(
+      await run(`localStorage.getItem('agentica.layout')`),
+      "activity-bar",
+    );
+
+    // The next canvas opens in Activity bar, with one instance of each control.
+    await enterCanvas();
+    await waitFor(
+      browser,
+      `!!document.querySelector('.rail')`,
+      "the activity rail",
+    );
+    assert.equal(
+      await run(`!!document.querySelector('.canvas__nodes')`),
+      false,
+    );
+    assert.equal(
+      await run(`!!document.querySelector('.topbar [aria-label="Settings"]')`),
+      false,
+    );
+    assert.equal(await run(settingsCount), 1);
+    assert.equal(
+      await run(
+        `document.querySelectorAll('[aria-label="Toggle nodes"]').length`,
+      ),
+      1,
+    );
+    // The rail reserves only its own width while the sidebar is closed.
+    assert.equal(await run(`!!document.querySelector('.sidebar')`), false);
+    assert.equal(
+      await run(
+        `Math.round(document.querySelector('.canvas').getBoundingClientRect().left - document.querySelector('.rail').getBoundingClientRect().right)`,
+      ),
+      0,
+    );
+
+    // Start a live session.
+    await run(
+      `document.querySelector('[data-id="${projectId}"] [aria-label="Expand project"]').click()`,
+    );
+    const tile = `[data-id="${tileId}"]`;
+    await waitFor(
+      browser,
+      `[...document.querySelectorAll('${tile} .session-controls button')].some((b) => b.textContent.trim() === 'Start')`,
+      "the stopped Codex tile",
+    );
+    await run(
+      `[...document.querySelectorAll('${tile} .session-controls button')].find((b) => b.textContent.trim() === 'Start').click()`,
+    );
+    for (let i = 0; i < 100 && launchCount() < 1; i++) await delay(50);
+    assert.equal(launchCount(), 1);
+    await waitFor(
+      browser,
+      `!!document.querySelector('${tile} [data-terminal]')`,
+      "the terminal",
+    );
+
+    // Working state: both sections from the keyboard, chat open, a selection,
+    // a tool, a draft, and resized panels.
+    for (const label of ["Toggle nodes", "Toggle inspector"]) {
+      await run(
+        `document.querySelector('.rail [aria-label="${label}"]').focus()`,
+      );
+      await press("Enter", "Enter", 13);
+    }
+    await waitFor(
+      browser,
+      `document.querySelectorAll('.rail [aria-pressed="true"]').length === 2 && !!document.querySelector('.sidebar .drawer') && !!document.querySelector('.sidebar .inspector') && !document.querySelector('.chat').hidden`,
+      "both sections beside open chat",
+    );
+    assert.equal(
+      await run(
+        `getComputedStyle(document.querySelector('.rail [aria-pressed="true"]')).boxShadow !== 'none'`,
+      ),
+      true,
+      "pressed state is not color alone",
+    );
+    await run(
+      `[...document.querySelectorAll('.drawer__item')].find((b) => b.textContent.includes('Text 1')).click()`,
+    );
+    await run(
+      `document.querySelector('[role="toolbar"] [aria-label="Rectangle"]').click()`,
+    );
+    await run(`(() => {
+      const input = document.querySelector('#canvas-prompt');
+      input.value = 'Draft kept across layouts';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+    await run(`document.querySelector('.sidebar__divider').focus()`);
+    await press("ArrowDown", "ArrowDown", 40);
+    await run(`document.querySelector('.drawer__grip').focus()`);
+    await press("ArrowRight", "ArrowRight", 39);
+    // Markers on live elements prove nothing was remounted.
+    await run(
+      `for (const s of ['.svelte-flow', '#canvas-prompt', '${tile} [data-terminal]', '.sidebar .drawer', '.chat']) document.querySelector(s).__layoutMark = true`,
+    );
+    const snapshot = `JSON.stringify({
+      marks: ['.svelte-flow', '#canvas-prompt', '${tile} [data-terminal]', '.sidebar .drawer', '.chat'].map((s) => document.querySelector(s)?.__layoutMark === true),
+      draft: document.querySelector('#canvas-prompt').value,
+      selected: [...document.querySelectorAll('.svelte-flow__node.selected')].map((n) => n.dataset.id),
+      tool: document.querySelector('[role="toolbar"] [aria-pressed="true"]')?.getAttribute('aria-label'),
+      viewport: document.querySelector('.svelte-flow__viewport').style.transform,
+      sidebar: Math.round(document.querySelector('.sidebar').getBoundingClientRect().width),
+      split: document.querySelector('.sidebar__divider').getAttribute('aria-valuenow'),
+      chat: Math.round(document.querySelector('.chat').getBoundingClientRect().width),
+      sections: [!!document.querySelector('.sidebar .drawer'), !!document.querySelector('.sidebar .inspector'), !document.querySelector('.chat').hidden],
+    })`;
+    const before = JSON.parse(await run(snapshot));
+    assert.deepEqual(before.marks, [true, true, true, true, true]);
+    assert.deepEqual(before.selected, [nodeId]);
+    assert.equal(before.tool, "Rectangle");
+    assert.equal(before.draft, "Draft kept across layouts");
+
+    // Repeated switching in both directions keeps everything and moves focus.
+    for (const [next, home] of [
+      ["classic", ".topbar"],
+      ["activity-bar", ".rail"],
+      ["classic", ".topbar"],
+      ["activity-bar", ".rail"],
+    ]) {
+      await openSettings(`document.querySelector('[aria-label="Settings"]')`);
+      assert.match(await flipLayout(next), /^Saved/);
+      await closeSettings();
+      await waitFor(
+        browser,
+        `!!document.activeElement?.closest('${home}') && document.activeElement.getAttribute('aria-label') === 'Settings'`,
+        `focus on the ${next} Settings control`,
+      );
+      assert.equal(await run(settingsCount), 1);
+      // Moved actions have exactly one home: the rail or the top bar.
+      assert.deepEqual(
+        await run(
+          `${JSON.stringify(moved)}.map((l) => [document.querySelectorAll('[aria-label="' + l + '"]').length, !!document.querySelector('${home} [aria-label="' + l + '"]')])`,
+        ),
+        moved.map(() => [1, true]),
+      );
+      assert.equal(
+        await run(`!!document.querySelector('.rail')`),
+        next === "activity-bar",
+      );
+      assert.equal(
+        await run(`!!document.querySelector('.canvas__nodes')`),
+        next === "classic",
+      );
+      assert.deepEqual(JSON.parse(await run(snapshot)), before);
+      assert.equal(launchCount(), 1, "the session was not restarted");
+    }
+    assert.equal(
+      await run(
+        `document.querySelector('${tile}').textContent.includes('Start')`,
+      ),
+      false,
+      "the session is still attached and running",
+    );
+
+    // Closed before its first frame, a fading dialog must not turn modal again.
+    assert.deepEqual(
+      await run(`(async () => {
+        const opener = document.querySelector('.rail [aria-label="Settings"]');
+        opener.focus();
+        opener.click();
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+        document.querySelector('dialog .settings').closest('dialog').dispatchEvent(new Event('cancel', { cancelable: true }));
+        for (let i = 0; i < 2; i++) await new Promise(requestAnimationFrame);
+        return [!!document.querySelector('dialog:modal'), document.activeElement === opener];
+      })()`),
+      [false, true],
+      "a dialog closed before its first frame stays released",
+    );
+    await waitFor(
+      browser,
+      `!document.querySelector('dialog .settings')`,
+      "Settings faded out",
+    );
+
+    // Fit uses the canvas beside the rail and sidebar, left of chat.
+    await run(`document.querySelector('[aria-label="Fit canvas"]').click()`);
+    await delay(400);
+    assert.equal(
+      await run(`(() => {
+        const left = document.querySelector('.sidebar').getBoundingClientRect().right;
+        const right = document.querySelector('.chat').getBoundingClientRect().left;
+        return [...document.querySelectorAll('.svelte-flow__node')].every((n) => { const r = n.getBoundingClientRect(); return r.left >= left - 1 && r.right <= right + 1; });
+      })()`),
+      true,
+    );
+
+    // A failed write applies for this window only, and a reload keeps the saved choice.
+    await run(`(() => {
+      const setItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (k, v) {
+        if (k === 'agentica.layout') throw new Error('denied');
+        return setItem.call(this, k, v);
+      };
+    })()`);
+    await openSettings(`document.querySelector('[aria-label="Settings"]')`);
+    assert.match(await flipLayout("classic"), /couldn't be saved/);
+    await closeSettings();
+    assert.equal(await run(`!!document.querySelector('.rail')`), false);
+    await openCanvas();
+    await enterCanvas();
+    await waitFor(
+      browser,
+      `!!document.querySelector('.rail')`,
+      "the saved preset after reload",
+    );
+
+    // Export from the rail reports beside it, inside the window.
+    await run(
+      `document.querySelector('.rail [aria-label="Export Markdown"]').click()`,
+    );
+    await waitFor(
+      browser,
+      `(() => { const s = document.querySelector('.rail .canvas-export__status'); const r = s?.getBoundingClientRect(); return !!s?.textContent && r.left >= document.querySelector('.rail').getBoundingClientRect().right && r.right <= innerWidth; })()`,
+      "the rail export status",
+    );
+
+    // Narrow widths in both themes: no horizontal scroll, the rail stays usable,
+    // and compact overlays start beside it.
+    for (const theme of ["light", "dark"]) {
+      await run(`document.documentElement.dataset.theme = '${theme}'`);
+      for (const width of [1600, 821, 820, 700, 420, 360]) {
+        await metrics(width);
+        await waitFor(
+          browser,
+          `innerWidth === ${width} && matchMedia('(max-width: 820px)').matches === ${width <= 820} && document.documentElement.scrollWidth <= ${width} && ${railLabels.map((l) => reachable(l, width)).join(" && ")}`,
+          `the rail at ${width}px (${theme})`,
+        );
+        if (width > 820) continue;
+        // Narrowing into compact mode closes the sidebar before overlays are tried.
+        await waitFor(
+          browser,
+          `!document.querySelector('.sidebar') && getComputedStyle(document.querySelector('.chat')).position === 'absolute'`,
+          `compact mode at ${width}px`,
+        );
+        await delay(50);
+        await run(
+          `document.querySelector('[aria-label="Toggle nodes"]').click()`,
+        );
+        await waitFor(
+          browser,
+          `(() => { const s = document.querySelector('.sidebar')?.getBoundingClientRect(); const r = document.querySelector('.rail').getBoundingClientRect(); return !!s && Math.abs(s.left - r.right) <= 1 && s.right <= ${width} && document.querySelector('.chat').hidden; })() && document.documentElement.scrollWidth <= ${width} && ${railLabels.map((l) => reachable(l, width)).join(" && ")} && ${exportShown}`,
+          `the compact sidebar beside the rail at ${width}px`,
+        );
+        await run(`document.querySelector('.canvas__chat').click()`);
+        await waitFor(
+          browser,
+          `!document.querySelector('.sidebar') && !document.querySelector('.chat').hidden && document.querySelector('.chat').getBoundingClientRect().left >= document.querySelector('.rail').getBoundingClientRect().right - 1 && ${railLabels.map((l) => reachable(l, width)).join(" && ")} && ${exportShown}`,
+          `the compact chat beside the rail at ${width}px`,
+        );
+        await run(`document.querySelector('.canvas__chat').click()`);
+      }
+    }
+
+    // Switching presets alone keeps a compact sidebar open; narrowing still closes it.
+    await metrics(700);
+    await run(`document.querySelector('[aria-label="Toggle nodes"]').click()`);
+    await waitFor(
+      browser,
+      `!!document.querySelector('.sidebar')`,
+      "the compact sidebar",
+    );
+    await openSettings(`document.querySelector('[aria-label="Settings"]')`);
+    await flipLayout("classic");
+    await closeSettings();
+    await waitFor(
+      browser,
+      `!!document.querySelector('.sidebar') && document.querySelector('.chat').hidden && !document.querySelector('.rail') && ${reachable("Toggle nodes", 700)}`,
+      "the compact sidebar kept in Classic",
+    );
+    await openSettings(`document.querySelector('[aria-label="Settings"]')`);
+    await flipLayout("activity-bar");
+    await closeSettings();
+    await metrics(1600);
+    await waitFor(
+      browser,
+      `!!document.querySelector('.sidebar')`,
+      "the wide sidebar",
+    );
+    await metrics(700);
+    await waitFor(
+      browser,
+      `!document.querySelector('.sidebar')`,
+      "narrowing closes the sidebar",
+    );
+
+    // Unknown stored values fall back to Classic.
+    await run(`localStorage.setItem('agentica.layout', 'sidebar-only')`);
+    await metrics(1600);
+    await openCanvas();
+    await enterCanvas();
+    assert.equal(await run(`!!document.querySelector('.rail')`), false);
+    assert.equal(
+      await run(`!!document.querySelector('.topbar [aria-label="Settings"]')`),
+      true,
+    );
+
+    // Choosing layouts never edited canvas geometry.
+    await editor.openWorkspace(workspaceId);
+    await editor.openCanvas(canvasId);
+    assert.deepEqual(geometry(), savedGeometry);
+    await editor.closeWorkspace();
+  } catch (error) {
+    if (browser)
+      error.message += `\nRendered state: ${await evaluate(browser, "JSON.stringify({ focus: document.activeElement?.outerHTML.slice(0, 150), rail: !!document.querySelector('.rail'), width: innerWidth, scroll: document.documentElement.scrollWidth, toolbar: [...document.querySelectorAll('.toolbar, .toolbar__card, .canvas-dock, .canvas')].map((e) => e.className.slice(0,30) + ':' + Math.round(e.getBoundingClientRect().left) + '-' + Math.round(e.getBoundingClientRect().right)), controls: ['Toggle nodes', 'Toggle inspector', 'Settings'].map((l) => { const b = document.querySelector('[aria-label=\"' + l + '\"]'); const r = b?.getBoundingClientRect(); return r && [l, Math.round(r.left), Math.round(r.right), Math.round(r.top), document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.className]; }) })")}`;
+    throw error;
+  } finally {
+    editor.dispose();
+    await browser?.close();
+    await stopBackend(backend.child);
+    rmSync(root, { recursive: true, force: true });
+  }
+});

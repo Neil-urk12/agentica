@@ -6,6 +6,7 @@
   import { onMount, tick } from "svelte";
   import { desktopMode } from "../runtime";
   import type { Theme } from "../theme";
+  import type { Layout } from "../layout";
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
   import ToolsSettings from "./ToolsSettings.svelte";
@@ -42,6 +43,9 @@
     /** Section to open at; without one, narrow windows start at the category list. */
     section?: SettingsSection;
     onChange: (theme: Theme) => void;
+    layout: Layout;
+    /** Applies the layout now; false when it couldn't be saved for next launch. */
+    onLayoutChange: (layout: Layout) => boolean;
     onClose: () => void;
   }
 
@@ -49,6 +53,8 @@
     theme,
     section,
     onChange,
+    layout,
+    onLayoutChange,
     onClose,
     connectionKey,
     connected,
@@ -71,6 +77,24 @@
   onMount(() => () => checkAbort?.abort());
 
   const dark = $derived(theme === "dark");
+  let layoutNote = $state("");
+  const layouts: { id: Layout; label: string; hint: string }[] = [
+    {
+      id: "classic",
+      label: "Classic",
+      hint: "Floating Nodes and Inspector buttons on the canvas; Settings in the top bar.",
+    },
+    {
+      id: "activity-bar",
+      label: "Activity bar",
+      hint: "A slim left rail with the canvas actions at the top and Settings at the bottom.",
+    },
+  ];
+  function chooseLayout(next: Layout) {
+    layoutNote = onLayoutChange(next)
+      ? "Saved. Remembered on this device."
+      : "Applied to this window only. It couldn't be saved for future launches.";
+  }
 
   const initialProvider = getProviderConfig();
   let apiKey = $state(initialProvider.apiKey);
@@ -464,6 +488,37 @@
             >
             <span class="switch__label">{dark ? "Dark" : "Light"}</span>
           </button>
+        </section>
+        <section class="setting setting--stacked">
+          <span class="setting__icon"><Icon name="dashboard" size={20} /></span>
+          <div class="setting__text">
+            <h3 id="layout-label">Layout</h3>
+            <p>Where the canvas controls sit. Remembered on this device.</p>
+            <div
+              class="setting__body setting__choices"
+              role="radiogroup"
+              aria-labelledby="layout-label"
+            >
+              {#each layouts as option (option.id)}
+                <label class="setting__choice">
+                  <input
+                    type="radio"
+                    name="layout"
+                    value={option.id}
+                    checked={layout === option.id}
+                    onchange={() => chooseLayout(option.id)}
+                  />
+                  <span>
+                    <strong>{option.label}</strong>
+                    <span class="setting__hint">{option.hint}</span>
+                  </span>
+                </label>
+              {/each}
+            </div>
+            <p id="layout-note" class="setting__hint" role="status">
+              {layoutNote}
+            </p>
+          </div>
         </section>
       </section>
 

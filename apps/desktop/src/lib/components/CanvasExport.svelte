@@ -4,7 +4,9 @@
   import { canvasMarkdown, downloadMarkdown } from "../canvas-export";
   import Icon from "./Icon.svelte";
 
-  let { canvas }: { canvas: CanvasDocument } = $props();
+  // `rail`: icon-only in the activity bar, with messages opening to its right.
+  let { canvas, rail = false }: { canvas: CanvasDocument; rail?: boolean } =
+    $props();
   let busy = $state(false);
   let message = $state("");
   let error = $state("");
@@ -35,9 +37,9 @@
   }
 </script>
 
-<div class="canvas-export">
+<div class="canvas-export" class:canvas-export--rail={rail}>
   <button
-    class="btn btn--soft"
+    class={rail ? "icon-btn" : "btn btn--soft"}
     type="button"
     aria-label="Export Markdown"
     aria-describedby="canvas-export-help"
@@ -46,8 +48,10 @@
     title="Share canvas notes as Markdown. Visual and live content is not included; note text is shared as written."
     onclick={() => void exportMarkdown()}
   >
-    <Icon name="download" size={18} />
-    <span class="label">{busy ? "Exporting…" : "Export Markdown"}</span>
+    <Icon name="download" size={rail ? 20 : 18} />
+    {#if !rail}
+      <span class="label">{busy ? "Exporting…" : "Export Markdown"}</span>
+    {/if}
   </button>
   <span id="canvas-export-help" class="sr-only">
     Export full canvas notes as Markdown. Visual and live content is not
@@ -79,6 +83,12 @@
     color: var(--ink);
     font-size: 12px;
     overflow-wrap: anywhere;
+  }
+  .canvas-export--rail .canvas-export__status,
+  .canvas-export--rail .canvas-export__error {
+    top: 0;
+    right: auto;
+    left: calc(100% + 8px);
   }
   .canvas-export__status:empty {
     display: none;
