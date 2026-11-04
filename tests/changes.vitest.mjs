@@ -1,53 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { registerHooks, stripTypeScriptTypes } from "node:module";
-import { test } from "node:test";
-import { compile, compileModule } from "svelte/compiler";
+import { stripTypeScriptTypes } from "node:module";
 import { render } from "svelte/server";
+import { test } from "vitest";
 import { feedbackMessage } from "../apps/desktop/src/lib/changes.ts";
-
-// Exercise the real rune state and component without a browser or generated files.
-const hooks = registerHooks({
-  resolve(specifier, context, nextResolve) {
-    if (
-      specifier === "./changes" ||
-      specifier === "../changes" ||
-      specifier === "./review-persistence"
-    )
-      specifier += ".ts";
-    return nextResolve(specifier, context);
-  },
-  load(url, context, nextLoad) {
-    const result = nextLoad(
-      url,
-      url.endsWith(".svelte") ? { ...context, format: "module" } : context,
-    );
-    if (url.endsWith(".svelte.ts"))
-      return {
-        ...result,
-        format: "module",
-        source: compileModule(
-          stripTypeScriptTypes(result.source.toString(), { mode: "transform" }),
-          { filename: new URL(url).pathname, generate: "server" },
-        ).js.code,
-      };
-    if (url.endsWith(".svelte"))
-      return {
-        ...result,
-        format: "module",
-        source: compile(result.source.toString(), {
-          filename: new URL(url).pathname,
-          generate: "server",
-        }).js.code,
-      };
-    return result;
-  },
-});
-const { ChangesManager } =
-  await import("../apps/desktop/src/lib/changes-manager.svelte.ts");
-const { default: ChangesView } =
-  await import("../apps/desktop/src/lib/components/ChangesView.svelte");
-hooks.deregister();
+import { ChangesManager } from "../apps/desktop/src/lib/changes-manager.svelte.ts";
+import ChangesView from "../apps/desktop/src/lib/components/ChangesView.svelte";
 
 const entry = (path) => ({ path, section: "unstaged", status: "M" });
 const hunk = (line, text) => ({

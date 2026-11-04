@@ -137,5 +137,5 @@ jobs:
         run: pnpm test:unit:coverage
       - uses: codecov/codecov-action@v7
         with:
-          files: coverage/rust.lcov,coverage/js.lcov
+          files: coverage/rust.lcov,coverage/js.lcov,coverage/vitest/lcov.info
           use_oidc: true

@@ -13,8 +13,8 @@ Reference for working on Agentica's code. To run the app, see
 | `pnpm lint`               | Oxlint on JavaScript, TypeScript, and Svelte                                                                                             |
 | `pnpm format:check`       | Oxfmt formatting of source and Markdown (`pnpm format` fixes it)                                                                         |
 | `pnpm check:rust`         | `cargo fmt --check` and Clippy with `-D warnings`, all targets and features                                                              |
-| `pnpm test:unit`          | Node unit tests (what CI runs)                                                                                                           |
-| `pnpm test:unit:coverage` | Node unit tests with an lcov report at `coverage/js.lcov` (uploaded by the coverage job)                                                 |
+| `pnpm test:unit`          | JavaScript unit tests under `node --test` and Vitest (what CI runs)                                                                      |
+| `pnpm test:unit:coverage` | Unit tests with lcov reports at `coverage/js.lcov` and `coverage/vitest/lcov.info` (uploaded by the coverage job)                        |
 | `pnpm test:rust`          | Rust workspace tests                                                                                                                     |
 | `pnpm test`               | Everything: builds protocol and frontend, Rust tests with the embedded UI, then all Node tests including the real HTTP and browser tests |
 | `pnpm build`              | Protocol, frontend, and an RPC-only debug backend                                                                                        |
@@ -26,9 +26,13 @@ Notes:
 
 - On a fresh checkout, run `pnpm -r build` before `pnpm check:rust`; the
   all-features build embeds frontend assets.
-- `tests/*.test.mjs` import `@agentica/protocol` from its built `dist/`. Rebuild
+- `tests/*.mjs` import `@agentica/protocol` from its built `dist/`. Rebuild
   it after changing the protocol package.
-- `pnpm test:unit` runs every `tests/*.test.mjs`. Tests that need the real
+- `pnpm test:unit` runs every `tests/*.test.mjs` with `node --test`, then every
+  `tests/*.vitest.mjs` with Vitest. Vitest loads app code through Vite and the
+  Svelte plugin (`vitest.config.ts`), so tests that import `.svelte` or
+  `.svelte.ts` files, or TypeScript that needs more than type stripping, use the
+  `.vitest.mjs` suffix; the rest stay on `node --test`. Tests that need the real
   backend or a browser are named `*.browser.mjs` and run in `pnpm test` (or
   `pnpm test:preview:browser`), so a new unit test file needs no script change.
 - `tests/http.browser.mjs` starts the real backend on port 1421 and drives Chrome
@@ -41,6 +45,7 @@ Run a single test:
 ```sh
 cargo test --locked -p agentica-runtime <name_filter>
 node --test --test-name-pattern "<regex>" tests/<file>.test.mjs
+pnpm exec vitest run tests/<file>.vitest.mjs -t "<regex>"
 ```
 
 ### Git hooks
@@ -58,9 +63,9 @@ desktop build. The native job runs only when Rust code, Cargo files, the shared
 the workflow change, and always on `main`. It runs on Linux, plus
 Windows for `main` and pull requests into `main`. The desktop build is a debug
 build except on `main`, which does a release build. A coverage job runs on pushes
-to `main` and `develop` only: `cargo llvm-cov` covers the Rust runtime and Node's
-built-in coverage covers the unit tests, and both lcov reports are uploaded to
-Codecov, which serves the README badge. Uploads use GitHub OIDC, so no token is
+to `main` and `develop` only: `cargo llvm-cov` covers the Rust runtime, Node's
+built-in coverage and Vitest's V8 coverage cover the unit tests, and the lcov
+reports are uploaded to Codecov, which serves the README badge. Uploads use GitHub OIDC, so no token is
 stored; the Codecov GitHub App must be installed on the repository. A newer push
 to a pull request cancels its running workflow; branch pushes are never
 cancelled. Tag pushes run no checks, so tag only commits that passed CI on

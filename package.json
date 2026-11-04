@@ -23,10 +23,10 @@
     "check:rust": "cargo fmt --all --check && cargo clippy --locked --workspace --all-targets --all-features -- -D warnings",
     "test:rust": "cargo test --locked --workspace",
     "test:rust:unit": "cargo test --locked --workspace --lib --bins",
-    "test:unit": "pnpm --filter @agentica/protocol build && node --test \"tests/*.test.mjs\"",
-    "test:unit:coverage": "pnpm --filter @agentica/protocol build && mkdir -p coverage && node --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=coverage/js.lcov \"tests/*.test.mjs\"",
+    "test:unit": "pnpm --filter @agentica/protocol build && node --test \"tests/*.test.mjs\" && vitest run",
+    "test:unit:coverage": "pnpm --filter @agentica/protocol build && mkdir -p coverage && node --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=coverage/js.lcov \"tests/*.test.mjs\" && vitest run --coverage",
     "test:preview:browser": "node --test --test-concurrency=1 tests/preview-policy.browser.mjs tests/preview-hmr.browser.mjs tests/preview-workflow.browser.mjs",
-    "test": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop build && cargo test --locked -p agentica-runtime --features bundled-frontend && cargo build --locked -p agentica-runtime --features bundled-frontend && node --test \"tests/*.test.mjs\" tests/http.browser.mjs tests/landing-stats.browser.mjs tests/canvas-export.browser.mjs",
+    "test": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop build && cargo test --locked -p agentica-runtime --features bundled-frontend && cargo build --locked -p agentica-runtime --features bundled-frontend && node --test \"tests/*.test.mjs\" tests/http.browser.mjs tests/landing-stats.browser.mjs tests/canvas-export.browser.mjs && vitest run",
     "build:backend": "pnpm --filter @agentica/protocol build && pnpm --filter @agentica/desktop build && cargo build --locked --release -p agentica-runtime --bin agentica-backend --features bundled-frontend",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
@@ -34,10 +34,14 @@
   },
   "devDependencies": {
     "@agentica/protocol": "workspace:*",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@types/node": "^24.19.2",
+    "@vitest/coverage-v8": "^5.1.0",
     "oxfmt": "^0.72.0",
     "oxlint": "^1.87.0",
     "svelte": "^5.57.2",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "vite": "^8.3.4",
+    "vitest": "^5.1.0"
   }
 }

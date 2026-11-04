@@ -1,46 +1,20 @@
 import assert from "node:assert/strict";
-import { registerHooks, stripTypeScriptTypes } from "node:module";
-import { test } from "node:test";
 import { setImmediate } from "node:timers/promises";
 import { SessionEventSchema } from "@agentica/protocol";
+import { test, vi } from "vitest";
 
-const sessionsUrl = new URL(
-  "../apps/desktop/src/lib/sessions.ts",
-  import.meta.url,
-);
-const mocks = {
-  "@xterm/xterm": "export const Terminal = globalThis.sessionTest.Terminal;",
-  "@xterm/addon-fit": "export class FitAddon {}",
-  "./session-client":
-    "export const createSessionClient = () => globalThis.sessionTest.client;",
-  "./runtime": "export const desktopMode = false;",
-};
 // Exercise the manager with controlled transport replies and renderer callbacks.
-const hooks = registerHooks({
-  resolve(specifier, context, nextResolve) {
-    if (context.parentURL === sessionsUrl.href && specifier in mocks)
-      return { url: `session-test:${specifier}`, shortCircuit: true };
-    return nextResolve(specifier, context);
-  },
-  load(url, context, nextLoad) {
-    if (url.startsWith("session-test:"))
-      return {
-        format: "module",
-        source: mocks[url.slice("session-test:".length)],
-        shortCircuit: true,
-      };
-    const result = nextLoad(url, context);
-    return url === sessionsUrl.href
-      ? {
-          ...result,
-          format: "module",
-          source: stripTypeScriptTypes(result.source.toString(), {
-            mode: "transform",
-          }),
-        }
-      : result;
-  },
-});
+// xterm resolves only from apps/desktop, so mock the files sessions.ts loads.
+vi.mock("../apps/desktop/node_modules/@xterm/xterm", () => ({
+  Terminal: globalThis.sessionTest.Terminal,
+}));
+vi.mock("../apps/desktop/node_modules/@xterm/addon-fit", () => ({
+  FitAddon: class FitAddon {},
+}));
+vi.mock("../apps/desktop/src/lib/session-client.ts", () => ({
+  createSessionClient: () => globalThis.sessionTest.client,
+}));
+vi.mock("../apps/desktop/src/lib/runtime.ts", () => ({ desktopMode: false }));
 
 class Terminal {
   rows = 24;
@@ -68,8 +42,8 @@ class Terminal {
   }
 }
 globalThis.sessionTest = { Terminal };
-const { SessionManager, tileName } = await import(sessionsUrl.href);
-hooks.deregister();
+const { SessionManager, tileName } =
+  await import("../apps/desktop/src/lib/sessions.ts");
 
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const workspaceId = id(1);
@@ -219,7 +193,7 @@ function setup(t, statuses) {
     () => "key",
     () => {},
   );
-  t.after(() => manager.dispose());
+  t.onTestFinished(() => manager.dispose());
   return { manager, client };
 }
 
@@ -287,7 +261,7 @@ test("terminal and window focus report only actual textarea focus and unmount cl
     requestAnimationFrame: globalThis.requestAnimationFrame,
     cancelAnimationFrame: globalThis.cancelAnimationFrame,
   };
-  t.after(() => Object.assign(globalThis, old));
+  t.onTestFinished(() => Object.assign(globalThis, old));
   let hasFocus = true;
   const host = new EventTarget();
   host.append = () => {};
@@ -336,7 +310,7 @@ test("focus clears detached exited attention without acknowledging newer signals
     requestAnimationFrame: globalThis.requestAnimationFrame,
     cancelAnimationFrame: globalThis.cancelAnimationFrame,
   };
-  t.after(() => Object.assign(globalThis, old));
+  t.onTestFinished(() => Object.assign(globalThis, old));
   let hasFocus = false;
   const host = new EventTarget();
   host.append = () => {};

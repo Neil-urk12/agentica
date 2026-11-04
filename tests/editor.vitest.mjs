@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import { registerHooks, stripTypeScriptTypes } from "node:module";
-import { test } from "node:test";
 import {
   FILE_LIMITS,
   LIMITS,
@@ -10,28 +8,8 @@ import {
 import { Editor } from "../apps/desktop/src/lib/editor.ts";
 import { stageOperations } from "../apps/desktop/src/lib/canvas-agent.ts";
 import { canvasMarkdown } from "../apps/desktop/src/lib/canvas-export.ts";
-
-// The runtime's TypeScript parameter property needs transformation, not stripping.
-const runtimeUrl = new URL(
-  "../apps/desktop/src/lib/runtime.ts",
-  import.meta.url,
-);
-const hooks = registerHooks({
-  load(url, context, nextLoad) {
-    const result = nextLoad(url, context);
-    return url === runtimeUrl.href
-      ? {
-          ...result,
-          format: "module",
-          source: stripTypeScriptTypes(result.source.toString(), {
-            mode: "transform",
-          }),
-        }
-      : result;
-  },
-});
-const { callRuntime } = await import(runtimeUrl.href);
-hooks.deregister();
+import { callRuntime } from "../apps/desktop/src/lib/runtime.ts";
+import { describe, test, vi } from "vitest";
 
 const workspaceId = "00000000-0000-4000-8000-000000000001";
 const canvasId = "00000000-0000-4000-8000-000000000002";
@@ -510,7 +488,7 @@ async function setup(t, intercept = async () => {}) {
     () => {},
     () => clock.now,
   );
-  t.after(() => editor.dispose());
+  t.onTestFinished(() => editor.dispose());
   await editor.openWorkspace(workspaceId);
   await editor.openCanvas(canvasId);
   return { editor, calls, disk, call, clock };
@@ -689,9 +667,9 @@ test("task recording retry records a fresh send when the attempt started before 
   assert.deepEqual(editor.state.document.nodes[0].task, disk.nodes[0].task);
 });
 
-test("task recording retry reconciles concurrent changes before attempting a write", async (t) => {
+describe("task recording retry reconciles concurrent changes before attempting a write", () => {
   for (const change of ["none", "done", "assignee", "text", "unmarked"])
-    await t.test(change, async (t) => {
+    test(change, async (t) => {
       const { editor, disk, tileId, records } = await taskSendSetup(t);
       if (change === "unmarked") disk.nodes[0].task = null;
       else if (change !== "none") {
@@ -819,9 +797,9 @@ test("project layout keeps duplicate roots independent and children relative acr
   assert.ok(calls.every((call) => !call.method.startsWith("session.")));
 });
 
-test("project save failures retain drafts and retry refuses unknown remote layout or association", async (t) => {
+describe("project save failures retain drafts and retry refuses unknown remote layout or association", () => {
   for (const change of ["none", "layout", "root"])
-    await t.test(change, async (t) => {
+    test(change, async (t) => {
       let fail = true;
       const { editor, disk } = await projectSetup(t, async (method) => {
         if (method === "canvas.save" && fail) {
@@ -871,9 +849,9 @@ test("project acknowledgement preserves newer collapse and placement during an i
   assert.equal(editor.state.dirty, false);
 });
 
-test("proposal approval publishes the canvas and turn status together, even if status reload fails", async (t) => {
+describe("proposal approval publishes the canvas and turn status together, even if status reload fails", () => {
   for (const failReload of [false, true])
-    await t.test(
+    test(
       failReload
         ? "failed status reload and recovery"
         : "delayed status reload",
@@ -939,7 +917,7 @@ test("proposal approval publishes the canvas and turn status together, even if s
             }
           },
         );
-        t.after(() => {
+        t.onTestFinished(() => {
           release.resolve();
           editor.dispose();
         });
@@ -1187,7 +1165,7 @@ function frameBytes(method, params) {
   ).length;
 }
 
-test("text creation saves the complete response or reports failure", async (t) => {
+describe("text creation saves the complete response or reports failure", () => {
   const params = {
     workspaceId,
     canvasId,
@@ -1203,13 +1181,15 @@ test("text creation saves the complete response or reports failure", async (t) =
   const tokenBytes = Buffer.byteLength(JSON.stringify(token).slice(1, -1));
   const boundary = token.repeat(Math.floor(budget / tokenBytes));
   const padding = budget % tokenBytes;
-  assert.equal(
-    frameBytes("node.createText", {
-      ...params,
-      text: boundary + "a".repeat(padding),
-    }),
-    MAX_FRAME_BYTES,
-  );
+  test("boundary text fills the frame limit exactly", () => {
+    assert.equal(
+      frameBytes("node.createText", {
+        ...params,
+        text: boundary + "a".repeat(padding),
+      }),
+      MAX_FRAME_BYTES,
+    );
+  });
   const cases = [
     { name: "empty text", text: "" },
     { name: "multibyte text", text: "中文😀".repeat(500) },
@@ -1233,17 +1213,19 @@ test("text creation saves the complete response or reports failure", async (t) =
     },
   ];
   for (const { name, text, error } of cases) {
-    await t.test(name, async (t) => {
+    test(name, async (t) => {
       const { editor, disk, calls, call } = await setup(t);
       // Exercise the real transport validation before the simulated disk write.
-      t.mock.method(globalThis, "fetch", async (_url, options) => {
-        const request = JSON.parse(options.body);
-        const result = await call("", false, request.method, request.params);
-        return {
-          ok: true,
-          json: async () => ({ protocolVersion: 1, id: request.id, result }),
-        };
-      });
+      vi.spyOn(globalThis, "fetch").mockImplementation(
+        async (_url, options) => {
+          const request = JSON.parse(options.body);
+          const result = await call("", false, request.method, request.params);
+          return {
+            ok: true,
+            json: async () => ({ protocolVersion: 1, id: request.id, result }),
+          };
+        },
+      );
       editor.call = async (...args) =>
         args[2] === "node.createText" ? callRuntime(...args) : call(...args);
 
@@ -1444,9 +1426,9 @@ test("starting or discarding a conversation keeps undo, applying clears it", asy
   assert.equal(editor.state.canUndo, false);
 });
 
-test("applied proposals clear history even when the canvas or status reload fails", async (t) => {
+describe("applied proposals clear history even when the canvas or status reload fails", () => {
   for (const failedMethod of ["canvas.open", "conversation.list"])
-    await t.test(failedMethod, async (t) => {
+    test(failedMethod, async (t) => {
       const { editor, call, disk } = await setup(t);
       editor.placeNode(nodeId, { x: 77 });
       editor.checkpoint();
@@ -2338,7 +2320,7 @@ test("restoring a backup reloads the list and a cancelled dialog changes nothing
     () => "",
     () => {},
   );
-  t.after(() => editor.dispose());
+  t.onTestFinished(() => editor.dispose());
   await editor.listWorkspaces();
 
   await editor.restoreWorkspace(async () => null);

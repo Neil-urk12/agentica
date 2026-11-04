@@ -12,6 +12,20 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Component and rune tests run under Vitest (2026-11-04)
+
+- Changed: the `changes`, `sessions`, `markdown-render`, and `editor` unit tests
+  now run under Vitest as `tests/*.vitest.mjs`. They had hand-written Node
+  loader hooks that resolved extensionless imports, compiled Svelte for the
+  server, transformed `runtime.ts`, and swapped modules for test doubles; Vite
+  and the Svelte plugin with the app's `svelte.config.js` already do that, so
+  the hooks are gone and a new component test is a plain import. Every other
+  unit test stays on `node --test`. `pnpm test:unit` and the coverage job run
+  both runners, and Codecov receives the Vitest lcov report too. Verified by
+  matching every test name against the pre-migration run (143 Vitest tests,
+  with the editor's five nested-subtest parents now `describe` blocks and one
+  boundary check split out).
+
 ### Dialogs closed before their first frame (2026-11-03)
 
 - Fixed: a dialog closed before its first frame was drawn turned modal again
