@@ -1678,6 +1678,14 @@ export class Editor {
     });
   }
 
+  /** The way out of a save conflict that retrying cannot resolve: drop local edits. */
+  async discardAndReload() {
+    await this.enqueue(async () => {
+      if (!this.state.document || this.disposed) return;
+      await this.mutation(() => this.reloadConversationCanvas(true));
+    });
+  }
+
   /** Agent reads leave the canvas revision alone, so they skip the save queue and reload. */
   readConversation(params: RuntimeParams<"conversation.read">) {
     return this.call(this.key(), false, "conversation.read", params);

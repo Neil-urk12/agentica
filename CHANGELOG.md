@@ -12,6 +12,26 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Review fixes: restore, agent launch, release token, paste size, save conflicts (2026-11-04)
+
+- Fixed: applying a proposal whose stored operations, context, or drawing body
+  has the wrong JSON shape (possible after restoring a backup, which validates
+  schema and integrity but not these columns) returns `STORAGE_ERROR` instead of
+  panicking. On desktop the panic poisoned the backend lock, so every later
+  call failed with "Backend state is unavailable." until restart.
+- Fixed: built-in agents found on `PATH` launch by their own path instead of a
+  symlink's target. Volta and mise shims are symlinks to one binary that picks
+  the tool from argv[0], so the resolved path ran the manager, not the agent.
+  Relative `PATH` entries are still ignored.
+- Security: the release workflow sets `GH_TOKEN` only on the `gh release` steps
+  and checks out without persisted credentials, so `pnpm install`, `build.rs`
+  scripts, and the Vite build no longer see a `contents: write` token.
+- Fixed: Changes feedback larger than one 16 KiB terminal frame disables Paste
+  and shows its byte count, instead of failing with "Invalid session request".
+- Fixed: a save conflict that retrying cannot resolve now has a way out.
+  "Discard edits and reload" appears next to "Copy edits", and leaving the
+  canvas or closing the desktop window asks to discard instead of refusing.
+
 ### Component and rune tests run under Vitest (2026-11-04)
 
 - Changed: the `changes`, `sessions`, `markdown-render`, and `editor` unit tests

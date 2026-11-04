@@ -14,7 +14,7 @@ concurrency:
 
 env:
   TAG: ${{ github.ref_name }}
-  GH_TOKEN: ${{ github.token }}
+  # GH_TOKEN is set only on gh steps so dependency and build scripts never see a write token.
 
 jobs:
   draft:
@@ -23,9 +23,13 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - run: test "v$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")" = "$TAG"
       # A re-run of a failed workflow reuses the draft left by the first attempt.
-      - run: |
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
           gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --verify-tag \
             --title "Agentica $TAG" \
             --notes "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/$TAG/CHANGELOG.md) for what changed."
@@ -50,6 +54,8 @@ jobs:
       APPIMAGE_EXTRACT_AND_RUN: "1"
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -64,6 +70,8 @@ jobs:
       - run: pnpm build:backend
       - name: Upload Linux assets
         if: runner.os == 'Linux'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir out
           cp target/release/bundle/appimage/*.AppImage "out/agentica-$TAG-linux-x86_64.AppImage"
@@ -73,6 +81,8 @@ jobs:
           gh release upload "$TAG" out/* --clobber
       - name: Upload Windows assets
         if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir out
           cp target/release/bundle/nsis/*-setup.exe "out/agentica-$TAG-windows-x64-setup.exe"
@@ -85,4 +95,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - run: gh release edit "$TAG" --repo "${{ github.repository }}" --draft=false --latest
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$TAG" --repo "${{ github.repository }}" --draft=false --latest

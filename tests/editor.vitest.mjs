@@ -229,6 +229,15 @@ test("preview retry retains its draft and refuses an unrelated remote URL", asyn
     calls.filter((c) => c.method === "artifact.saveWebPreview").length,
     0,
   );
+  // Retrying cannot resolve this; discarding is the way out, even with an attempted save pending.
+  await editor.discardAndReload();
+  assert.equal(editor.state.error, "");
+  assert.equal(editor.state.dirty, false);
+  assert.equal(editor.state.canUndo, false);
+  assert.equal(
+    editor.state.document.artifacts.find((a) => a.id === artifact.id).url,
+    "http://localhost:5173/another-editor",
+  );
 });
 
 async function setup(t, intercept = async () => {}) {

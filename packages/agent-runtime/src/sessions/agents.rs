@@ -120,8 +120,8 @@ fn on_path(name: &str, search: Option<&OsStr>) -> Option<PathBuf> {
                 .flat_map(|path| std::env::split_paths(path).collect::<Vec<_>>())
                 .map(move |directory| directory.join(&candidate))
         })
-        .filter_map(|path| path.canonicalize().ok())
-        .find(|path| executable(path))
+        // Not canonicalized: Volta/mise shims are symlinks that dispatch on argv[0].
+        .find(|path| path.is_absolute() && executable(path))
 }
 
 fn builtin_capability(agent: &BuiltinAgent, search: Option<&OsStr>) -> AgentCapability {
@@ -451,8 +451,12 @@ mod tests {
             builtin_capability(agent, Some(bin.path().as_os_str()))
         };
         let available = found("claude");
-        assert_eq!(available.path, Some(claude.canonicalize().unwrap()));
+        assert_eq!(available.path, Some(claude.clone()));
         assert!(available.reason.is_none());
+        // A version-manager shim is launched by its own name, not its target's.
+        let codex = bin.path().join("codex");
+        std::os::unix::fs::symlink(&claude, &codex).unwrap();
+        assert_eq!(found("codex").path, Some(codex));
         for missing in ["crush", "opencode", "kimi"] {
             let agent = found(missing);
             assert!(agent.path.is_none(), "{missing}");

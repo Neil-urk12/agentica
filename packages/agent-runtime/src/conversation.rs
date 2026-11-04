@@ -414,9 +414,12 @@ enum Operation {
     },
 }
 
+fn unreadable() -> RuntimeError {
+    RuntimeError::new("STORAGE_ERROR", "Unreadable conversation record.")
+}
+
 fn json(raw: &str) -> Result<Value, RuntimeError> {
-    serde_json::from_str(raw)
-        .map_err(|_| RuntimeError::new("STORAGE_ERROR", "Unreadable conversation record."))
+    serde_json::from_str(raw).map_err(|_| unreadable())
 }
 
 fn turn(tx: &Transaction, canvas_id: &str, turn_id: &str) -> Result<Value, RuntimeError> {
@@ -521,31 +524,26 @@ fn scoped_node(
         .optional()?
         .ok_or_else(|| not_found("Proposal target"))?;
     if !created.contains(node_id) && !checked.contains(node_id) {
-        let original = context["nodes"]
+        // Context is stored JSON that a restored backup may have altered.
+        let nodes = context["nodes"].as_array().ok_or_else(unreadable)?;
+        let original = nodes.iter().find(|n| n["id"] == node_id).ok_or_else(|| {
+            RuntimeError::new(
+                "SCOPE_DENIED",
+                "The proposal targets an object outside this turn's context.",
+            )
+        })?;
+        let original_revision = context["artifacts"]
             .as_array()
-            .unwrap()
-            .iter()
-            .find(|n| n["id"] == node_id)
-            .ok_or_else(|| {
-                RuntimeError::new(
-                    "SCOPE_DENIED",
-                    "The proposal targets an object outside this turn's context.",
-                )
-            })?;
-        let original_artifact = context["artifacts"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|a| a["id"] == original["artifactId"])
-            .unwrap();
+            .and_then(|artifacts| artifacts.iter().find(|a| a["id"] == original["artifactId"]))
+            .and_then(|a| a["revision"].as_i64())
+            .ok_or_else(unreadable)?;
         let artifact_id = node["artifactId"].as_str().unwrap();
         let current_revision: i64 = tx.query_row(
             "SELECT revision FROM artifact WHERE id = ?1",
             [artifact_id],
             |row| row.get(0),
         )?;
-        if node != *original || current_revision != original_artifact["revision"].as_i64().unwrap()
-        {
+        if node != *original || current_revision != original_revision {
             return Err(RuntimeError::new("CONFLICT", "A proposal target changed. Discard this proposal and regenerate from current content; nothing was applied."));
         }
         // Editing a shared artifact must not change placements outside the captured scope.
@@ -553,13 +551,7 @@ fn scoped_node(
         let refs = stmt
             .query_map([artifact_id], |r| r.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
-        if refs.iter().any(|id| {
-            !context["nodes"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|n| n["id"] == *id)
-        }) {
+        if refs.iter().any(|id| !nodes.iter().any(|n| n["id"] == *id)) {
             return Err(RuntimeError::new(
                 "SCOPE_DENIED",
                 "This artifact has placements outside the turn's context.",
@@ -726,7 +718,7 @@ fn apply_operations(
                     && (width != node["width"].as_f64().unwrap()
                         || height != node["height"].as_f64().unwrap())
                 {
-                    let shapes = a["drawing"]["shapes"].as_array().unwrap();
+                    let shapes = a["drawing"]["shapes"].as_array().ok_or_else(unreadable)?;
                     if shapes.len() != 1
                         || !matches!(shapes[0]["kind"].as_str(), Some("rectangle" | "ellipse"))
                     {
@@ -1000,7 +992,7 @@ pub(super) fn call(tx: &Transaction, method: &str, params: Value) -> Result<Valu
                     tx,
                     &p.canvas_id,
                     &json(&context)?,
-                    t["operations"].as_array().unwrap(),
+                    t["operations"].as_array().ok_or_else(unreadable)?,
                 )?;
                 bump(tx, &p.canvas_id, canvas_revision(tx, &p.canvas_id)?)?;
             }
@@ -1413,6 +1405,57 @@ mod tests {
             )
             .unwrap()["turns"][0]["status"],
             "generating"
+        );
+    }
+
+    #[test]
+    fn a_malformed_stored_proposal_fails_without_panicking() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut runtime = crate::Runtime::new(Some(temp.path().to_owned()));
+        let workspace = runtime
+            .call("workspace.create", json!({"name":"Restored"}))
+            .unwrap()["workspace"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let canvas = runtime
+            .call(
+                "canvas.create",
+                json!({"workspaceId":workspace,"title":"Canvas"}),
+            )
+            .unwrap()["canvas"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let node = runtime.call("node.createText", json!({"workspaceId":workspace,"canvasId":canvas,"expectedRevision":1,"x":0,"y":0,"width":200,"height":100,"text":"Note"})).unwrap()
+            ["node"]["id"].clone();
+        let turn = new_id().unwrap();
+        runtime.call("conversation.start", json!({"workspaceId":workspace,"canvasId":canvas,"turnId":turn,"prompt":"Move","model":"test","nodeIds":[node],"anchor":{"x":0,"y":400}})).unwrap();
+        runtime.call("conversation.finish", json!({"workspaceId":workspace,"canvasId":canvas,"turnId":turn,"reply":"Moved","status":"complete","error":"",
+            "operations":[{"op":"place","nodeId":node,"x":10,"y":10,"width":200,"height":100}]})).unwrap();
+        let apply =
+            json!({"workspaceId":workspace,"canvasId":canvas,"turnId":turn,"action":"apply"});
+        // Shapes a restored backup can carry past validate_backup.
+        for corrupt in [
+            "UPDATE conversation_turn SET operations = '{}' WHERE id = ?1",
+            "UPDATE conversation_turn SET context = json_remove(context, '$.artifacts') WHERE id = ?1",
+            "UPDATE conversation_turn SET context = '{}' WHERE id = ?1",
+        ] {
+            let original: (String, String) = runtime.transact(&workspace, |tx| {
+                let saved: (String, String) = tx.query_row("SELECT operations, context FROM conversation_turn WHERE id = ?1", [&turn], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                tx.execute(corrupt, [&turn])?;
+                Ok(json!(saved))
+            }).map(|v| serde_json::from_value(v).unwrap()).unwrap();
+            let error = runtime.call("conversation.resolve", apply.clone()).unwrap_err();
+            assert_eq!(error.code, "STORAGE_ERROR", "{corrupt}");
+            runtime.transact(&workspace, |tx| {
+                tx.execute("UPDATE conversation_turn SET operations = ?2, context = ?3 WHERE id = ?1", (&turn, &original.0, &original.1))?;
+                Ok(json!({}))
+            }).unwrap();
+        }
+        assert_eq!(
+            runtime.call("conversation.resolve", apply).unwrap()["turn"]["status"],
+            "applied"
         );
     }
 }

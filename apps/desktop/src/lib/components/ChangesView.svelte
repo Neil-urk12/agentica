@@ -8,6 +8,7 @@
     hunkText,
     numberLines,
   } from "../changes";
+  import { MAX_TASK_BYTES } from "../tasks";
   import Icon from "./Icon.svelte";
 
   interface Props {
@@ -27,6 +28,8 @@
     { id: "untracked", label: "Untracked" },
   ];
   const message = $derived(feedbackMessage(state.drafts));
+  // One paste is one terminal frame; the backend refuses anything larger.
+  const bytes = $derived(new TextEncoder().encode(message).length);
   const composingFile = $derived(
     state.composing &&
       entryKey(state.composing) === state.selected &&
@@ -67,6 +70,7 @@
   const canPaste = $derived(
     !!target &&
       state.unsent > 0 &&
+      bytes <= MAX_TASK_BYTES &&
       !pasting &&
       state.hydrated &&
       !state.loading,
@@ -113,6 +117,15 @@
   const sectionLabel = (section: ChangeSection) =>
     SECTIONS.find((s) => s.id === section)!.label;
 </script>
+
+{#snippet oversize()}
+  {#if state.unsent > 0 && bytes > MAX_TASK_BYTES}
+    <p class="notice" role="alert">
+      {bytes.toLocaleString()} of {MAX_TASK_BYTES.toLocaleString()} bytes — too large
+      to paste. Shorten or remove comments, then retry.
+    </p>
+  {/if}
+{/snippet}
 
 {#snippet editor()}
   <div class="composer">
@@ -408,6 +421,7 @@
     {#if state.previewing}
       <div class="preview">
         <pre aria-label="Message preview">{message}</pre>
+        {@render oversize()}
         <div class="row">
           <button
             class="btn btn--soft"
@@ -481,6 +495,7 @@
       </ol>
       <h3>Message preview</h3>
       <pre aria-label="Message preview">{message}</pre>
+      {@render oversize()}
       {@render pastePanel()}
       <div class="row">
         {#if sent}<button

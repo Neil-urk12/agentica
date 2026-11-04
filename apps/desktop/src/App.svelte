@@ -2358,6 +2358,9 @@
     }
   }
 
+  const DISCARD_EDITS =
+    "Unsaved edits were not saved. Use Copy edits first to keep them. Discard them";
+
   /** Persist pending edits before navigation; false means they are still unsaved. */
   async function settle() {
     if (generating) {
@@ -2369,6 +2372,11 @@
       return false;
     }
     if (editorState.dirty && !editorState.error) await editor.save();
+    else if (editorState.dirty) {
+      if (!window.confirm(DISCARD_EDITS + " and leave this canvas?"))
+        return false;
+      await editor.discardAndReload();
+    }
     const document = editorState.document;
     const workspaceId = editorState.workspace?.workspace.id;
     if (!(await changes.flush())) {
@@ -2978,7 +2986,20 @@
         .onCloseRequested(async (event) => {
           event.preventDefault();
           if (closing) return;
-          if (editorState.dirty || editorState.saving || pendingReply) {
+          const stuck =
+            editorState.dirty &&
+            !!editorState.error &&
+            !editorState.saving &&
+            !pendingReply;
+          if (
+            stuck &&
+            !window.confirm(DISCARD_EDITS + " and close this window?")
+          )
+            return;
+          if (
+            !stuck &&
+            (editorState.dirty || editorState.saving || pendingReply)
+          ) {
             event.preventDefault();
             closeNotice =
               "Keep this window open until changes are saved. Copy unsaved edits for recovery if saving fails.";
@@ -3391,6 +3412,16 @@
               disabled={!connected || working}
               onclick={() => void editor.reloadConversation()}
               >Reload canvas</button
+            >
+          {:else}
+            <button
+              class="btn btn--soft"
+              type="button"
+              disabled={!connected || working}
+              onclick={() => {
+                if (window.confirm(DISCARD_EDITS + " and reload this canvas?"))
+                  void editor.discardAndReload();
+              }}>Discard edits and reload</button
             >
           {/if}
           <button
