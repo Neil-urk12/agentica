@@ -141,6 +141,10 @@ fn serve_frontend(request: Request) -> Response {
 }
 
 /// The request body, at most one frame, read before the deadline.
+#[allow(
+    clippy::result_large_err,
+    reason = "the Err response is the one cold rejection path for its single caller"
+)]
 async fn body(request: Request, deadline: Instant) -> Result<axum::body::Bytes, Response> {
     match tokio::time::timeout_at(deadline, to_bytes(request.into_body(), MAX_FRAME_BYTES)).await {
         Ok(Ok(bytes)) => Ok(bytes),

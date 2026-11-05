@@ -462,7 +462,7 @@ fn filtered_paths(
                 "Git returned unexpected attributes.".into(),
             ));
         }
-        for record in fields[..fields.len() - 1].chunks_exact(3) {
+        for record in fields[..fields.len() - 1].as_chunks::<3>().0 {
             if record[1] == b"filter" && (record[2] != b"unset" || unset_driver_configured) {
                 filtered.insert(String::from_utf8_lossy(record[0]).into_owned());
             }
