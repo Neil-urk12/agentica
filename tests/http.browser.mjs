@@ -3288,8 +3288,9 @@ wait
       true,
     );
 
+    // Picking the session in the Nodes list above already expanded the project.
     await run(
-      `document.querySelector('[data-id="${projectId}"] [aria-label="Expand project"]').click()`,
+      `document.querySelector('[data-id="${projectId}"] [aria-label="Expand project"]')?.click()`,
     );
     await waitFor(
       browser,
