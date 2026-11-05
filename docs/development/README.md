@@ -138,6 +138,15 @@ Changes review feedback persistence is validated on Linux (Fedora 44) in browser
 mode by the `tests/http.browser.mjs` case "review feedback survives browser reload
 and backend restart". Desktop restart and close-time flush are not yet validated.
 
+CLI-agent output age was checked by hand on 2026-11-10 on Linux (WSL2) in browser
+mode, with a debug `agentica-backend` built with `bundled-frontend`, headless
+Chrome, and a real Codex tile that was started but never sent a prompt. The tile
+and its assigned task showed `No output yet`, then `Output just now`, then
+`Last output 1 min ago` and `2 min ago` once Codex went quiet. Stop removed both.
+The age line has no live-region role. Attention replacing the task hint, restart
+reset, and desktop mode were not checked in the app; unit and Rust tests cover
+the first two.
+
 Chat attachments (document `textStatus`, selected-image input, image budgets) are
 covered by automated tests only: `tests/attachments.test.mjs`,
 `tests/provider.test.mjs`, `tests/file-types.test.mjs`, and the runtime

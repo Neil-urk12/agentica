@@ -1,4 +1,4 @@
-import type { SessionStatus } from "@agentica/protocol";
+import type { SessionStatus, SessionTile } from "@agentica/protocol";
 
 export function attentionLabel(status: SessionStatus): string {
   switch (status.attention.kind) {
@@ -30,6 +30,27 @@ export function waitedLabel(at: number | null, now: number): string {
     return rest ? `${hours} h ${rest} min ago` : `${hours} h ago`;
   }
   return `${Math.floor(hours / 24)} d ago`;
+}
+
+/**
+ * Factual age of a session's last output. Never names an agent or task
+ * state: quiet output is not idle, and recent output is not working.
+ */
+export function outputAgeLabel(at: number | null, now: number): string {
+  if (at === null) return "No output yet";
+  const age = waitedLabel(at, now);
+  return age === "just now" ? "Output just now" : `Last output ${age}`;
+}
+
+/** Output age is shown only for running CLI-agent tiles; otherwise "". */
+export function tileOutputAge(
+  kind: SessionTile["kind"],
+  status: Pick<SessionStatus, "state" | "lastOutputAt"> | null | undefined,
+  now: number,
+): string {
+  return kind === "cli-agent" && status?.state === "running"
+    ? outputAgeLabel(status.lastOutputAt, now)
+    : "";
 }
 
 /** Oldest attention first; entries without a timestamp keep order, last. */

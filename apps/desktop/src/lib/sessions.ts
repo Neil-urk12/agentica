@@ -20,6 +20,11 @@ import type { CanvasDocument } from "./editor";
 
 const live = (status: SessionStatus | null) =>
   !!status && ["starting", "running", "stopping"].includes(status.state);
+// The output time moves on every chunk; only its first arrival re-renders, and
+// the shared clock tick picks up later times.
+const rendered = (status: SessionStatus | null) =>
+  status &&
+  JSON.stringify({ ...status, lastOutputAt: status.lastOutputAt !== null });
 const key = (owner: SessionOwner) =>
   `${owner.workspaceId}/${owner.canvasId}/${owner.tileId}`;
 const message = (error: unknown) =>
@@ -743,10 +748,9 @@ export class SessionManager {
 
   private event(entry: Entry, event: SessionEvent, generation: number) {
     if (entry.generation !== generation || this.disposed) return;
-    if (JSON.stringify(entry.status) !== JSON.stringify(event.status)) {
-      entry.status = event.status;
-      this.changed();
-    }
+    const differs = rendered(entry.status) !== rendered(event.status);
+    entry.status = event.status;
+    if (differs) this.changed();
     entry.render = entry.render
       .then(async () => {
         if (entry.generation !== generation || this.disposed) return;

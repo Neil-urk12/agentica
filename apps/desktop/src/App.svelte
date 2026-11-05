@@ -45,6 +45,7 @@
     contextText,
     editedSinceSent,
     largestParts,
+    outputAgeHint,
     sendBlocker,
     taskPayload,
     type TaskContextItem,
@@ -224,11 +225,14 @@
   };
   // Pastes that succeeded but whose sent record failed; kept for retry.
   let unrecorded = $state.raw<Record<string, SentTask>>({});
-  const hasSentTask = $derived(
-    !!editorState.document?.nodes.some((node) => node.task?.sentAt),
+  // Sent times and assignee output ages both tick on the shared clock.
+  const hasTimedTask = $derived(
+    !!editorState.document?.nodes.some(
+      (node) => node.task?.sentAt || node.task?.assignedTileId,
+    ),
   );
   $effect(() => {
-    if (hasSentTask) return clock.hold();
+    if (hasTimedTask) return clock.hold();
   });
   const reviewTargets = $derived.by(() => {
     void sessionRevision;
@@ -1725,6 +1729,7 @@
             target && status?.attention.raised
               ? `${target.label}: ${attentionLabel(status)}`
               : "",
+          outputAge: outputAgeHint(target?.label ?? null, status, clock.now),
           blocker: sendBlocker(
             task,
             target && view

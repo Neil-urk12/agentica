@@ -5,6 +5,7 @@ import {
   type Task,
 } from "@agentica/protocol";
 import { sanitize } from "./changes.ts";
+import { outputAgeLabel } from "./session-attention.ts";
 
 /** Paste text bytes left after both bracketed-paste markers. */
 export const MAX_TASK_BYTES = SESSION_LIMITS.frameBytes - 12;
@@ -114,6 +115,21 @@ export function sendBlocker(
   if (!target.connected || target.status?.state !== "running")
     return `${target.label} is not running. Start it first; Send never starts a session.`;
   return "";
+}
+
+/**
+ * Live output age of the assigned tile, or "" when it is not running or has
+ * raised attention (attention wins). Never stored; never a task state.
+ */
+export function outputAgeHint(
+  label: string | null,
+  status: SessionStatus | null,
+  now: number,
+) {
+  if (label === null || status?.state !== "running" || status.attention.raised)
+    return "";
+  const age = outputAgeLabel(status.lastOutputAt, now);
+  return `${label}: ${age.charAt(0).toLowerCase()}${age.slice(1)}`;
 }
 
 /** True when the text changed after the recorded send. */

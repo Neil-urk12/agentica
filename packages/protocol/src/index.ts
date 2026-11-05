@@ -1499,6 +1499,7 @@ export const SessionStatusSchema = z.strictObject({
   shellFallback: z.boolean(),
   projectId: IdSchema.nullable(),
   attention: SessionAttentionSchema,
+  lastOutputAt: z.number().int().nonnegative().nullable(),
   ...TerminalDimensions,
 });
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;

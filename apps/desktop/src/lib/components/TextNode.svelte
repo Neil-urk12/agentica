@@ -39,6 +39,8 @@
         onAddContext: (nodeId: string) => void;
         onRemoveContext: (nodeId: string) => void;
         attention: string;
+        /** Live assignee output age; "" when hidden. Not a task state. */
+        outputAge: string;
         blocker: string;
         busy: boolean;
         error: string;
@@ -356,6 +358,8 @@
         <p class="task-attention" role="status">
           <Icon name="notifications" size={14} />{t.attention}
         </p>
+      {:else if t.outputAge}
+        <p class="task-status">{t.outputAge}</p>
       {/if}
     {:else if selected && data.editable}
       <button

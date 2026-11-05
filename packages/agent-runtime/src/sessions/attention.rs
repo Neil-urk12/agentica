@@ -10,6 +10,14 @@ pub enum Kind {
     Failed,
 }
 
+/// Backend Unix epoch milliseconds, the clock every status timestamp uses.
+pub(super) fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Attention {
     pub raised: bool,
@@ -27,12 +35,7 @@ impl Attention {
         self.sequence = self.sequence.saturating_add(1).min((1 << 53) - 1);
         self.kind = Some(kind);
         self.message = message;
-        self.at = Some(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64,
-        );
+        self.at = Some(now_ms());
     }
 
     pub(super) fn clear(&mut self, sequence: u64) {

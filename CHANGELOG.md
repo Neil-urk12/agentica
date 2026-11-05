@@ -12,6 +12,25 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Show when CLI agents last printed output (2026-11-05)
+
+- Added: running CLI-agent tiles show the time since their last terminal output
+  (**Output just now**, **Last output 12 min ago**, **No output yet**). A task
+  assigned to a running tile shows the same age as a live hint unless the tile
+  has raised attention.
+- Rationale: users could not tell an agent that was still printing from one that
+  had gone quiet. We show the observed time instead of a Working/Idle label,
+  because silence cannot tell a thinking agent from an idle one, and the tile
+  rules forbid inferring task state. Every output chunk counts, including echoed
+  input and redraws, since the backend cannot tell them apart.
+- Changed (wire): session status gains `lastOutputAt` (backend epoch ms, or
+  `null` before any output). It resets on start and restart, survives exit, and
+  is never persisted. It is stamped where output enters the backend and shares
+  the attention timestamp clock. The labels reuse the attention waited-time
+  wording and its shared 30-second clock, so there is no new timer or event. A
+  status change that only moves `lastOutputAt` does not re-render the canvas;
+  the next clock tick shows the newer time.
+
 ### Reveal nodes from the Nodes list (2026-11-06)
 
 - Added: selecting a row in the Nodes list pans the canvas so the node is

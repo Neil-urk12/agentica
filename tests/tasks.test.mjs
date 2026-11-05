@@ -7,6 +7,7 @@ import {
   contextText,
   editedSinceSent,
   largestParts,
+  outputAgeHint,
   sendBlocker,
   taskPayload,
 } from "../apps/desktop/src/lib/tasks.ts";
@@ -173,4 +174,29 @@ test("context changed since sent detects additions, removals, order, and edits",
     contextChangedSinceSent({ ...legacy, context: [] }, revisionOf),
     false,
   );
+});
+
+test("output age hint is live, hidden by attention, and only for a running assignee", () => {
+  const now = 1_000_000_000;
+  const live = (state, raised = false, lastOutputAt = now - 8 * 60_000) => ({
+    state,
+    lastOutputAt,
+    attention: { raised },
+  });
+  assert.equal(
+    outputAgeHint("Codex", live("running"), now),
+    "Codex: last output 8 min ago",
+  );
+  assert.equal(
+    outputAgeHint("Codex", live("running", false, now), now),
+    "Codex: output just now",
+  );
+  assert.equal(
+    outputAgeHint("Codex", live("running", false, null), now),
+    "Codex: no output yet",
+  );
+  assert.equal(outputAgeHint("Codex", live("running", true), now), "");
+  assert.equal(outputAgeHint("Codex", live("exited"), now), "");
+  assert.equal(outputAgeHint("Codex", null, now), "");
+  assert.equal(outputAgeHint(null, live("running"), now), "");
 });

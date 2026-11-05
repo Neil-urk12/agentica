@@ -66,6 +66,7 @@ const status = (n, state = "running", canvas) => ({
   executable: "/bin/bash",
   shellFallback: false,
   projectId: id(5),
+  lastOutputAt: null,
   attention: {
     raised: false,
     count: 0,
@@ -87,7 +88,7 @@ const deferred = () => {
   return { promise, resolve };
 };
 
-function setup(t, statuses) {
+function setup(t, statuses, changed = () => {}) {
   const client = {
     statuses,
     active: new Set(),
@@ -189,10 +190,7 @@ function setup(t, statuses) {
     },
   };
   globalThis.sessionTest.client = client;
-  const manager = new SessionManager(
-    () => "key",
-    () => {},
-  );
+  const manager = new SessionManager(() => "key", changed);
   t.onTestFinished(() => manager.dispose());
   return { manager, client };
 }
@@ -248,6 +246,25 @@ test("attention updates offscreen and dismissal acknowledges only the displayed 
     before,
     "runtime attention never enters the saved document",
   );
+});
+
+test("output time re-renders only on first output but stays current", async (t) => {
+  const item = status(0);
+  let changed = 0;
+  const { manager, client } = setup(t, [item], () => changed++);
+  await manager.reconcile(workspaceId, document([item]));
+  await setImmediate();
+  changed = 0;
+  for (const at of [1_000, 2_000, 3_000]) {
+    item.lastOutputAt = at;
+    client.emit(item.sessionId, [], 0, 0);
+  }
+  await setImmediate();
+  assert.equal(changed, 1, "only null to first output re-renders");
+  assert.equal(manager.view(item.owner).status.lastOutputAt, 3_000);
+  item.rows = 30;
+  client.emit(item.sessionId, [], 0, 0);
+  assert.equal(changed, 2, "other status changes still re-render");
 });
 
 test("terminal and window focus report only actual textarea focus and unmount clears focus", async (t) => {

@@ -96,6 +96,8 @@ pub struct SessionStatus {
     pub rows: u16,
     pub cols: u16,
     pub attention: Attention,
+    /// Backend epoch ms of the last output chunk, echo and redraws included.
+    pub last_output_at: Option<u64>,
 }
 
 struct Session {
@@ -123,6 +125,7 @@ impl Session {
                 status.attention.raise(kind, message);
             }
         });
+        status.last_output_at = Some(attention::now_ms());
         self.output.push(bytes)
     }
 
@@ -250,6 +253,7 @@ impl SessionSupervisor {
             rows: 24,
             cols: 80,
             attention: Attention::default(),
+            last_output_at: None,
         };
         sessions.insert(
             owner,
@@ -759,6 +763,37 @@ mod tests {
         );
         // The refused command never reached the shell, so it never printed.
         assert!(!output.windows(10).any(|window| window == b"\nguarded\r\n"));
+    }
+
+    #[test]
+    fn output_time_follows_output_only_and_resets_on_replacement() {
+        let supervisor = SessionSupervisor::new().unwrap();
+        let owner = owner();
+        let (status, _) = supervisor.reserve_start(owner.clone(), "start").unwrap();
+        assert_eq!(status.last_output_at, None);
+        let id = &status.session_id;
+        let output_at = || supervisor.status(&owner).unwrap().unwrap().last_output_at;
+        let before = attention::now_ms();
+        supervisor
+            .with_session(&owner, id, |session| session.push(b"\x07hello"))
+            .unwrap();
+        let stamped = output_at().unwrap();
+        assert!(stamped >= before);
+        let attachment = supervisor.attach(&owner, id, 0).unwrap();
+        supervisor.focus(&owner, id, &attachment, true).unwrap();
+        supervisor
+            .clear_attention(&owner, id, u64::MAX >> 11)
+            .unwrap();
+        supervisor.detach(&owner, id, &attachment).unwrap();
+        for state in [ProcessState::Running, ProcessState::Exited] {
+            supervisor
+                .transition(&owner, id, state, Some(0), None, None)
+                .unwrap();
+        }
+        assert_eq!(output_at(), Some(stamped));
+        let (replacement, _) = supervisor.reserve_start(owner.clone(), "restart").unwrap();
+        assert_ne!(&replacement.session_id, id);
+        assert_eq!(output_at(), None);
     }
 
     #[test]

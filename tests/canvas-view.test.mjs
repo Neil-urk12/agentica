@@ -26,6 +26,8 @@ import {
   attentionLabel,
   isQueueShortcut,
   sortWaiting,
+  outputAgeLabel,
+  tileOutputAge,
   waitedLabel,
 } from "../apps/desktop/src/lib/session-attention.ts";
 
@@ -70,6 +72,28 @@ test("waited time reads in coarse units and clamps clock skew", () => {
   assert.equal(ago(60 * 60_000), "1 h ago");
   assert.equal(ago(125 * 60_000), "2 h 5 min ago");
   assert.equal(ago(24 * 3_600_000), "1 d ago");
+});
+
+test("output age states only when output last arrived", () => {
+  const now = 1_000_000_000;
+  const ago = (ms) => outputAgeLabel(now - ms, now);
+  assert.equal(outputAgeLabel(null, now), "No output yet");
+  assert.equal(ago(20_000), "Output just now");
+  assert.equal(ago(-120_000), "Output just now");
+  assert.equal(ago(12 * 60_000), "Last output 12 min ago");
+  assert.equal(ago(125 * 60_000), "Last output 2 h 5 min ago");
+});
+
+test("output age shows only on running CLI-agent tiles", () => {
+  const now = 1_000_000_000;
+  const age = (kind, state, lastOutputAt = now - 3 * 60_000) =>
+    tileOutputAge(kind, { state, lastOutputAt }, now);
+  assert.equal(age("cli-agent", "running"), "Last output 3 min ago");
+  assert.equal(age("cli-agent", "running", null), "No output yet");
+  assert.equal(age("shell", "running"), "");
+  for (const state of ["starting", "stopping", "exited", "failed", "stopped"])
+    assert.equal(age("cli-agent", state), "");
+  assert.equal(tileOutputAge("cli-agent", null, now), "");
 });
 
 test("waiting entries sort oldest first, stable, untimed last", () => {

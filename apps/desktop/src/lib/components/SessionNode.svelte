@@ -7,7 +7,11 @@
   } from "@agentica/protocol";
   import type { SessionManager } from "../sessions";
   import Icon from "./Icon.svelte";
-  import { attentionLabel, waitedLabel } from "../session-attention";
+  import {
+    attentionLabel,
+    tileOutputAge,
+    waitedLabel,
+  } from "../session-attention";
   import { clock } from "../clock.svelte";
   interface Props {
     data: {
@@ -76,6 +80,14 @@
   $effect(() => {
     if (waiting) return clock.hold();
   });
+  // A fact, never an idle or working state; ticks only while shown.
+  const outputAge = $derived(
+    tileOutputAge(data.tile.kind, view.status, clock.now),
+  );
+  const showsOutputAge = $derived(outputAge !== "");
+  $effect(() => {
+    if (showsOutputAge) return clock.hold();
+  });
   const maxWidth = $derived(data.group.width - data.tile.x - 16);
   const maxHeight = $derived(data.group.height - data.tile.y - 16);
   function terminal(element: HTMLDivElement) {
@@ -126,7 +138,9 @@
         size={18}
       /><strong>{title}</strong><span class="project-name"
         >{data.group.label}</span
-      ><span class="state" role="status">{phase}</span>
+      ><span class="state" role="status">{phase}</span>{#if outputAge}<span
+          class="output-age">{outputAge}</span
+        >{/if}
     </div>
     <div
       class="session-controls nodrag"
@@ -350,6 +364,11 @@ notification_condition = "always"`}</code
     font-size: 12px;
     text-transform: capitalize;
     color: var(--ink-soft);
+  }
+  .output-age {
+    font-size: 12px;
+    color: var(--ink-soft);
+    white-space: nowrap;
   }
   .session-controls {
     display: flex;

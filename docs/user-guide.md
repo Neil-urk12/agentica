@@ -325,6 +325,11 @@ Labels describe only the signal received:
 They do not claim the agent needs approval, is thinking, or finished a task.
 Title, directory, and progress escape sequences are ignored.
 
+A running CLI-agent tile also shows when its terminal last printed anything:
+**Output just now**, **Last output 12 min ago**, or **No output yet**. Any
+output counts, including echoed typing and screen redraws. A quiet agent may
+still be working, and recent output does not mean progress.
+
 Attention survives canvas switches and browser refreshes, and resets when the
 session restarts or the backend stops. Signals while the terminal is focused, and
 exits you caused (Stop, Restart, removal), do not raise attention. Notification
@@ -396,5 +401,7 @@ is cut. Deleting a context note removes it from every task.
 Task status shows only facts: when the text was last sent, **Edited since sent**
 if the note changed after, **Context changed since sent** if context was added,
 removed, reordered, or edited after, and the tile's current attention label. Agentica never
-infers progress, completion, or failure from session output. The canvas agent
+infers progress, completion, or failure from session output. While the assigned
+tile runs without raised attention, the task also shows its output age, such as
+"Codex: last output 8 min ago". The canvas agent
 cannot see or change tasks.
