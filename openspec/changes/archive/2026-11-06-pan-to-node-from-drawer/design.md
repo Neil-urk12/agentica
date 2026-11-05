@@ -8,9 +8,11 @@ The Nodes drawer calls `selectObject(id)` in `App.svelte`, which only updates th
 ## Goals / Non-Goals
 
 **Goals:**
+
 - Reuse `focusObject` and `fitViewport`; no new camera code.
 
 **Non-Goals:**
+
 - Changing existing `focusObject` callers (attention queue jump, task send, changes tile, paste feedback). They keep the zoom-in-to-100% behavior.
 - Animated camera movement.
 

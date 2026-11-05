@@ -113,6 +113,7 @@ At window widths of 820px or less, the sidebar SHALL be shown as an overlay over
 - **THEN** the sidebar sections close according to the existing compact-width behavior
 
 ### Requirement: Selecting from the node list reveals the node
+
 Selecting a row in the node list SHALL select that node and move the canvas view so the node is visible within the canvas area not covered by the sidebar, chat, or other overlays. The view SHALL keep its current zoom when the node fits at that zoom, and SHALL zoom out only as far as needed to fit the node. When the selected node is a session tile in a collapsed project group, the group SHALL be expanded before the view moves to the session tile. Keyboard focus SHALL stay in the node list. Only the view changes; no node position or size is written. Selecting an object directly on the canvas SHALL NOT move the view.
 
 #### Scenario: Reveal an off-screen node

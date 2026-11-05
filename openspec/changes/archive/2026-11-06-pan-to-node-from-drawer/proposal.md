@@ -15,6 +15,7 @@ Selecting a row in the Nodes list only selects the node; the canvas stays where 
 ### New Capabilities
 
 ### Modified Capabilities
+
 - `canvas-sidebar`: adds a requirement that selecting from the node list reveals the node on the canvas.
 
 ## Impact
