@@ -10,6 +10,7 @@
   interface Props {
     items: NodeItem[];
     selectedId: string;
+    // Disables delete only: selecting moves the view, and that autosave must not blur the row.
     busy: boolean;
     onSelect: (id: string) => void;
     onClose: () => void;
@@ -79,7 +80,6 @@
               class="drawer__item"
               class:drawer__item--active={item.id === selectedId}
               type="button"
-              disabled={busy}
               title={item.label}
               aria-pressed={item.id === selectedId}
               onclick={() => onSelect(item.id)}

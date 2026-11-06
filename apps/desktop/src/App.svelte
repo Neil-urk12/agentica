@@ -1439,7 +1439,7 @@
     if (selectedId) focusObject(selectedId);
   }
 
-  function focusObject(id: string) {
+  function focusObject(id: string, maxZoom = Math.max(1, viewport.zoom)) {
     const area = usable();
     const node = nodes.find((n) => n.id === id);
     if (!area || !node) return;
@@ -1460,9 +1460,20 @@
           height: target.height ?? CARD.minHeight,
         },
         area,
-        Math.max(1, viewport.zoom),
+        maxZoom,
       ),
     );
+  }
+
+  /** Node-list selection: reveal the node without moving keyboard focus. */
+  async function revealObject(id: string) {
+    const tile = editorState.document?.sessionTiles.find((t) => t.id === id);
+    if (tile && expandedGroups[tile.projectId] !== true) {
+      expandedGroups = { ...expandedGroups, [tile.projectId]: true };
+      await tick();
+    }
+    selectObject(id);
+    focusObject(id, viewport.zoom);
   }
 
   async function showChanges() {
@@ -3571,7 +3582,7 @@
               items={nodeItems}
               {selectedId}
               busy={working}
-              onSelect={selectObject}
+              onSelect={(id) => void revealObject(id)}
               onClose={() => (drawerOpen = false)}
               onDelete={(id) => void removeObject(id)}
             />

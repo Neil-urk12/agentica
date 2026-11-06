@@ -12,6 +12,16 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Reveal nodes from the Nodes list (2026-11-06)
+
+- Added: selecting a row in the Nodes list pans the canvas so the node is
+  visible beside the sidebar and chat. Zoom is kept when the node fits, and the
+  view zooms out only when it doesn't. A session in a collapsed project expands
+  that project first. Keyboard focus stays on the row, and canvas clicks still
+  don't pan.
+- Changed: Nodes list rows stay enabled while the canvas saves. Only delete is
+  disabled, so the autosave after a pan no longer drops focus from the row.
+
 ### Review fixes: restore, agent launch, release token, paste size, save conflicts (2026-11-04)
 
 - Fixed: applying a proposal whose stored operations, context, or drawing body

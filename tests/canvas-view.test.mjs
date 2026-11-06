@@ -235,6 +235,23 @@ test("fit and focus place targets inside the usable area without moving them", (
   assert.equal(huge.x, 24);
 });
 
+test("fit capped at the current zoom keeps it when the target fits", () => {
+  const area = { x: 0, y: 0, width: 800, height: 400 };
+  const kept = fitViewport(
+    { x: 5000, y: 5000, width: 200, height: 100 },
+    area,
+    0.5,
+  );
+  assert.equal(kept.zoom, 0.5);
+  const zoomedOut = fitViewport(
+    { x: 0, y: 0, width: 4000, height: 100 },
+    area,
+    0.5,
+  );
+  assert.ok(zoomedOut.zoom < 0.5);
+  assert.ok(4000 * zoomedOut.zoom <= area.width);
+});
+
 test("zoom keeps the usable centre fixed and respects limits", () => {
   const area = { x: 100, y: 0, width: 400, height: 400 };
   const view = { x: 0, y: 0, zoom: 1 };
