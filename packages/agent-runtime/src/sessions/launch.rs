@@ -48,7 +48,7 @@ impl std::fmt::Debug for LaunchSpec {
 /// Environment variable Codex reads its canvas MCP bearer token from.
 pub(crate) const TOKEN_VARIABLE: &str = "AGENTICA_MCP_TOKEN";
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(super) fn executable(path: &std::path::Path) -> bool {
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
     path.is_absolute()
@@ -64,14 +64,14 @@ pub(super) fn executable(path: &std::path::Path) -> bool {
     win::executable(path)
 }
 
-/// Native sessions are supported only on Linux and Windows, so nothing else is
-/// launchable.
-#[cfg(not(any(target_os = "linux", windows)))]
+/// Native sessions are supported only on Linux, Windows, and macOS, so nothing
+/// else is launchable.
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub(super) fn executable(_: &std::path::Path) -> bool {
     false
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn account_shell() -> Option<PathBuf> {
     use std::{ffi::CStr, os::unix::ffi::OsStrExt};
     let mut capacity = 4096;
@@ -101,7 +101,7 @@ fn account_shell() -> Option<PathBuf> {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn resolve_shell(candidate: Option<PathBuf>) -> ExecutableCapability {
     if let Some(path) = candidate.filter(|path| executable(path)) {
         return ExecutableCapability {
@@ -120,7 +120,7 @@ fn resolve_shell(candidate: Option<PathBuf>) -> ExecutableCapability {
 
 /// Shell launch only; unlike `capabilities`, it skips agent detection.
 fn shell_capability() -> ExecutableCapability {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         resolve_shell(account_shell())
     }
@@ -132,19 +132,19 @@ fn shell_capability() -> ExecutableCapability {
             std::env::var_os("ComSpec").as_deref(),
         )
     }
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         ExecutableCapability {
             path: None,
             fallback: false,
-            reason: Some("Native sessions are supported only on Linux and Windows.".into()),
+            reason: Some("Native sessions are supported only on Linux, Windows, and macOS.".into()),
         }
     }
 }
 
 pub fn capabilities(data_root: Option<&std::path::Path>) -> SessionCapabilities {
     let agents = agents::list(data_root);
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         SessionCapabilities {
             platform: std::env::consts::OS,
@@ -162,9 +162,9 @@ pub fn capabilities(data_root: Option<&std::path::Path>) -> SessionCapabilities 
             agents,
         }
     }
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
-        let reason = "Native sessions are supported only on Linux and Windows.";
+        let reason = "Native sessions are supported only on Linux, Windows, and macOS.";
         SessionCapabilities {
             platform: std::env::consts::OS,
             supported: false,
@@ -202,10 +202,10 @@ impl LaunchSpec {
         if !directory.is_absolute() || canonical != directory || !canonical.is_dir() {
             return Err(RuntimeError::new("INVALID_PARAMS", "The saved project no longer identifies its canonical directory. Use Locate folder."));
         }
-        if !cfg!(any(target_os = "linux", windows)) {
+        if !cfg!(any(target_os = "linux", target_os = "macos", windows)) {
             return Err(RuntimeError::new(
                 "UNSUPPORTED_CAPABILITY",
-                "Native sessions are supported only on Linux and Windows.",
+                "Native sessions are supported only on Linux, Windows, and macOS.",
             ));
         }
         let (capability, argv) = match (kind, preset) {
@@ -273,14 +273,18 @@ impl LaunchSpec {
     }
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
     use super::*;
     use std::path::Path;
     #[test]
     fn launch_uses_saved_cwd_and_argv_without_shell_interpolation() {
         let temporary = tempfile::tempdir().unwrap();
-        let root = temporary.path().join("root ; $(no-command)");
+        let root = temporary
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("root ; $(no-command)");
         std::fs::create_dir(&root).unwrap();
         let owner = super::super::tests::owner();
         let spec = LaunchSpec::from_saved(

@@ -38,12 +38,17 @@ jobs:
     name: Package (${{ matrix.os }})
     needs: draft
     strategy:
+      # One platform's failure must not cancel the others before they upload.
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             bundles: deb,rpm,appimage
           - os: windows-latest
             bundles: nsis
+          # Apple Silicon only; the bundle is ad-hoc signed, not notarized.
+          - os: macos-latest
+            bundles: app,dmg
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     defaults:
@@ -87,6 +92,15 @@ jobs:
           mkdir out
           cp target/release/bundle/nsis/*-setup.exe "out/agentica-$TAG-windows-x64-setup.exe"
           cp target/release/agentica-backend.exe "out/agentica-backend-$TAG-windows-x64.exe"
+          gh release upload "$TAG" out/* --clobber
+      - name: Upload macOS assets
+        if: runner.os == 'macOS'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir out
+          cp target/release/bundle/dmg/*.dmg "out/agentica-$TAG-macos-arm64.dmg"
+          cp target/release/agentica-backend "out/agentica-backend-$TAG-macos-arm64"
           gh release upload "$TAG" out/* --clobber
 
   publish:

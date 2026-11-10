@@ -15,6 +15,8 @@ pub use output::{OutputFrame, OutputPage};
 mod attention;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 pub mod paste;
 mod process;
 #[cfg(windows)]
@@ -336,10 +338,10 @@ impl SessionSupervisor {
         rows: u16,
         cols: u16,
     ) -> Result<SessionStatus, RuntimeError> {
-        if !cfg!(any(target_os = "linux", windows)) {
+        if !cfg!(any(target_os = "linux", target_os = "macos", windows)) {
             return Err(RuntimeError::new(
                 "UNSUPPORTED_CAPABILITY",
-                "Native sessions require Linux or Windows.",
+                "Native sessions require Linux, Windows, or macOS.",
             ));
         }
         let size = process::dimensions(rows, cols)?;
@@ -699,7 +701,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn guarded_paste_refuses_while_attention_is_raised() {
         let root = tempfile::tempdir().unwrap();
         let supervisor = Active(SessionSupervisor::new().unwrap());
@@ -1016,29 +1018,30 @@ mod tests {
         );
     }
 
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     struct Active(SessionSupervisor);
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     impl Drop for Active {
         fn drop(&mut self) {
             let _ = self.0.shutdown();
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn shell(root: &std::path::Path) -> LaunchSpec {
         LaunchSpec {
             owner: owner(),
             project_id: new_id().unwrap(),
             executable: "/bin/bash".into(),
             argv: vec!["--noprofile".into(), "--norc".into(), "-i".into()],
-            directory: root.into(),
+            // Spawn requires the canonical path; macOS temp dirs sit behind /var -> /private/var.
+            directory: root.canonicalize().unwrap(),
             fallback: false,
             token: None,
         }
     }
 
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     fn running(supervisor: &SessionSupervisor, owner: &SessionOwner) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
@@ -1052,7 +1055,7 @@ mod tests {
         }
     }
 
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     fn receive(
         supervisor: &SessionSupervisor,
         owner: &SessionOwner,
@@ -1086,7 +1089,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn real_shell_input_resize_interrupt_restart_and_job_cleanup() {
         let root = tempfile::tempdir().unwrap();
         let supervisor = Active(SessionSupervisor::new().unwrap());
@@ -1211,6 +1214,18 @@ mod tests {
         // A job may linger as a zombie until its reaper (init or PID 1) collects it.
         thread::sleep(std::time::Duration::from_millis(300));
         for pid in pids {
+            // No /proc on macOS: the job must be gone (reaped by launchd) soon after Stop.
+            #[cfg(target_os = "macos")]
+            {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+                while unsafe { libc::kill(pid as i32, 0) } == 0 {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "job {pid} is still running"
+                    );
+                    thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
             if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
                 let (_, fields) = stat.rsplit_once(')').unwrap();
                 let fields: Vec<_> = fields.split_whitespace().collect();
@@ -1268,7 +1283,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn forced_cleanup_and_failed_launch_release_only_after_cleanup() {
         let root = tempfile::tempdir().unwrap();
         let supervisor = Active(SessionSupervisor::new().unwrap());
@@ -1398,7 +1413,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn exited_status_includes_all_final_output_pages() {
         let root = tempfile::tempdir().unwrap();
         let supervisor = Active(SessionSupervisor::new().unwrap());
@@ -1455,7 +1470,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn output_flood_keeps_canvas_save_and_stop_responsive() {
         let root = tempfile::tempdir().unwrap();
         let data = tempfile::tempdir().unwrap();

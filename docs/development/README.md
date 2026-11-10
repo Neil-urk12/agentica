@@ -133,6 +133,7 @@ Manual and end-to-end validation, with dates and evidence:
 | [M0-11 Linux](m0-11-linux.md)                       | Detached delivery and an RPM package prototype                                             |
 | [M1 validation](m1-validation.md)                   | Typed operations and the execution boundary                                                |
 | [Windows handoff](windows-validation.md)            | Steps still to run on Windows                                                              |
+| [macOS handoff](macos-validation.md)                | Steps still to run on an Apple Silicon Mac                                                 |
 
 Changes review feedback persistence is validated on Linux (Fedora 44) in browser
 mode by the `tests/http.browser.mjs` case "review feedback survives browser reload

@@ -22,12 +22,17 @@ Each tagged release SHALL publish a macOS disk image containing the Agentica des
 
 ### Requirement: Login-shell launch environment
 
-When the macOS desktop app starts, it SHALL adopt the `PATH` reported by the user's login shell, so that executables installed in user or package-manager directories are found the same way a Terminal window finds them. Only `PATH` SHALL be taken from the login shell. The lookup SHALL be bounded in time and SHALL NOT read from or wait on user input. If the lookup fails, times out, or returns an empty or non-absolute `PATH`, the app SHALL keep its inherited `PATH` and continue starting. The detached browser-mode backend SHALL keep the environment it was started with.
+When the macOS desktop app starts, it SHALL adopt the `PATH` reported by the user's login shell, so that executables installed in user or package-manager directories are found the same way a Terminal window finds them. Only `PATH` SHALL be taken from the login shell. The lookup SHALL be bounded in time and SHALL NOT read from or wait on user input. Empty and relative entries SHALL be dropped from the imported value, and the remaining absolute entries kept in order. If the lookup fails, times out, or leaves no absolute entry, the app SHALL keep its inherited `PATH` and continue starting. The detached browser-mode backend SHALL keep the environment it was started with.
 
 #### Scenario: Agent installed with Homebrew is detected from Finder
 
 - **WHEN** `claude` is installed in `/opt/homebrew/bin`, which the user's login shell adds to `PATH`, and Agentica is opened from Finder or the Dock
 - **THEN** Claude Code is reported as an available agent
+
+#### Scenario: Login PATH contains a relative entry
+
+- **WHEN** the login shell reports `PATH` as `.:/opt/homebrew/bin:/usr/bin:`
+- **THEN** the app uses `/opt/homebrew/bin:/usr/bin`, and agents in `/opt/homebrew/bin` are found
 
 #### Scenario: Login shell does not answer
 

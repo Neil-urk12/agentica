@@ -190,7 +190,9 @@ any other server, and dictation needs no API key. The first use downloads about
 dictation then works fully offline has not been tested.
 
 The app asks for microphone permission the first time you point at, focus, or
-click the button. It keeps the microphone open for 30 seconds after a recording
+click the button. On macOS the system also asks once whether Agentica may use the
+microphone; if you deny it, turn it back on in **System Settings → Privacy &
+Security → Microphone**. It keeps the microphone open for 30 seconds after a recording
 so the next one starts at once, then releases it.
 
 ## Tools from MCP servers
@@ -247,9 +249,10 @@ program called `pi` is listed as pi; check the path before starting.
 
 The `PATH` searched is the one the desktop app or backend was started with. A
 desktop app opened from an application launcher may not see programs your shell
-adds to `PATH` (for example in `~/.zshrc`). If an agent you installed shows
-**Not found**, start Agentica from that shell, or add it as a custom agent with
-its absolute path.
+adds to `PATH` (for example in `~/.zshrc`). On macOS the desktop app reads `PATH`
+from your login shell when it starts, and keeps its own if the shell does not
+answer within 5 seconds. If an agent you installed shows **Not found**, start
+Agentica from that shell, or add it as a custom agent with its absolute path.
 
 **Add a custom agent** registers any other terminal coding agent (for example
 Aider):
@@ -294,10 +297,11 @@ the working directory, not a sandbox.
 Project paths, session settings, and terminal output are never added to
 conversation context.
 
-**Status:** Linux only, validated with zsh 5.9 and `codex-cli 0.163.0` in both
-launch modes. Other built-in agents and custom agents are implemented but not
-yet validated. On other systems project groups are visible and **Start**
-explains why it is unavailable.
+**Status:** validated on Linux with zsh 5.9 and `codex-cli 0.163.0` in both
+launch modes. Windows and macOS (Apple Silicon) are implemented but not yet
+validated. Other built-in agents and custom agents are implemented but not yet
+validated. On other systems project groups are visible and **Start** explains
+why it is unavailable.
 
 ## Session attention
 

@@ -12,6 +12,43 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### macOS support for Apple Silicon (2026-11-10)
+
+- Added: native terminal and CLI-agent sessions on macOS. Releases now include
+  an Apple Silicon `.dmg` (`agentica-vX.Y.Z-macos-arm64.dmg`) and a browser-mode
+  backend (`agentica-backend-vX.Y.Z-macos-arm64`). Type-checked for macOS but
+  not yet built or run on a Mac (see the
+  [macOS handoff](docs/development/macos-validation.md)).
+- Rationale (stop and restart): macOS has no `/proc` or pidfds, so the session
+  module finds a session's processes by session ID (`proc_listallpids` and
+  `getsid`). Signalling the launcher's process group would miss jobs, because
+  interactive zsh puts each `&` job in its own group. As on Linux, the launcher
+  stays unreaped (`waitid` with `WNOWAIT`) until its jobs are gone, so the
+  session ID cannot be reused meanwhile. Without pidfds, a PID recycled between
+  the start-time check and `kill()` could be signalled; the window is tiny and
+  the process must share the session ID.
+- Added: the macOS desktop app adopts the `PATH` from the user's login shell at
+  startup. Apps opened from Finder or the Dock get launchd's minimal `PATH`, so
+  agents installed with Homebrew, npm, or version managers were not found. Only
+  `PATH` is imported, through `printenv` so fish and other shells work, with a
+  5-second limit. Empty and relative entries are dropped, since they would
+  search the current directory. If the lookup fails or leaves no absolute
+  entry, the app keeps the `PATH` it inherited. The
+  browser-mode backend is started from a terminal and is unchanged.
+- Added: a microphone usage description and audio-input entitlement, so
+  dictation can ask for the microphone under the hardened runtime.
+- Fixed: if the kernel refuses to report on a root-owned job in a macOS
+  session (one started with `sudo`), Stop now reports a cleanup failure, as on
+  Linux, instead of a clean exit while the job keeps running.
+- Changed (release): the package matrix no longer cancels the other platforms
+  when one fails, so a macOS packaging failure cannot stop the Linux and
+  Windows assets from uploading.
+- Decided: builds are ad-hoc signed, not notarized, and Apple Silicon only. A
+  Developer ID and Intel builds can follow without changing the app; the install
+  guide gives the per-app Gatekeeper steps.
+- Changed (CI): the native matrix adds `macos-latest` where it already ran
+  Windows, and the workflow can be run manually to check both from any branch.
+
 ### Show when CLI agents last printed output (2026-11-05)
 
 - Added: running CLI-agent tiles show the time since their last terminal output

@@ -29,8 +29,13 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "rpm", "appimage", "nsis"],
-    "icon": ["icons/icon.png", "icons/icon.ico"],
+    "targets": ["deb", "rpm", "appimage", "nsis", "app", "dmg"],
+    "icon": ["icons/icon.png", "icons/icon.ico", "icons/icon.icns"],
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "11.0",
+      "entitlements": "Entitlements.plist"
+    },
     "publisher": "Neil Vallecer",
     "category": "DeveloperTool",
     "shortDescription": "An infinite canvas for working with coding agents",

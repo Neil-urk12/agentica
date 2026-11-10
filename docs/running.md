@@ -8,12 +8,12 @@ Run every command from the repository root.
 
 ## Prerequisites
 
-| To                                  | You need                                                                                                                           |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Work on or preview the frontend     | Node.js 24, pnpm 11.6.0                                                                                                            |
-| Build the browser-mode backend      | The above, plus stable Rust. Desktop libraries are not needed.                                                                     |
-| Develop or build the desktop app    | The above, plus the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) (GTK/WebKitGTK on Linux, WebView2 on Windows) |
-| Run an already built backend or app | Nothing beyond the platform runtime libraries                                                                                      |
+| To                                  | You need                                                                                                                                                              |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Work on or preview the frontend     | Node.js 24, pnpm 11.6.0                                                                                                                                               |
+| Build the browser-mode backend      | The above, plus stable Rust. Desktop libraries are not needed.                                                                                                        |
+| Develop or build the desktop app    | The above, plus the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) (GTK/WebKitGTK on Linux, WebView2 on Windows, Xcode Command Line Tools on macOS) |
+| Run an already built backend or app | Nothing beyond the platform runtime libraries                                                                                                                         |
 
 Then install dependencies once:
 
@@ -33,7 +33,8 @@ pnpm install --frozen-lockfile
 | [Landing page](#landing-page)                    | `pnpm dev:landing`                        | `http://127.0.0.1:1430`  |
 
 Data is stored in `AGENTICA_DATA_DIR` if set, otherwise the OS data directory
-(`~/.local/share/agentica` on Linux, `%APPDATA%\agentica` on Windows).
+(`~/.local/share/agentica` on Linux, `%APPDATA%\agentica` on Windows,
+`~/Library/Application Support/agentica` on macOS).
 
 ## Desktop development
 
@@ -58,15 +59,40 @@ A single executable with the frontend and runtime embedded.
 
 Tagged versions are published on the
 [GitHub releases page](https://github.com/Neil-urk12/agentica/releases): a Linux
-AppImage, `.deb`, and `.rpm`, a Windows installer, and the browser-mode backend
-for both platforms. To build installers locally:
+AppImage, `.deb`, and `.rpm`, a Windows installer, a macOS disk image for Apple
+Silicon, and the browser-mode backend for each platform. Intel Macs are not
+supported. To build installers locally:
 
 ```sh
 pnpm package:desktop --bundles deb,rpm,appimage   # Linux; output in target/release/bundle/
 pnpm package:desktop --bundles nsis               # Windows
+pnpm package:desktop --bundles app,dmg            # macOS
 ```
 
 On Linux, set `APPIMAGE_EXTRACT_AND_RUN=1` if FUSE is unavailable (containers).
+
+### Installing on macOS
+
+The macOS app is not signed with an Apple Developer ID or notarized, so macOS
+blocks it the first time. To allow it once:
+
+1. Open the disk image and drag **Agentica** to **Applications**.
+2. Open Agentica. When macOS says it cannot verify the developer, close the
+   message without moving the app to the Trash.
+3. Open **System Settings → Privacy & Security**, scroll to **Security**, and
+   choose **Open Anyway** next to the message about Agentica. Confirm when
+   asked.
+
+Later launches open normally. Do not turn off Gatekeeper for the whole system to
+get around this.
+
+A downloaded browser-mode backend is quarantined the same way. Clear it for that
+one file and make it executable:
+
+```sh
+xattr -d com.apple.quarantine agentica-backend-vX.Y.Z-macos-arm64
+chmod +x agentica-backend-vX.Y.Z-macos-arm64
+```
 
 ### Cutting a release
 

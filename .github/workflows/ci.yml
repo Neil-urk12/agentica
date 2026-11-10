@@ -4,6 +4,8 @@ on:
   push:
     branches: [main, develop]
   pull_request:
+  # Runs the full native matrix (Windows and macOS included) on any branch.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -59,13 +61,13 @@ jobs:
   native:
     name: Native check (${{ matrix.os }})
     needs: changes
-    # Pushes to main always run; elsewhere only when Rust or native build inputs changed.
-    if: needs.changes.outputs.native == 'true' || github.ref == 'refs/heads/main'
+    # Pushes to main and manual runs always run; elsewhere only when Rust or native build inputs changed.
+    if: needs.changes.outputs.native == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
-        # Windows runs only for main and pull requests into main.
-        os: ${{ fromJSON(((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest"]') }}
+        # Windows and macOS run only for main, pull requests into main, and manual runs.
+        os: ${{ fromJSON(((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.base_ref == 'main') || github.event_name == 'workflow_dispatch') && '["ubuntu-latest","windows-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:

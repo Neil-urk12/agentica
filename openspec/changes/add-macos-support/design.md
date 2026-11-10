@@ -90,8 +90,9 @@ Before the Tauri builder starts and before any runtime threads exist,
 - runs `$SHELL -l -i -c` (falling back to `/bin/zsh`) with a command that
   prints `$PATH` between unique markers;
 - passes null stdin and a 5 s timeout, killing the shell if it runs over;
-- parses the text between the markers, and calls `set_var("PATH", …)` only
-  if every entry is absolute and the value is non-empty.
+- finds the markers in the raw bytes, drops empty and relative entries from
+  the value between them, and calls `set_var("PATH", …)` only if at least one
+  absolute entry remains.
 
 The `-i` flag is needed because many users set `PATH` in `.zshrc`, for
 example for nvm, volta, or `~/.local/bin`. The markers isolate the value from

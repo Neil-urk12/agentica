@@ -1,8 +1,12 @@
+#[cfg(target_os = "linux")]
+use super::linux as unix;
+#[cfg(target_os = "macos")]
+use super::macos as unix;
 use super::*;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
-#[cfg(any(target_os = "linux", windows))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 use std::time::Duration;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::time::Instant;
 use std::{
     io::{Read, Write},
@@ -212,9 +216,9 @@ fn spawn(
     {
         stop.store(true, Ordering::SeqCst);
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     loop {
-        match linux::exited(pid as i32) {
+        match unix::exited(pid as i32) {
             Ok(None) if !stop.load(Ordering::SeqCst) => {
                 thread::sleep(Duration::from_millis(20));
                 continue;
@@ -224,7 +228,7 @@ fn spawn(
         let _ = supervisor.with_session(&spec.owner, session_id, |session| {
             session.transition(ProcessState::Stopping, None, None, None)
         });
-        match linux::cleanup(pid as i32, child.as_mut()) {
+        match unix::cleanup(pid as i32, child.as_mut()) {
             Ok((code, signal)) => {
                 // A process that escaped the session (setsid) can hold the
                 // terminal open indefinitely, so final output gets a bounded wait.
@@ -312,10 +316,10 @@ fn spawn(
             }
         }
     }
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         child.kill()?;
         child.wait()?;
-        Err("Native sessions require Linux or Windows".into())
+        Err("Native sessions require Linux, Windows, or macOS".into())
     }
 }

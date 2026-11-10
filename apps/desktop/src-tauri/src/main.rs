@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod login_path;
 mod markdown_export;
 use agentica_runtime::{
     changes, default_data_root,
@@ -418,6 +419,8 @@ async fn session_shutdown(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(target_os = "macos")]
+    login_path::import();
     let root = default_data_root();
     let sessions = Arc::new(SessionService::new(root.clone()));
     let mcp = Arc::new(McpService::new());
