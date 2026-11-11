@@ -1150,7 +1150,8 @@ mod tests {
                 &spec.owner,
                 &identity,
                 &attachment,
-                b"printf '\\117\\113\\n'\r".to_vec(),
+                // macOS bash 3.2 history-expands the `$!` sent below; turn that off first.
+                b"case $- in *H*) set +H;; esac; printf '\\117\\113\\n'\r".to_vec(),
             )
             .unwrap();
         receive(

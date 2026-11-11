@@ -48,6 +48,10 @@ installers and publishes the release. Keep validation evidence in the
   guide gives the per-app Gatekeeper steps.
 - Changed (CI): the native matrix adds `macos-latest` where it already ran
   Windows, and the workflow can be run manually to check both from any branch.
+- Fixed (tests): the real-shell session test turns off history expansion first,
+  because macOS's bash 3.2 expanded the `$!` it sends and failed with
+  `!: event not found`. The Windows launch test passes the new `canvas_url`
+  argument to `LaunchSpec::from_saved`.
 
 ### Show when CLI agents last printed output (2026-11-05)
 

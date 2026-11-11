@@ -599,14 +599,21 @@ mod windows_tests {
             "shell",
             None,
             None,
+            None,
         )
         .unwrap();
         assert_eq!(spec.directory, root);
         assert!(win::executable(&spec.executable));
         assert_eq!(spec.owner, owner);
-        assert!(
-            LaunchSpec::from_saved(owner, new_id().unwrap(), "relative", "shell", None, None)
-                .is_err()
-        );
+        assert!(LaunchSpec::from_saved(
+            owner,
+            new_id().unwrap(),
+            "relative",
+            "shell",
+            None,
+            None,
+            None
+        )
+        .is_err());
     }
 }
