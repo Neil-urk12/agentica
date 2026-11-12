@@ -57,6 +57,15 @@ test(
     let page;
     try {
       page = await launchBrowser();
+      // The download assertions exercise the Linux installer on every host.
+      await page.send(
+        "Emulation.setUserAgentOverride",
+        {
+          userAgent: "Mozilla/5.0 (X11; Linux x86_64)",
+          platform: "Linux x86_64",
+        },
+        page.sessionId,
+      );
       for (const scenario of [
         {
           width: 1280,
