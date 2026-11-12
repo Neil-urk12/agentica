@@ -12,6 +12,10 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Fix file size rounding at the MB boundary (2026-11-12)
+
+- Display `1.0 MB` when a file size would round up to `1024 KB`.
+
 ### Canvas edit proposals (2026-11-12)
 
 - Fixed: a Codex `canvas_edit` batch that gives two creates the same `nodeId`
