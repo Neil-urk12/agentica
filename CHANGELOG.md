@@ -12,6 +12,14 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Canvas edit proposals (2026-11-12)
+
+- Fixed: a Codex `canvas_edit` batch that gives two creates the same `nodeId`
+  placeholder is now rejected and nothing is staged. Previously the second
+  create took over the placeholder, so later `connect`, `place`, or
+  `updateText` operations pointed at it and the first object was left
+  unreferenced.
+
 ### macOS support for Apple Silicon (2026-11-10)
 
 - Added: native terminal and CLI-agent sessions on macOS. Releases now include

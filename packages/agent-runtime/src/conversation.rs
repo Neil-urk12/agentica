@@ -248,7 +248,14 @@ fn mint(mut operations: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
             Some("createText" | "createShape") => {
                 let node_id = new_id()?;
                 if let Some(Value::String(placeholder)) = object.get("nodeId") {
-                    placeholders.insert(placeholder.clone(), node_id.clone());
+                    if placeholders
+                        .insert(placeholder.clone(), node_id.clone())
+                        .is_some()
+                    {
+                        return Err(invalid(
+                            "Each create's nodeId placeholder must be unique within a batch.",
+                        ));
+                    }
                 }
                 object.insert("nodeId".into(), json!(node_id));
                 object.insert("artifactId".into(), json!(new_id()?));

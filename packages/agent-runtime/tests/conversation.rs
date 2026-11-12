@@ -654,6 +654,10 @@ fn codex_edits_stage_one_reviewed_proposal_per_tile() {
         .unwrap_err()
         .contains("1–32"));
 
+    // A reused placeholder would silently rebind later references, so it is rejected.
+    let duplicate = stage(&mut runtime, &s, json!([create, create, link])).unwrap_err();
+    assert!(duplicate.contains("unique"), "{duplicate}");
+
     // A valid batch is staged without changing the canvas; placeholders link new objects.
     let staged = stage(&mut runtime, &s, json!([edit, create, link])).unwrap();
     let turn = &staged["turn"];
