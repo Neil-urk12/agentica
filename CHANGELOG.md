@@ -12,6 +12,8 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+## 0.3.0 — 2026-11-12
+
 ### Canvas edit proposals (2026-11-12)
 
 - Fixed: a Codex `canvas_edit` batch that gives two creates the same `nodeId`
