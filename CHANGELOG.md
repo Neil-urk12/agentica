@@ -16,6 +16,8 @@ installers and publishes the release. Keep validation evidence in the
 
 - Display `1.0 MB` when a file size would round up to `1024 KB`.
 
+## 0.3.0 — 2026-11-12
+
 ### Canvas edit proposals (2026-11-12)
 
 - Fixed: a Codex `canvas_edit` batch that gives two creates the same `nodeId`
