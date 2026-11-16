@@ -54,6 +54,8 @@ const FRONTEND_ORIGIN = "http://127.0.0.1:1420";
 // The same Vite server answers on either loopback spelling, so a browser there
 // sends whichever one it was opened with as the Origin header.
 const LOCALHOST_FRONTEND_ORIGIN = "http://localhost:1420";
+// DevTools modifier flags use Meta for Command and Control elsewhere.
+const PRIMARY_MODIFIER = process.platform === "darwin" ? 4 : 2;
 const port = 1421;
 const binary = resolve(
   process.env.CARGO_TARGET_DIR ??
@@ -1510,7 +1512,7 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
     }
 
     // Drag from each drawing's handle to the text node, as a user would.
-    const press = async (key, code, modifiers = 0) => {
+    const press = async (key, code) => {
       const windowsVirtualKeyCode = {
         Enter: 13,
         Tab: 9,
@@ -1524,7 +1526,6 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
             type,
             key,
             code,
-            modifiers,
             windowsVirtualKeyCode,
             ...(type === "keyDown" && key === "Enter"
               ? { text: "\r", unmodifiedText: "\r" }
@@ -1586,8 +1587,10 @@ test("drawing labels, connections and inspector text edits reopen without Codex"
       { text: "Draft a release plan from these notes." },
       browser.sessionId,
     );
-    await evaluate(browser, `document.querySelector("#node-x").focus()`);
-    await press("a", "KeyA", 2);
+    await evaluate(
+      browser,
+      `(() => { const input = document.querySelector("#node-x"); input.focus(); input.select(); })()`,
+    );
     await browser.send("Input.insertText", { text: "180" }, browser.sessionId);
     await press("Tab", "Tab");
     await waitFor(
@@ -2044,7 +2047,7 @@ test("box selection groups, moves, ungroups, and deletes canvas objects", async 
       /2 objects selected/,
     );
 
-    await press("g", "KeyG", 71, 2);
+    await press("g", "KeyG", 71, PRIMARY_MODIFIER);
     await waitFor(
       browser,
       `document.querySelectorAll('.node-group').length === 1`,
@@ -2085,7 +2088,7 @@ test("box selection groups, moves, ungroups, and deletes canvas objects", async 
       "the whole group selected",
     );
 
-    await press("G", "KeyG", 71, 2 | 8);
+    await press("G", "KeyG", 71, PRIMARY_MODIFIER | 8);
     await waitFor(
       browser,
       `!document.querySelector('.node-group')`,
@@ -3389,7 +3392,7 @@ wait
       `${status}.includes('to a removed agent') && document.querySelector('${node} .task-assignee')?.dataset.value === '' && !document.querySelector('.task-wire')`,
       "the task without its removed agent",
     );
-    // Without session tiles the control is gone and Ctrl+J opens nothing.
+    // Without session tiles the control is gone and the queue shortcut opens nothing.
     const openProject = `document.querySelector('.topbar__actions [title="Open project"]').getBoundingClientRect().left`;
     assert.equal(await run(`!!document.querySelector('.waiting')`), false);
     await run(`document.activeElement?.blur()`);
@@ -3400,7 +3403,7 @@ wait
           type,
           key: "j",
           code: "KeyJ",
-          modifiers: 2,
+          modifiers: PRIMARY_MODIFIER,
           windowsVirtualKeyCode: 74,
         },
         browser.sessionId,
@@ -3928,7 +3931,7 @@ test("picked files are copied, previewed, and shared with the next prompt", asyn
   }
 });
 
-test("Ctrl+Z undoes an accidental drag in the rendered app and saves it", async () => {
+test("the undo shortcut reverses an accidental drag in the rendered app and saves it", async () => {
   const backend = await startBackend();
   key = backend.connectionKey;
   let browser;
@@ -4033,7 +4036,7 @@ test("Ctrl+Z undoes an accidental drag in the rendered app and saves it", async 
     while ((await savedX()) === 120 && Date.now() < deadline) await delay(50);
     assert.ok(Math.abs((await savedX()) - movedX) < 2, "the drag autosaves");
 
-    // Focus the canvas, not a text field, then press Ctrl+Z.
+    // Focus the canvas before sending the platform's undo shortcut.
     await evaluate(browser, `document.activeElement?.blur()`);
     for (const type of ["keyDown", "keyUp"])
       await browser.send(
@@ -4043,7 +4046,7 @@ test("Ctrl+Z undoes an accidental drag in the rendered app and saves it", async 
           key: "z",
           code: "KeyZ",
           windowsVirtualKeyCode: 90,
-          modifiers: 2,
+          modifiers: PRIMARY_MODIFIER,
         },
         browser.sessionId,
       );
