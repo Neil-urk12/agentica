@@ -1,11 +1,39 @@
 import type { SessionStatus, SessionTile } from "@agentica/protocol";
 
-export function attentionLabel(status: SessionStatus): string {
+type DeclaredWord = NonNullable<SessionStatus["declaredState"]>["state"];
+const DECLARED_WORDS: Record<DeclaredWord, string> = {
+  working: "working",
+  waiting: "waiting for you",
+  finished: "turn finished",
+};
+
+/**
+ * What an agent's own hooks reported, always attributed to the agent: it is a
+ * report, not something Agentica observed. Render as text, never HTML.
+ */
+export function declaredStateLabel(agent: string, state: DeclaredWord) {
+  return `${agent} reports: ${DECLARED_WORDS[state]}`;
+}
+
+/**
+ * `agent` names the tile for declared-state labels; other signals ignore it.
+ */
+export function attentionLabel(
+  status: Pick<
+    SessionStatus,
+    "attention" | "exitCode" | "exitSignal" | "error"
+  >,
+  agent = "Agent",
+): string {
   switch (status.attention.kind) {
     case "bell":
       return "Waiting for you";
     case "notification":
       return status.attention.message || "Sent a notification";
+    case "declared":
+      return status.attention.declaredState
+        ? declaredStateLabel(agent, status.attention.declaredState)
+        : "";
     case "exited":
       return `Stopped${status.exitSignal ? ` (signal ${status.exitSignal})` : status.exitCode !== null ? ` (exit code ${status.exitCode})` : ""}`;
     case "failed":
@@ -51,6 +79,22 @@ export function tileOutputAge(
   return kind === "cli-agent" && status?.state === "running"
     ? outputAgeLabel(status.lastOutputAt, now)
     : "";
+}
+
+/**
+ * The agent-reported state with its age, for running CLI-agent tiles only;
+ * otherwise "". Without a report there is nothing to show, never "idle".
+ */
+export function tileDeclaredState(
+  kind: SessionTile["kind"],
+  status: Pick<SessionStatus, "state" | "declaredState"> | null | undefined,
+  agent: string,
+  now: number,
+): string {
+  const declared = status?.declaredState;
+  if (kind !== "cli-agent" || status?.state !== "running" || !declared)
+    return "";
+  return `${declaredStateLabel(agent, declared.state)} · ${waitedLabel(declared.at, now)}`;
 }
 
 /** Oldest attention first; entries without a timestamp keep order, last. */

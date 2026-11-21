@@ -27,6 +27,7 @@
     "droid": "Droid",
     "kimi": "Kimi Code"
   },
+  "declaredStateIds": ["claude"],
   "limits": {
     "customAgents": 32,
     "executableBytes": 4096,

@@ -214,7 +214,7 @@
             {#each sorted as entry, index (entry.tile.id)}
               {@const name = nameOf(entry)}
               {@const project = projectOf(entry)}
-              {@const reason = attentionLabel(entry.status)}
+              {@const reason = attentionLabel(entry.status, name)}
               {@const waited = waitedLabel(
                 entry.status.attention.at,
                 clock.now,

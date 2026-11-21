@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { AgentCapability, CustomAgent } from "@agentica/protocol";
+  import {
+    DECLARED_STATE_AGENT_IDS,
+    type AgentCapability,
+    type CustomAgent,
+  } from "@agentica/protocol";
   import { callRuntime, RuntimeCallError } from "../runtime";
   import type { SessionManager } from "../sessions";
   import Icon from "./Icon.svelte";
@@ -21,7 +25,11 @@
     argv: string;
   };
 
-  let builtins = $state<AgentCapability[]>([]);
+  // Last known list first, so the section does not flash empty while loading.
+  // svelte-ignore state_referenced_locally
+  let builtins = $state<AgentCapability[]>(
+    sessions.agents.filter((agent) => !agent.custom),
+  );
   let custom = $state<CustomAgent[]>([]);
   let loading = $state(false);
   let error = $state("");
@@ -47,6 +55,9 @@
       custom = (
         await callRuntime(connectionKey.trim(), false, "agents.custom.list", {})
       ).agents;
+      // The capability list treats a broken agent-state.json as off; this
+      // call reports why, so the switch is not silently wrong.
+      await callRuntime(connectionKey.trim(), false, "agents.state.get", {});
     } catch (cause) {
       fail(cause);
     } finally {
@@ -113,6 +124,24 @@
       await load();
   }
 
+  type DeclaredStateAgent = (typeof DECLARED_STATE_AGENT_IDS)[number];
+  const declaredStateAgent = (id: string): id is DeclaredStateAgent =>
+    (DECLARED_STATE_AGENT_IDS as readonly string[]).includes(id);
+
+  async function setDeclaredState(agent: AgentCapability, enabled: boolean) {
+    const agentId = agent.id;
+    if (!declaredStateAgent(agentId)) return;
+    if (
+      await run(`state:${agentId}`, () =>
+        callRuntime(connectionKey.trim(), false, "agents.state.set", {
+          agentId,
+          enabled,
+        }),
+      )
+    )
+      await load();
+  }
+
   const available = (id: string) =>
     sessions.agents.find((agent) => agent.id === `custom:${id}`);
 </script>
@@ -150,6 +179,32 @@
             {:else}
               <span class="chip">Not found</span>
               <span class="setting__hint">{agent.reason}</span>
+            {/if}
+            {#if agent.declaredState}
+              {@const enabled = agent.declaredState.enabled}
+              <span class="agents__state">
+                <button
+                  class="switch"
+                  type="button"
+                  role="switch"
+                  aria-checked={enabled}
+                  aria-describedby={`declared-state-${agent.id}`}
+                  disabled={busy.includes(`state:${agent.id}`)}
+                  onclick={() => void setDeclaredState(agent, !enabled)}
+                >
+                  <span class="switch__track"
+                    ><span class="switch__thumb"></span></span
+                  >
+                  <span class="switch__label">Show agent state</span>
+                </button>
+                <span class="setting__hint" id={`declared-state-${agent.id}`}>
+                  Adds hooks to {agent.label}'s process at its next Start or
+                  Restart, so its tile can show when it reports working, waiting
+                  for you, or a finished turn. {agent.label}'s own settings
+                  files are not changed. The state is reported by the agent and
+                  may be stale. Saved only on this machine.
+                </span>
+              </span>
             {/if}
           </li>
         {/each}
@@ -331,6 +386,17 @@
     flex-wrap: wrap;
     gap: 0.5rem;
     margin-top: 0.5rem;
+  }
+
+  .agents__state {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    flex-basis: 100%;
+  }
+
+  .agents__state .switch {
+    align-self: flex-start;
   }
 
   .agents__list .agents__actions {

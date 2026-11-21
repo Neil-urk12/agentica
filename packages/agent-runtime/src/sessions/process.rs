@@ -60,11 +60,18 @@ pub(super) fn launch(
 
 fn spawn(
     supervisor: &SessionSupervisor,
-    spec: LaunchSpec,
+    mut spec: LaunchSpec,
     session_id: &str,
     stop: &Arc<AtomicBool>,
     size: PtySize,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // The only owner from here on: the files are removed before `Exited` is
+    // published, so a shutdown that waits for exit never leaves them behind.
+    #[cfg_attr(
+        not(any(target_os = "linux", target_os = "macos", windows)),
+        allow(unused_mut)
+    )]
+    let mut declared_state = spec.declared_state.take();
     // Revalidate directly before spawn, after any time spent awaiting workers.
     if !spec.directory.is_dir() || spec.directory.canonicalize()? != spec.directory {
         return Err("The project folder changed. Use Locate folder.".into());
@@ -81,6 +88,9 @@ fn spawn(
     command.env("TERM", "xterm-256color");
     if let Some(token) = &spec.token {
         command.env(super::launch::TOKEN_VARIABLE, token);
+    }
+    if let Some(files) = &declared_state {
+        command.env(super::launch::STATE_VARIABLE, &files.state);
     }
     // Create the job before spawning so a job failure never leaves a process.
     #[cfg(windows)]
@@ -216,6 +226,15 @@ fn spawn(
     {
         stop.store(true, Ordering::SeqCst);
     }
+    if let Some(files) = &declared_state {
+        // The child is already running: a failed watcher only means no reported state.
+        let _ = watch_declared_state(
+            supervisor.clone(),
+            spec.owner.clone(),
+            session_id.to_owned(),
+            files.state.clone(),
+        );
+    }
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     loop {
         match unix::exited(pid as i32) {
@@ -243,6 +262,7 @@ fn spawn(
                 // Exit makes the final output cursor safe for renderer
                 // detachment, so later output from an escaped process is dropped.
                 detached.store(true, Ordering::SeqCst);
+                drop(declared_state.take());
                 let _ = supervisor.with_session(&spec.owner, session_id, |session| {
                     let result = session.transition(ProcessState::Exited, code, signal, None);
                     session.process = None;
@@ -275,6 +295,8 @@ fn spawn(
             }
             let _ = supervisor.with_session(&spec.owner, session_id, |session| {
                 session.status.state = ProcessState::Stopping;
+                // Bypasses `transition`, which clears this everywhere else.
+                session.status.declared_state = None;
                 Ok(())
             });
             if !console_closed {
@@ -293,6 +315,7 @@ fn spawn(
             match windows::cleanup(&job, child.as_mut()) {
                 Ok((code, signal)) => {
                     let _ = output.join();
+                    drop(declared_state.take());
                     let _ = supervisor.with_session(&spec.owner, session_id, |session| {
                         session.status.state = ProcessState::Exited;
                         session.status.exit_code = code;
@@ -323,3 +346,41 @@ fn spawn(
         Err("Native sessions require Linux, Windows, or macOS".into())
     }
 }
+
+/// Poll the hook state file while the session runs. Reading a few bytes each
+/// tick is cheaper than trusting mtimes, which can miss two same-length words
+/// written within one timestamp tick. The thread only reads the path; the
+/// spawn thread owns the files. It exits within one tick of leaving `Running`.
+fn watch_declared_state(
+    supervisor: SessionSupervisor,
+    owner: SessionOwner,
+    session_id: String,
+    state: std::path::PathBuf,
+) -> std::io::Result<()> {
+    thread::Builder::new()
+        .name("declared-state".into())
+        .spawn(move || loop {
+            thread::sleep(DECLARED_STATE_POLL);
+            let mut bytes = [0_u8; 16];
+            // A hook truncates before writing, so empty or short reads are normal.
+            let read = std::fs::File::open(&state)
+                .and_then(|mut file| file.read(&mut bytes))
+                .unwrap_or(0);
+            let reported = super::attention::Declared::parse(&bytes[..read]);
+            let running = supervisor.with_session(&owner, &session_id, |session| {
+                if session.status.state != ProcessState::Running {
+                    return Ok(false);
+                }
+                if let Some(state) = reported {
+                    session.declare(state);
+                }
+                Ok(true)
+            });
+            if !matches!(running, Ok(true)) {
+                break;
+            }
+        })
+        .map(|_| ())
+}
+
+pub(super) const DECLARED_STATE_POLL: std::time::Duration = std::time::Duration::from_millis(500);

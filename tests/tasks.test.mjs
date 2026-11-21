@@ -7,6 +7,7 @@ import {
   contextText,
   editedSinceSent,
   largestParts,
+  attentionHint,
   outputAgeHint,
   sendBlocker,
   taskPayload,
@@ -199,4 +200,38 @@ test("output age hint is live, hidden by attention, and only for a running assig
   assert.equal(outputAgeHint("Codex", live("exited"), now), "");
   assert.equal(outputAgeHint("Codex", null, now), "");
   assert.equal(outputAgeHint(null, live("running"), now), "");
+});
+
+test("attention hint names the assignee once and never a task state", () => {
+  const raised = (kind, extra = {}) => ({
+    state: "running",
+    exitCode: null,
+    exitSignal: null,
+    error: null,
+    attention: {
+      raised: true,
+      kind,
+      message: null,
+      declaredState: null,
+      ...extra,
+    },
+  });
+  assert.equal(
+    attentionHint("Codex", raised("bell")),
+    "Codex: Waiting for you",
+  );
+  // A declared-state label already names the agent.
+  assert.equal(
+    attentionHint(
+      "Claude Code",
+      raised("declared", { declaredState: "finished" }),
+    ),
+    "Claude Code reports: turn finished",
+  );
+  assert.equal(
+    attentionHint("Codex", { ...raised("bell"), attention: { raised: false } }),
+    "",
+  );
+  assert.equal(attentionHint(null, raised("bell")), "");
+  assert.equal(attentionHint("Codex", null), "");
 });

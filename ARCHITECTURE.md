@@ -117,6 +117,14 @@ because any code in the webview can call `/rpc` directly.
 - **Sessions and MCP servers** run as the user with the user's permissions. A
   project folder is the working directory, not a sandbox. Agentica never answers
   an agent's prompts for it.
+- **Agent-reported state** is opt-in per supported agent (Claude Code only) and
+  stored machine-locally in `agent-state.json`, never in a workspace. When on,
+  Start adds `--settings <file>` naming fixed hooks Agentica writes under
+  `<data root>/session-state/`, plus `AGENTICA_STATE_FILE` in the environment.
+  Any process in the session can write that file, so its three accepted words
+  only change what a tile shows and whether attention is raised; they never
+  gate sends, mark tasks, or answer prompts. The agent's own settings files are
+  never read or written.
 - **Paste into sessions** is always bracketed and never presses Enter, so text
   sent to an agent waits for the user to submit it.
 - **Git** runs with fixed argv, `GIT_*` overrides cleared, and a 10 s deadline.

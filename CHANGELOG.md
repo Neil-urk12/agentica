@@ -12,6 +12,53 @@ installers and publishes the release. Keep validation evidence in the
 
 ## Unreleased
 
+### Agent-reported state for Claude Code (2026-11-19)
+
+- Added: an opt-in **Show agent state** switch for Claude Code in Settings →
+  Advanced → Coding agents. When it is on, a running Claude Code tile shows
+  what Claude Code last reported, with its age: **working**, **waiting for
+  you**, or **turn finished**. Waiting and turn finished raise attention, gated
+  by terminal focus like other signals. Off by default; nothing changes for
+  other agents.
+- Rationale (source of state): the tile rules forbid inferring state from
+  silence or screen text, so the state comes only from Claude Code's own hooks
+  and is always labeled as its report. Start adds `--settings <file>` for that
+  process, naming fixed hooks for `UserPromptSubmit`, `PostToolUse`,
+  `Notification` (permission and input prompts only), and `Stop`. The user's
+  `~/.claude` and the project's `.claude` files are never read or written. Hook
+  names and order were checked against Claude Code 2.1.328 (see the
+  [verification record](docs/development/declared-agent-state.md)).
+  `idle_prompt` is left out because it fires on inactivity, not a request.
+- Rationale (channel): each hook overwrites a per-launch file named by
+  `AGENTICA_STATE_FILE`, and the backend reads it every 500 ms. A file works the
+  same in desktop mode, which has no loopback server, and in browser mode, with
+  no new listener and no `curl` in the hook. A loopback endpoint and an in-band
+  terminal sequence were considered and rejected. The settings file is passed by
+  path because quotes do not survive `cmd.exe` for npm's `claude.cmd`. Files
+  live in `<data root>/session-state/` with random names (`0700` directory,
+  `0600` files) and are removed when the process exits or when Start is refused.
+  Removal happens before the session reports `exited`, so quitting the app or
+  backend right after its sessions stop leaves nothing behind. Files left by a
+  crash are not swept.
+- Rationale (Windows hooks): Claude Code runs hooks in PowerShell when Git Bash
+  is missing, so on Windows the hooks set `"shell": "powershell"` and write with
+  `Set-Content -NoNewline`. They avoid `>`, which writes UTF-16 in Windows
+  PowerShell 5.1.
+- Rationale (opt-in file): the switch is stored in a new machine-local
+  `agent-state.json`, not in `cli-agents.json`, whose strict format would make
+  an older build reject it after a downgrade. Ids this build does not support
+  are ignored on read and kept on save, so toggling after a downgrade does not
+  turn off a newer build's agents.
+- Security: any process in the session, including the agent's own shell tool,
+  can write the state file. Only three exact words are accepted, and the state
+  never marks tasks done or answers prompts. Like any raised attention, a
+  reported `waiting` or `finished` makes a guarded task send ask you to check
+  the terminal first.
+- Changed (wire): session status gains `declaredState` (`{state, at}` or
+  `null`), the attention kind enum gains `declared` with a `declaredState`
+  field, agent capabilities gain `declaredState` (`{enabled}` or `null`), and
+  new RPCs `agents.state.get` and `agents.state.set`.
+
 ## 0.3.0 — 2026-11-12
 
 ### Canvas edit proposals (2026-11-12)

@@ -67,6 +67,7 @@ const status = (n, state = "running", canvas) => ({
   shellFallback: false,
   projectId: id(5),
   lastOutputAt: null,
+  declaredState: null,
   attention: {
     raised: false,
     count: 0,
@@ -74,6 +75,7 @@ const status = (n, state = "running", canvas) => ({
     kind: null,
     at: null,
     message: null,
+    declaredState: null,
   },
 });
 const document = (statuses, canvas = canvasId) => ({
@@ -221,6 +223,7 @@ test("attention updates offscreen and dismissal acknowledges only the displayed 
     kind: "notification",
     at: Date.now(),
     message: "<script>inert</script>",
+    declaredState: null,
   };
   client.emit(item.sessionId, [], 0, 0);
   await setImmediate();
@@ -353,6 +356,7 @@ test("focus clears detached exited attention without acknowledging newer signals
     kind: "exited",
     at: Date.now(),
     message: null,
+    declaredState: null,
   };
   client.emit(item.sessionId, [{ sequence: 1, bytes: [65] }], 1, 1);
   await setImmediate();
@@ -624,6 +628,7 @@ test("tile names come from the agent registry or this machine's custom agents", 
       path: "/usr/bin/aider",
       reason: null,
       setupHint: null,
+      declaredState: null,
     },
   ];
   assert.equal(tileName({ kind: "shell", preset: null }), "Terminal");

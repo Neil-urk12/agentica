@@ -28,6 +28,8 @@ pub struct LaunchSpec {
     pub(crate) fallback: bool,
     /// Canvas MCP token, passed only through the child environment.
     pub(crate) token: Option<String>,
+    /// Declared-state hook files, removed when the last clone drops.
+    pub(crate) declared_state: Option<Arc<DeclaredStateFiles>>,
 }
 
 // Hand-written so a log line or panic message never prints the token.
@@ -41,12 +43,122 @@ impl std::fmt::Debug for LaunchSpec {
             .field("directory", &self.directory)
             .field("fallback", &self.fallback)
             .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("declared_state", &self.declared_state)
             .finish()
     }
 }
 
 /// Environment variable Codex reads its canvas MCP bearer token from.
 pub(crate) const TOKEN_VARIABLE: &str = "AGENTICA_MCP_TOKEN";
+/// Environment variable naming the file the declared-state hooks overwrite.
+pub(crate) const STATE_VARIABLE: &str = "AGENTICA_STATE_FILE";
+const STATE_DIRECTORY: &str = "session-state";
+
+/// Per-session files for Claude Code's declared-state hooks, under the data
+/// root and never in the project or `~/.claude`. Dropping removes both, which
+/// happens before the session reports `exited`, or when Start is refused
+/// before spawning.
+#[derive(Debug)]
+pub(crate) struct DeclaredStateFiles {
+    pub(crate) state: PathBuf,
+    pub(super) settings: PathBuf,
+}
+
+impl Drop for DeclaredStateFiles {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.state);
+        let _ = std::fs::remove_file(&self.settings);
+    }
+}
+
+/// Fixed hooks: each overwrites the state file with one word and prints
+/// nothing, so no hook adds prompt context. Event names and the notification
+/// types were checked against Claude Code 2.1.328
+/// (docs/development/declared-agent-state.md). `idle_prompt` is left out: it
+/// fires on inactivity, not on a request. On Windows, Claude Code runs hooks
+/// in PowerShell when Git Bash is missing, so the hooks use PowerShell there.
+/// `Set-Content` avoids `>`, which writes UTF-16 in Windows PowerShell 5.1.
+fn hook_settings(windows: bool) -> serde_json::Value {
+    let hook = |word: &str| {
+        if windows {
+            serde_json::json!([{ "hooks": [{
+                "type": "command",
+                "shell": "powershell",
+                "command": format!("Set-Content -NoNewline -LiteralPath $env:{STATE_VARIABLE} -Value {word}"),
+            }] }])
+        } else {
+            serde_json::json!([{ "hooks": [{
+                "type": "command",
+                "command": format!("printf {word} > \"${STATE_VARIABLE}\""),
+            }] }])
+        }
+    };
+    let mut waiting = hook("waiting");
+    waiting[0]["matcher"] = "permission_prompt|elicitation_dialog|elicitation_url_dialog".into();
+    let mut used_tool = hook("working");
+    used_tool[0]["matcher"] = "*".into();
+    serde_json::json!({ "hooks": {
+        "UserPromptSubmit": hook("working"),
+        "PostToolUse": used_tool,
+        "Notification": waiting,
+        "Stop": hook("finished"),
+    } })
+}
+
+fn private_file(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(path)?.write_all(bytes)
+}
+
+/// Create an empty state file and the hook settings under a random name, so
+/// the desktop app and a detached backend sharing the data root never collide.
+pub(super) fn declared_state_files(
+    data_root: &std::path::Path,
+) -> Result<(DeclaredStateFiles, String), RuntimeError> {
+    let failed = |error: &dyn std::fmt::Display| {
+        RuntimeError::new(
+            "STORAGE_ERROR",
+            format!("Cannot prepare agent state reporting: {error}. Fix the data directory, or turn off Show agent state in Settings."),
+        )
+    };
+    let directory = data_root.join(STATE_DIRECTORY);
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(&directory).map_err(|error| failed(&error))?;
+    // `mode` applies only on creation; tighten a folder that already existed.
+    #[cfg(unix)]
+    std::fs::set_permissions(
+        &directory,
+        std::os::unix::fs::PermissionsExt::from_mode(0o700),
+    )
+    .map_err(|error| failed(&error))?;
+    let mut random = [0_u8; 16];
+    getrandom::fill(&mut random).map_err(|error| failed(&error))?;
+    let name: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+    let files = DeclaredStateFiles {
+        state: directory.join(format!("{name}.state")),
+        settings: directory.join(format!("{name}.settings.json")),
+    };
+    // Argv is UTF-8; a data root that is not cannot be passed as `--settings`.
+    let settings = files
+        .settings
+        .to_str()
+        .ok_or_else(|| failed(&"the data directory path is not valid UTF-8"))?
+        .to_owned();
+    private_file(&files.state, b"").map_err(|error| failed(&error))?;
+    private_file(
+        &files.settings,
+        hook_settings(cfg!(windows)).to_string().as_bytes(),
+    )
+    .map_err(|error| failed(&error))?;
+    Ok((files, settings))
+}
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(super) fn executable(path: &std::path::Path) -> bool {
@@ -192,6 +304,7 @@ impl LaunchSpec {
     ) -> Result<Self, RuntimeError> {
         owner.validate()?;
         let mut token = None;
+        let mut declared_state = None;
         let directory = PathBuf::from(root);
         let canonical = directory.canonicalize().map_err(|_| {
             RuntimeError::new(
@@ -237,6 +350,14 @@ impl LaunchSpec {
                         format!("mcp_servers.agentica.bearer_token_env_var={TOKEN_VARIABLE}"),
                     ]);
                 }
+                // Per-process hooks only: no Claude Code settings file is read or written.
+                if let Some(root) = data_root.filter(|_| {
+                    capability.path.is_some() && agents::reports_declared_state(preset, data_root)
+                }) {
+                    let (files, settings) = declared_state_files(root)?;
+                    argv.extend(["--settings".into(), settings]);
+                    declared_state = Some(Arc::new(files));
+                }
                 (capability, argv)
             }
             _ => {
@@ -269,6 +390,7 @@ impl LaunchSpec {
             directory,
             fallback: capability.fallback,
             token,
+            declared_state,
         })
     }
 }
@@ -277,6 +399,37 @@ impl LaunchSpec {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn windows_hooks_use_powershell_and_never_redirect() {
+        let settings = hook_settings(true);
+        for (event, word) in [
+            ("UserPromptSubmit", "working"),
+            ("PostToolUse", "working"),
+            ("Notification", "waiting"),
+            ("Stop", "finished"),
+        ] {
+            let hook = &settings["hooks"][event][0]["hooks"][0];
+            assert_eq!(hook["shell"], "powershell", "{event}");
+            assert_eq!(
+                hook["command"],
+                format!(
+                    "Set-Content -NoNewline -LiteralPath $env:AGENTICA_STATE_FILE -Value {word}"
+                ),
+                "{event}"
+            );
+        }
+        // Matchers are shared with the POSIX form.
+        let posix = hook_settings(false);
+        for event in ["PostToolUse", "Notification"] {
+            assert_eq!(
+                settings["hooks"][event][0]["matcher"],
+                posix["hooks"][event][0]["matcher"]
+            );
+        }
+        assert!(posix["hooks"]["Stop"][0]["hooks"][0].get("shell").is_none());
+    }
+
     #[test]
     fn launch_uses_saved_cwd_and_argv_without_shell_interpolation() {
         let temporary = tempfile::tempdir().unwrap();

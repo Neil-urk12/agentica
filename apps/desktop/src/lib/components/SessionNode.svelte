@@ -9,6 +9,7 @@
   import Icon from "./Icon.svelte";
   import {
     attentionLabel,
+    tileDeclaredState,
     tileOutputAge,
     waitedLabel,
   } from "../session-attention";
@@ -88,6 +89,14 @@
   $effect(() => {
     if (showsOutputAge) return clock.hold();
   });
+  // Reported by the agent's own hooks; absent unless the user opted in.
+  const declared = $derived(
+    tileDeclaredState(data.tile.kind, view.status, title, clock.now),
+  );
+  const showsDeclared = $derived(declared !== "");
+  $effect(() => {
+    if (showsDeclared) return clock.hold();
+  });
   const maxWidth = $derived(data.group.width - data.tile.x - 16);
   const maxHeight = $derived(data.group.height - data.tile.y - 16);
   function terminal(element: HTMLDivElement) {
@@ -138,9 +147,11 @@
         size={18}
       /><strong>{title}</strong><span class="project-name"
         >{data.group.label}</span
-      ><span class="state" role="status">{phase}</span>{#if outputAge}<span
-          class="output-age">{outputAge}</span
-        >{/if}
+      ><span class="state" role="status">{phase}</span>{#if declared}<span
+          class="declared-state"
+          title="Reported by the agent's hooks; it may be stale or wrong."
+          >{declared}</span
+        >{/if}{#if outputAge}<span class="output-age">{outputAge}</span>{/if}
     </div>
     <div
       class="session-controls nodrag"
@@ -249,7 +260,7 @@ notification_condition = "always"`}</code
     use:terminal
   ></div>
   {#if attention}
-    {@const reason = attentionLabel(attention)}
+    {@const reason = attentionLabel(attention, title)}
     {@const waited = waitedLabel(attention.attention.at, clock.now)}
     <div class="attention-strip nodrag" data-terminal-controls>
       <span class="dot" aria-hidden="true"></span>
@@ -365,10 +376,16 @@ notification_condition = "always"`}</code
     text-transform: capitalize;
     color: var(--ink-soft);
   }
-  .output-age {
+  .output-age,
+  .declared-state {
     font-size: 12px;
     color: var(--ink-soft);
     white-space: nowrap;
+  }
+  .declared-state {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .session-controls {
     display: flex;

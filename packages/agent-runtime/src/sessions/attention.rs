@@ -6,8 +6,31 @@ use serde::Serialize;
 pub enum Kind {
     Bell,
     Notification,
+    /// The agent's own hooks reported `waiting` or `finished`.
+    Declared,
     Exited,
     Failed,
+}
+
+/// A state word written by an agent's declared-state hook.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Declared {
+    Working,
+    Waiting,
+    Finished,
+}
+
+impl Declared {
+    /// Only an exact word counts; partial writes and anything else are ignored.
+    pub(super) fn parse(bytes: &[u8]) -> Option<Self> {
+        match bytes.trim_ascii() {
+            b"working" => Some(Self::Working),
+            b"waiting" => Some(Self::Waiting),
+            b"finished" => Some(Self::Finished),
+            _ => None,
+        }
+    }
 }
 
 /// Backend Unix epoch milliseconds, the clock every status timestamp uses.
@@ -26,6 +49,9 @@ pub struct Attention {
     pub kind: Option<Kind>,
     pub at: Option<u64>,
     pub message: Option<String>,
+    /// Set only for `Kind::Declared`: the reported state, from a closed set.
+    #[serde(rename = "declaredState")]
+    pub declared_state: Option<Declared>,
 }
 
 impl Attention {
@@ -35,7 +61,13 @@ impl Attention {
         self.sequence = self.sequence.saturating_add(1).min((1 << 53) - 1);
         self.kind = Some(kind);
         self.message = message;
+        self.declared_state = None;
         self.at = Some(now_ms());
+    }
+
+    pub(super) fn raise_declared(&mut self, state: Declared) {
+        self.raise(Kind::Declared, None);
+        self.declared_state = Some(state);
     }
 
     pub(super) fn clear(&mut self, sequence: u64) {

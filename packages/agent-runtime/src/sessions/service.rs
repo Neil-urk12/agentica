@@ -434,6 +434,7 @@ mod tests {
             directory: root.path().into(),
             fallback: false,
             token: None,
+            declared_state: None,
         };
         let status = supervisor.start(spec, "stream-release", 24, 80).unwrap();
         let attachment = supervisor.attach(&owner, &status.session_id, 0).unwrap();

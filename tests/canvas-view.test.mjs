@@ -24,7 +24,9 @@ import {
 import { proposalAnchor } from "../apps/desktop/src/lib/canvas-agent.ts";
 import {
   attentionLabel,
+  declaredStateLabel,
   isQueueShortcut,
+  tileDeclaredState,
   sortWaiting,
   outputAgeLabel,
   tileOutputAge,
@@ -448,4 +450,78 @@ test("a Codex tile shows only its own pending proposal, and only in browser mode
   assert.equal(sessionProposal(turns, tile, false)?.id, "mine");
   assert.equal(sessionProposal(turns, tile, true), undefined);
   assert.equal(sessionProposal(turns.slice(0, 3), tile, false), undefined);
+});
+
+test("declared state is attributed to the agent and shown only while running", () => {
+  const now = 1_000_000_000;
+  assert.equal(
+    declaredStateLabel("Claude Code", "working"),
+    "Claude Code reports: working",
+  );
+  assert.equal(
+    declaredStateLabel("Claude Code", "waiting"),
+    "Claude Code reports: waiting for you",
+  );
+  assert.equal(
+    declaredStateLabel("<b>Claude</b>", "finished"),
+    "<b>Claude</b> reports: turn finished",
+  );
+  const status = (state, declaredState) => ({ state, declaredState });
+  const reported = { state: "working", at: now - 3 * 60_000 };
+  assert.equal(
+    tileDeclaredState(
+      "cli-agent",
+      status("running", reported),
+      "Claude Code",
+      now,
+    ),
+    "Claude Code reports: working · 3 min ago",
+  );
+  assert.equal(
+    tileDeclaredState(
+      "cli-agent",
+      status("running", { state: "finished", at: now + 5000 }),
+      "Claude Code",
+      now,
+    ),
+    "Claude Code reports: turn finished · just now",
+  );
+  // No report means nothing to show: never "idle" or "unknown".
+  assert.equal(
+    tileDeclaredState("cli-agent", status("running", null), "Claude Code", now),
+    "",
+  );
+  assert.equal(
+    tileDeclaredState(
+      "cli-agent",
+      status("exited", reported),
+      "Claude Code",
+      now,
+    ),
+    "",
+  );
+  assert.equal(
+    tileDeclaredState("shell", status("running", reported), "Terminal", now),
+    "",
+  );
+  assert.equal(tileDeclaredState("cli-agent", null, "Claude Code", now), "");
+  // Attention for a declared signal repeats the report; other kinds ignore the name.
+  const attention = (kind, declaredState = null) => ({
+    attention: { kind, message: null, declaredState },
+    exitCode: null,
+    exitSignal: null,
+    error: null,
+  });
+  assert.equal(
+    attentionLabel(attention("declared", "waiting"), "Claude Code"),
+    "Claude Code reports: waiting for you",
+  );
+  assert.equal(
+    attentionLabel(attention("declared", "finished")),
+    "Agent reports: turn finished",
+  );
+  assert.equal(
+    attentionLabel(attention("bell"), "Claude Code"),
+    "Waiting for you",
+  );
 });

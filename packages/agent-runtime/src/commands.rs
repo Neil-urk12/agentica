@@ -166,6 +166,8 @@ pub(crate) const METHODS: &[&str] = &[
     "agents.custom.create",
     "agents.custom.update",
     "agents.custom.remove",
+    "agents.state.get",
+    "agents.state.set",
 ];
 
 pub(crate) fn invalid(message: impl Into<String>) -> RuntimeError {
@@ -869,7 +871,9 @@ impl Runtime {
                 self.transact(&workspace_id, |tx| projects::call(tx, method, params))
             }
             // Machine-local, never workspace data: see sessions/agents.rs.
-            method if method.starts_with("agents.custom.") => {
+            method
+                if method.starts_with("agents.custom.") || method.starts_with("agents.state.") =>
+            {
                 crate::sessions::agents::call(self.data_root.as_deref(), method, params)
             }
             // Not in METHODS: only `mcp_internal` (the MCP dispatcher) reaches these.

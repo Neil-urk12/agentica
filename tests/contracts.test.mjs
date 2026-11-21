@@ -22,6 +22,7 @@ import {
   MCP_LIMITS,
   BUILTIN_AGENT_IDS,
   BUILTIN_AGENT_LABELS,
+  DECLARED_STATE_AGENT_IDS,
   AGENT_LIMITS,
   AgentPresetSchema,
   AgentCapabilitySchema,
@@ -153,6 +154,7 @@ test("attention is bounded plain text and controls require identities and safe s
     kind: null,
     at: null,
     message: null,
+    declaredState: null,
   };
   const notification = {
     raised: true,
@@ -161,11 +163,20 @@ test("attention is bounded plain text and controls require identities and safe s
     kind: "notification",
     at: Date.now(),
     message: "<b>Received</b>",
+    declaredState: null,
+  };
+  const declared = {
+    ...notification,
+    kind: "declared",
+    message: null,
+    declaredState: "waiting",
   };
   for (const value of [
     clear,
     notification,
     { ...notification, message: "😀".repeat(256) },
+    declared,
+    { ...declared, declaredState: "finished" },
   ])
     assert.equal(SessionAttentionSchema.safeParse(value).success, true);
   for (const value of [
@@ -178,6 +189,12 @@ test("attention is bounded plain text and controls require identities and safe s
     { ...notification, at: -1 },
     { ...notification, message: null },
     { ...clear, count: 1 },
+    // A declared signal carries a closed state word and never free text.
+    { ...declared, declaredState: null },
+    { ...declared, declaredState: "working" },
+    { ...declared, message: "waiting" },
+    { ...notification, declaredState: "waiting" },
+    { ...clear, declaredState: "finished" },
   ])
     assert.equal(SessionAttentionSchema.safeParse(value).success, false);
   const id = "00000000-0000-4000-8000-000000000001";
@@ -532,6 +549,7 @@ test("agent registry and custom agent limits match the runtime's", () => {
     {
       builtinIds: [...BUILTIN_AGENT_IDS],
       builtinLabels: BUILTIN_AGENT_LABELS,
+      declaredStateIds: [...DECLARED_STATE_AGENT_IDS],
       limits: AGENT_LIMITS,
     },
   );
@@ -578,8 +596,36 @@ test("agent presets and custom agent definitions are validated", () => {
     path: null,
     reason: "Agent not configured on this machine.",
     setupHint: null,
+    declaredState: null,
   };
   assert.equal(AgentCapabilitySchema.safeParse(capability).success, true);
+  assert.equal(
+    AgentCapabilitySchema.safeParse({
+      ...capability,
+      declaredState: { enabled: true },
+    }).success,
+    true,
+  );
+  const setState = (params) =>
+    RuntimeRequestSchema.safeParse({
+      protocolVersion: 1,
+      id: "state",
+      method: "agents.state.set",
+      params,
+    }).success;
+  assert.equal(setState({ agentId: "claude", enabled: true }), true);
+  for (const params of [
+    { agentId: "codex", enabled: true },
+    { agentId: `custom:${uuid}`, enabled: true },
+    { agentId: "claude" },
+    { agentId: "claude", enabled: "yes" },
+  ])
+    assert.equal(setState(params), false, JSON.stringify(params));
+  assert.equal(
+    ResultSchemas["agents.state.get"].safeParse({ enabled: ["claude"] })
+      .success,
+    true,
+  );
   assert.equal(
     AgentCapabilitySchema.safeParse({ ...capability, setupHint: "claude" })
       .success,

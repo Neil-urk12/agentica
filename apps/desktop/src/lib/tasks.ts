@@ -5,7 +5,7 @@ import {
   type Task,
 } from "@agentica/protocol";
 import { sanitize } from "./changes.ts";
-import { outputAgeLabel } from "./session-attention.ts";
+import { attentionLabel, outputAgeLabel } from "./session-attention.ts";
 
 /** Paste text bytes left after both bracketed-paste markers. */
 export const MAX_TASK_BYTES = SESSION_LIMITS.frameBytes - 12;
@@ -115,6 +115,20 @@ export function sendBlocker(
   if (!target.connected || target.status?.state !== "running")
     return `${target.label} is not running. Start it first; Send never starts a session.`;
   return "";
+}
+
+/**
+ * Live attention hint for the assigned tile, or "". A declared-state label
+ * already names the agent, so it is not prefixed twice. Never a task state.
+ */
+export function attentionHint(
+  label: string | null,
+  status: SessionStatus | null,
+) {
+  if (label === null || !status?.attention.raised) return "";
+  return status.attention.kind === "declared"
+    ? attentionLabel(status, label)
+    : `${label}: ${attentionLabel(status)}`;
 }
 
 /**

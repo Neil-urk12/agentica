@@ -45,6 +45,7 @@
     contextText,
     editedSinceSent,
     largestParts,
+    attentionHint,
     outputAgeHint,
     sendBlocker,
     taskPayload,
@@ -62,7 +63,6 @@
   import CanvasNavigation from "./lib/components/CanvasNavigation.svelte";
   import AttentionQueue from "./lib/components/AttentionQueue.svelte";
   import {
-    attentionLabel,
     isApplePlatform,
     isQueueShortcut,
     waitedLabel,
@@ -1725,10 +1725,7 @@
               context.map((item) => item.nodeId).filter((item) => item !== id),
             ),
           // Live hint only; never stored and never changes done.
-          attention:
-            target && status?.attention.raised
-              ? `${target.label}: ${attentionLabel(status)}`
-              : "",
+          attention: attentionHint(target?.label ?? null, status),
           outputAge: outputAgeHint(target?.label ?? null, status, clock.now),
           blocker: sendBlocker(
             task,

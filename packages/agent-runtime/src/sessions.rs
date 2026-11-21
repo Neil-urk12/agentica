@@ -21,7 +21,7 @@ pub mod paste;
 mod process;
 #[cfg(windows)]
 mod windows;
-pub use attention::{Attention, Kind as AttentionKind};
+pub use attention::{Attention, Declared, Kind as AttentionKind};
 mod service;
 pub mod wire;
 pub use service::SessionService;
@@ -100,6 +100,15 @@ pub struct SessionStatus {
     pub attention: Attention,
     /// Backend epoch ms of the last output chunk, echo and redraws included.
     pub last_output_at: Option<u64>,
+    /// What the agent's own hooks last reported; `None` unless running.
+    pub declared_state: Option<DeclaredState>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct DeclaredState {
+    pub state: Declared,
+    /// Backend epoch ms when the backend observed the report.
+    pub at: u64,
 }
 
 struct Session {
@@ -129,6 +138,27 @@ impl Session {
         });
         status.last_output_at = Some(attention::now_ms());
         self.output.push(bytes)
+    }
+
+    /// Record a hook report. Only a change counts, and only `waiting` and
+    /// `finished` raise attention, through the same focus gate as signals.
+    fn declare(&mut self, state: Declared) {
+        if self.status.state != ProcessState::Running
+            || self
+                .status
+                .declared_state
+                .as_ref()
+                .is_some_and(|current| current.state == state)
+        {
+            return;
+        }
+        self.status.declared_state = Some(DeclaredState {
+            state,
+            at: attention::now_ms(),
+        });
+        if state != Declared::Working && !self.focused {
+            self.status.attention.raise_declared(state);
+        }
     }
 
     fn exit_attention(&mut self, kind: AttentionKind) {
@@ -175,6 +205,9 @@ impl Session {
             ));
         }
         self.status.state = state;
+        if state != ProcessState::Running {
+            self.status.declared_state = None;
+        }
         self.status.exit_code = exit_code;
         self.status.exit_signal = exit_signal;
         self.status.error = error;
@@ -256,6 +289,7 @@ impl SessionSupervisor {
             cols: 80,
             attention: Attention::default(),
             last_output_at: None,
+            declared_state: None,
         };
         sessions.insert(
             owner,
@@ -799,6 +833,88 @@ mod tests {
     }
 
     #[test]
+    fn declared_state_changes_raise_focus_gated_attention_and_clear_off_running() {
+        let supervisor = SessionSupervisor::new().unwrap();
+        let owner = owner();
+        let (status, _) = supervisor.reserve_start(owner.clone(), "start").unwrap();
+        assert_eq!(status.declared_state, None);
+        let id = &status.session_id;
+        let declare = |state| {
+            supervisor
+                .with_session(&owner, id, |session| {
+                    session.declare(state);
+                    Ok(())
+                })
+                .unwrap();
+            supervisor.status(&owner).unwrap().unwrap()
+        };
+        // Not running yet: a report is ignored.
+        assert_eq!(declare(Declared::Working).declared_state, None);
+        supervisor
+            .transition(&owner, id, ProcessState::Running, None, None, None)
+            .unwrap();
+        let before = attention::now_ms();
+        let status = declare(Declared::Working);
+        let working = status.declared_state.clone().unwrap();
+        assert_eq!(working.state, Declared::Working);
+        assert!(working.at >= before);
+        // `working` never raises attention, and repeating a word changes nothing.
+        assert!(!status.attention.raised);
+        assert_eq!(declare(Declared::Working).declared_state, Some(working));
+
+        // A bell, then an unfocused `waiting`: count 2, latest is declared.
+        supervisor
+            .with_session(&owner, id, |session| session.push(b"\x07"))
+            .unwrap();
+        let status = declare(Declared::Waiting);
+        assert_eq!(
+            status.declared_state.as_ref().unwrap().state,
+            Declared::Waiting
+        );
+        assert_eq!(status.attention.count, 2);
+        assert_eq!(status.attention.kind, Some(AttentionKind::Declared));
+        assert_eq!(status.attention.declared_state, Some(Declared::Waiting));
+        assert_eq!(status.attention.message, None);
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["declaredState"]["state"], "waiting");
+        assert_eq!(json["attention"]["kind"], "declared");
+        assert_eq!(json["attention"]["declaredState"], "waiting");
+        // Repeating `waiting` records no second signal.
+        assert_eq!(declare(Declared::Waiting).attention.count, 2);
+        // Going back to work neither raises nor clears.
+        let status = declare(Declared::Working);
+        assert!(status.attention.raised);
+        assert_eq!(status.attention.count, 2);
+
+        // Focused: `finished` shows but does not raise.
+        let attachment = supervisor.attach(&owner, id, 0).unwrap();
+        supervisor.focus(&owner, id, &attachment, true).unwrap();
+        let status = declare(Declared::Finished);
+        assert!(!status.attention.raised);
+        assert_eq!(status.declared_state.unwrap().state, Declared::Finished);
+        supervisor.focus(&owner, id, &attachment, false).unwrap();
+        // A later bell replaces the declared detail.
+        supervisor
+            .with_session(&owner, id, |session| session.push(b"\x07"))
+            .unwrap();
+        let status = supervisor.status(&owner).unwrap().unwrap();
+        assert_eq!(status.attention.kind, Some(AttentionKind::Bell));
+        assert_eq!(status.attention.declared_state, None);
+
+        // Leaving Running clears it, and a replacement starts with none.
+        supervisor.detach(&owner, id, &attachment).unwrap();
+        supervisor
+            .transition(&owner, id, ProcessState::Exited, Some(0), None, None)
+            .unwrap();
+        assert_eq!(
+            supervisor.status(&owner).unwrap().unwrap().declared_state,
+            None
+        );
+        let (replacement, _) = supervisor.reserve_start(owner.clone(), "restart").unwrap();
+        assert_eq!(replacement.declared_state, None);
+    }
+
+    #[test]
     fn attention_focus_clear_races_detach_and_replacement() {
         let supervisor = SessionSupervisor::new().unwrap();
         let owner = owner();
@@ -1038,6 +1154,7 @@ mod tests {
             directory: root.canonicalize().unwrap(),
             fallback: false,
             token: None,
+            declared_state: None,
         }
     }
 
@@ -1086,6 +1203,104 @@ mod tests {
             );
             thread::sleep(std::time::Duration::from_millis(10));
         }
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn watcher_follows_the_hook_state_file_and_removes_it_after_exit() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let supervisor = Active(SessionSupervisor::new().unwrap());
+        // A pre-existing, wider folder is tightened, not trusted.
+        std::fs::create_dir(data.path().join("session-state")).unwrap();
+        std::fs::set_permissions(
+            data.path().join("session-state"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        let (files, settings) = launch::declared_state_files(data.path()).unwrap();
+        let (state_path, settings_path) = (files.state.clone(), files.settings.clone());
+        assert_eq!(settings, settings_path.to_str().unwrap());
+        assert!(state_path.starts_with(data.path().join("session-state")));
+        let mode =
+            |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&state_path), 0o600);
+        assert_eq!(mode(&settings_path), 0o600);
+        assert_eq!(mode(state_path.parent().unwrap()), 0o700);
+        // The child plays the hooks: it only knows the path from the environment.
+        // Each step waits for the test's go-ahead file so polling cannot miss it.
+        let script = r#"set -e
+step() { while [ ! -e "$1" ]; do sleep 0.05; done; }
+printf working > "$AGENTICA_STATE_FILE"; step go1
+printf 'rm -rf ~' > "$AGENTICA_STATE_FILE"; step go2
+: > "$AGENTICA_STATE_FILE"; step go3
+printf waiting > "$AGENTICA_STATE_FILE"; step go4
+"#;
+        let spec = LaunchSpec {
+            executable: "/bin/sh".into(),
+            argv: vec!["-c".into(), script.into()],
+            declared_state: Some(Arc::new(files)),
+            ..shell(root.path())
+        };
+        let owner = spec.owner.clone();
+        let identity = supervisor
+            .0
+            .start(spec, "start", 24, 80)
+            .unwrap()
+            .session_id;
+        let declared = || {
+            supervisor
+                .0
+                .status(&owner)
+                .unwrap()
+                .unwrap()
+                .declared_state
+                .map(|state| state.state)
+        };
+        let wait_for = |wanted: Option<Declared>| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while declared() != wanted {
+                assert!(std::time::Instant::now() < deadline, "{wanted:?}");
+                thread::sleep(std::time::Duration::from_millis(20));
+            }
+        };
+        let go = |name: &str| {
+            std::fs::write(root.path().canonicalize().unwrap().join(name), "").unwrap();
+            // Two watcher ticks, so the next write is seen before it is replaced.
+            thread::sleep(
+                super::process::DECLARED_STATE_POLL * 2 + std::time::Duration::from_millis(100),
+            );
+        };
+        wait_for(Some(Declared::Working));
+        go("go1");
+        // Garbage and an empty file leave the last valid state.
+        assert_eq!(declared(), Some(Declared::Working));
+        go("go2");
+        assert_eq!(declared(), Some(Declared::Working));
+        go("go3");
+        wait_for(Some(Declared::Waiting));
+        let status = supervisor.0.status(&owner).unwrap().unwrap();
+        assert!(status.attention.raised);
+        assert_eq!(status.attention.declared_state, Some(Declared::Waiting));
+        std::fs::write(root.path().canonicalize().unwrap().join("go4"), "").unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let status = supervisor.0.status(&owner).unwrap().unwrap();
+            if status.state == ProcessState::Exited {
+                assert_eq!(status.declared_state, None);
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "{status:?}");
+            thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // Removed before `Exited` is published, so a shutdown that waits for
+        // exit and then ends the process never leaves them behind.
+        assert!(!state_path.exists() && !settings_path.exists());
+        assert_eq!(
+            supervisor.0.status(&owner).unwrap().unwrap().session_id,
+            identity
+        );
     }
 
     #[test]
@@ -1545,6 +1760,7 @@ mod tests {
             directory: root.canonicalize().unwrap(),
             fallback: false,
             token: None,
+            declared_state: None,
         }
     }
 

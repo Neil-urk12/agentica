@@ -2,7 +2,9 @@
 //! custom agents saved machine-locally in `<data root>/cli-agents.json`.
 //!
 //! Custom definitions live outside every workspace directory so that copying,
-//! sharing, or importing a workspace can never decide what Start executes.
+//! sharing, or importing a workspace can never decide what Start executes. The
+//! declared-state opt-in (`<data root>/agent-state.json`) is machine-local for
+//! the same reason: a workspace must never decide which hooks an agent runs.
 use super::launch::{executable, ExecutableCapability};
 use crate::commands::{invalid, label, parse};
 use crate::store::{is_id, new_id, RuntimeError};
@@ -58,8 +60,14 @@ const fn builtin(id: &'static str, label: &'static str, executable: &'static str
     }
 }
 
+// Keep in sync with DECLARED_STATE_AGENT_IDS in packages/protocol/src/index.ts.
+/// Built-ins whose per-process hooks report declared state (see `launch.rs`).
+pub const DECLARED_STATE_AGENTS: &[&str] = &["claude"];
+
 const CUSTOM_PREFIX: &str = "custom:";
 const FILE: &str = "cli-agents.json";
+const STATE_FILE: &str = "agent-state.json";
+// One lock serializes writes to both machine-local files.
 const LOCK: &str = "cli-agents.lock";
 const MAX_AGENTS: usize = 32;
 const MAX_PATH_BYTES: usize = 4096;
@@ -76,6 +84,14 @@ pub struct AgentCapability {
     pub path: Option<PathBuf>,
     pub reason: Option<String>,
     pub setup_hint: Option<&'static str>,
+    /// `None` when the agent cannot report declared state.
+    pub declared_state: Option<DeclaredStateSetting>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeclaredStateSetting {
+    pub enabled: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -92,6 +108,15 @@ pub struct CustomAgent {
 struct Saved {
     version: u32,
     agents: Vec<CustomAgent>,
+}
+
+/// Separate from `Saved`: its `deny_unknown_fields` would make an older build
+/// reject `cli-agents.json` after a downgrade if the opt-in lived there.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SavedState {
+    version: u32,
+    enabled: Vec<String>,
 }
 
 /// A built-in id or `custom:<uuid>`; says nothing about availability.
@@ -124,7 +149,11 @@ fn on_path(name: &str, search: Option<&OsStr>) -> Option<PathBuf> {
         .find(|path| path.is_absolute() && executable(path))
 }
 
-fn builtin_capability(agent: &BuiltinAgent, search: Option<&OsStr>) -> AgentCapability {
+fn builtin_capability(
+    agent: &BuiltinAgent,
+    search: Option<&OsStr>,
+    enabled: &[String],
+) -> AgentCapability {
     let path = on_path(agent.executable, search);
     AgentCapability {
         id: agent.id.into(),
@@ -138,6 +167,11 @@ fn builtin_capability(agent: &BuiltinAgent, search: Option<&OsStr>) -> AgentCapa
         }),
         path,
         setup_hint: agent.setup_hint,
+        declared_state: DECLARED_STATE_AGENTS
+            .contains(&agent.id)
+            .then(|| DeclaredStateSetting {
+                enabled: enabled.iter().any(|id| id == agent.id),
+            }),
     }
 }
 
@@ -155,6 +189,7 @@ fn custom_capability(agent: &CustomAgent) -> AgentCapability {
             )
         }),
         setup_hint: None,
+        declared_state: None,
     }
 }
 
@@ -164,10 +199,11 @@ pub fn list(data_root: Option<&Path>) -> Vec<AgentCapability> {
     let custom = data_root
         .and_then(|root| load(root).ok())
         .unwrap_or_default();
+    let enabled = declared_state_enabled(data_root);
     let search = std::env::var_os("PATH");
     BUILTINS
         .iter()
-        .map(|agent| builtin_capability(agent, search.as_deref()))
+        .map(|agent| builtin_capability(agent, search.as_deref(), &enabled))
         .chain(custom.iter().map(custom_capability))
         .collect()
 }
@@ -186,7 +222,7 @@ pub fn resolve(
         let argv = agent.argv.iter().map(|arg| (*arg).into()).collect();
         let search = std::env::var_os("PATH");
         return Ok((
-            capability(builtin_capability(agent, search.as_deref())),
+            capability(builtin_capability(agent, search.as_deref(), &[])),
             argv,
         ));
     }
@@ -225,38 +261,100 @@ fn load(root: &Path) -> Result<Vec<CustomAgent>, RuntimeError> {
     Ok(saved.agents)
 }
 
-/// Write to a temp file, fsync, then rename, so readers see old or new, never partial.
 fn store(root: &Path, agents: Vec<CustomAgent>) -> Result<(), RuntimeError> {
-    let temporary = root.join(format!("{FILE}.tmp"));
+    replace(root, FILE, &Saved { version: 1, agents })
+}
+
+/// Write to a temp file, fsync, then rename, so readers see old or new, never partial.
+fn replace(root: &Path, name: &str, value: &impl Serialize) -> Result<(), RuntimeError> {
+    let temporary = root.join(format!("{name}.tmp"));
     let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    let bytes = serde_json::to_vec_pretty(&Saved { version: 1, agents })
+    let bytes = serde_json::to_vec_pretty(value)
         .map_err(|error| RuntimeError::new("STORAGE_ERROR", error.to_string()))?;
     let mut file = options.open(&temporary)?;
     file.write_all(&bytes)?;
     file.sync_all()?;
-    fs::rename(&temporary, root.join(FILE))?;
+    fs::rename(&temporary, root.join(name))?;
     // The rename survives a crash only once the directory entry is synced.
     #[cfg(unix)]
     File::open(root)?.sync_all()?;
     Ok(())
 }
 
-/// Read-modify-write under an OS file lock: the desktop app and the detached
-/// backend share one data root.
-fn update<T>(
+/// Run `work` under the OS file lock shared by both machine-local files: the
+/// desktop app and the detached backend share one data root.
+fn locked<T>(
     root: &Path,
-    change: impl FnOnce(&mut Vec<CustomAgent>) -> Result<T, RuntimeError>,
+    work: impl FnOnce() -> Result<T, RuntimeError>,
 ) -> Result<T, RuntimeError> {
     fs::create_dir_all(root)?;
     let lock = File::create(root.join(LOCK))?;
     lock.lock()?;
-    let mut agents = load(root)?;
-    let result = change(&mut agents)?;
-    store(root, agents)?;
-    Ok(result)
+    work()
+}
+
+/// Read-modify-write of `cli-agents.json` under the shared lock.
+fn update<T>(
+    root: &Path,
+    change: impl FnOnce(&mut Vec<CustomAgent>) -> Result<T, RuntimeError>,
+) -> Result<T, RuntimeError> {
+    locked(root, || {
+        let mut agents = load(root)?;
+        let result = change(&mut agents)?;
+        store(root, agents)?;
+        Ok(result)
+    })
+}
+
+/// Supported ids the user opted into. Ids this build does not support are
+/// ignored, so a file written by a newer build still loads.
+fn load_state(root: &Path) -> Result<Vec<String>, RuntimeError> {
+    let mut enabled = load_saved_state(root)?;
+    enabled.retain(|id| DECLARED_STATE_AGENTS.contains(&id.as_str()));
+    Ok(enabled)
+}
+
+/// Every saved id, including ones only a newer build supports.
+fn load_saved_state(root: &Path) -> Result<Vec<String>, RuntimeError> {
+    let text = match fs::read_to_string(root.join(STATE_FILE)) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    let malformed = || {
+        RuntimeError::new(
+            "STORAGE_ERROR",
+            format!(
+                "{} is not a valid agent state settings file. Fix or remove it, then retry; Agentica will not overwrite it.",
+                root.join(STATE_FILE).display()
+            ),
+        )
+    };
+    let saved: SavedState = serde_json::from_str(&text).map_err(|_| malformed())?;
+    // Not BUILTINS.len(): a newer build may save more ids than this one knows.
+    if saved.version != 1 || saved.enabled.len() > MAX_AGENTS {
+        return Err(malformed());
+    }
+    Ok(saved.enabled)
+}
+
+/// Opted-in ids; empty without a data root or when the file is unreadable, so
+/// launch falls back to the plain argv. `agents.state.get` reports why.
+fn declared_state_enabled(data_root: Option<&Path>) -> Vec<String> {
+    data_root
+        .and_then(|root| load_state(root).ok())
+        .unwrap_or_default()
+}
+
+/// Whether Start should add declared-state hooks for this preset.
+pub fn reports_declared_state(preset: &str, data_root: Option<&Path>) -> bool {
+    DECLARED_STATE_AGENTS.contains(&preset)
+        && declared_state_enabled(data_root)
+            .iter()
+            .any(|id| id == preset)
 }
 
 fn validate(label_text: &str, path: &Path, argv: &[String]) -> Result<(), RuntimeError> {
@@ -309,11 +407,19 @@ struct Remove {
     agent_id: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StateChange {
+    agent_id: String,
+    enabled: bool,
+}
+
 fn missing() -> RuntimeError {
     RuntimeError::new("NOT_FOUND", "Custom agent not found on this machine.")
 }
 
-/// `agents.custom.*`; changes apply on a tile's next explicit Start or Restart.
+/// `agents.custom.*` and `agents.state.*`; changes apply on a tile's next
+/// explicit Start or Restart.
 pub(crate) fn call(
     data_root: Option<&Path>,
     method: &str,
@@ -380,7 +486,41 @@ pub(crate) fn call(
                 Ok(json!({}))
             })
         }
-        _ => Err(invalid("Unknown custom agent method.")),
+        "agents.state.get" => {
+            parse::<Empty>(params)?;
+            Ok(json!({ "enabled": load_state(root)? }))
+        }
+        "agents.state.set" => {
+            let p: StateChange = parse(params)?;
+            if !DECLARED_STATE_AGENTS.contains(&p.agent_id.as_str()) {
+                return Err(invalid(
+                    "This agent cannot report its state. Only Claude Code is supported.",
+                ));
+            }
+            locked(root, || {
+                // Newer builds' ids are kept, so a downgrade then a toggle does not turn them off.
+                let mut enabled = load_saved_state(root)?;
+                enabled.retain(|id| id != &p.agent_id);
+                if p.enabled {
+                    // Stay within what a read accepts; unknown ids go first.
+                    if enabled.len() >= MAX_AGENTS {
+                        enabled.retain(|id| DECLARED_STATE_AGENTS.contains(&id.as_str()));
+                    }
+                    enabled.push(p.agent_id);
+                }
+                replace(
+                    root,
+                    STATE_FILE,
+                    &SavedState {
+                        version: 1,
+                        enabled: enabled.clone(),
+                    },
+                )?;
+                enabled.retain(|id| DECLARED_STATE_AGENTS.contains(&id.as_str()));
+                Ok(json!({ "enabled": enabled }))
+            })
+        }
+        _ => Err(invalid("Unknown agent method.")),
     }
 }
 
@@ -409,6 +549,10 @@ mod tests {
             .map(|agent| (agent.id.into(), json!(agent.label)))
             .collect();
         assert_eq!(fixture["builtinLabels"], Value::Object(labels));
+        assert_eq!(fixture["declaredStateIds"], json!(DECLARED_STATE_AGENTS));
+        assert!(DECLARED_STATE_AGENTS
+            .iter()
+            .all(|id| BUILTINS.iter().any(|agent| agent.id == *id)));
         assert_eq!(
             fixture["limits"],
             json!({"customAgents": MAX_AGENTS, "executableBytes": MAX_PATH_BYTES,
@@ -448,7 +592,7 @@ mod tests {
         fs::create_dir(bin.path().join("opencode")).unwrap();
         let found = |name: &str| {
             let agent = BUILTINS.iter().find(|agent| agent.id == name).unwrap();
-            builtin_capability(agent, Some(bin.path().as_os_str()))
+            builtin_capability(agent, Some(bin.path().as_os_str()), &[])
         };
         let available = found("claude");
         assert_eq!(available.path, Some(claude.clone()));
@@ -573,6 +717,24 @@ mod tests {
             json!({"label": "Shell", "executable": "/bin/sh", "argv": []}),
         );
         assert_eq!(created["result"]["agent"]["executable"], "/bin/sh");
+        assert_eq!(
+            request(
+                "agents.state.set",
+                json!({"agentId": "claude", "enabled": true})
+            )["result"],
+            json!({"enabled": ["claude"]})
+        );
+        assert_eq!(
+            request("agents.state.get", json!({}))["result"],
+            json!({"enabled": ["claude"]})
+        );
+        assert_eq!(
+            request(
+                "agents.state.set",
+                json!({"agentId": "crush", "enabled": true})
+            )["error"]["code"],
+            "INVALID_PARAMS"
+        );
     }
 
     #[test]
@@ -601,5 +763,132 @@ mod tests {
         );
         // Built-ins are still listed.
         assert_eq!(list(root).len(), BUILTINS.len());
+    }
+
+    #[test]
+    fn declared_state_opt_in_is_machine_local_and_limited_to_supported_agents() {
+        let data = tempfile::tempdir().unwrap();
+        let root = Some(data.path());
+        let claude = |root| {
+            list(root)
+                .into_iter()
+                .find(|agent| agent.id == "claude")
+                .unwrap()
+                .declared_state
+                .unwrap()
+                .enabled
+        };
+        // Off by default, and only supported built-ins carry the setting.
+        assert!(!claude(root));
+        assert!(!reports_declared_state("claude", root));
+        assert!(list(root)
+            .iter()
+            .filter(|agent| agent.id != "claude")
+            .all(|agent| agent.declared_state.is_none()));
+        assert_eq!(
+            call(root, "agents.state.get", json!({})).unwrap(),
+            json!({"enabled": []})
+        );
+
+        for agent_id in [
+            "opencode",
+            "codex",
+            "custom:00000000-0000-4000-8000-000000000000",
+            "",
+        ] {
+            let error = call(
+                root,
+                "agents.state.set",
+                json!({"agentId": agent_id, "enabled": true}),
+            )
+            .unwrap_err();
+            assert_eq!(error.code, "INVALID_PARAMS", "{agent_id}");
+        }
+        assert!(!data.path().join(STATE_FILE).exists());
+        assert_eq!(
+            call(root, "agents.state.set", json!({"agentId": "claude"}))
+                .unwrap_err()
+                .code,
+            "INVALID_PARAMS"
+        );
+
+        let set = |enabled: bool| {
+            call(
+                root,
+                "agents.state.set",
+                json!({"agentId": "claude", "enabled": enabled}),
+            )
+            .unwrap()
+        };
+        assert_eq!(set(true), json!({"enabled": ["claude"]}));
+        // Idempotent: enabling twice keeps one entry.
+        assert_eq!(set(true), json!({"enabled": ["claude"]}));
+        assert!(claude(root) && reports_declared_state("claude", root));
+        assert!(!reports_declared_state("opencode", root));
+        let mode = fs::metadata(data.path().join(STATE_FILE))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+        // The custom agent file is untouched.
+        assert!(!data.path().join(FILE).exists());
+        assert_eq!(set(false), json!({"enabled": []}));
+        assert!(!reports_declared_state("claude", root));
+
+        // Ids a newer build supports are ignored here instead of failing.
+        fs::write(
+            data.path().join(STATE_FILE),
+            r#"{"version":1,"enabled":["claude","future-agent"]}"#,
+        )
+        .unwrap();
+        assert!(reports_declared_state("claude", root));
+        // A toggle here keeps the newer build's id on disk but never returns it.
+        assert_eq!(set(false), json!({"enabled": []}));
+        assert_eq!(
+            serde_json::from_str::<Value>(
+                &fs::read_to_string(data.path().join(STATE_FILE)).unwrap()
+            )
+            .unwrap()["enabled"],
+            json!(["future-agent"])
+        );
+        assert_eq!(set(true), json!({"enabled": ["claude"]}));
+
+        // No data root: nothing can be enabled.
+        assert!(!reports_declared_state("claude", None));
+        assert_eq!(
+            call(None, "agents.state.get", json!({})).unwrap_err().code,
+            "STORAGE_ERROR"
+        );
+    }
+
+    #[test]
+    fn malformed_state_file_is_reported_never_rewritten_and_launch_stays_plain() {
+        let data = tempfile::tempdir().unwrap();
+        let root = Some(data.path());
+        for text in [
+            "{ not json",
+            r#"{"version":2,"enabled":[]}"#,
+            r#"{"version":1,"enabled":[],"x":1}"#,
+        ] {
+            fs::write(data.path().join(STATE_FILE), text).unwrap();
+            assert_eq!(
+                call(root, "agents.state.get", json!({})).unwrap_err().code,
+                "STORAGE_ERROR",
+                "{text}"
+            );
+            let error = call(
+                root,
+                "agents.state.set",
+                json!({"agentId": "claude", "enabled": true}),
+            )
+            .unwrap_err();
+            assert_eq!(error.code, "STORAGE_ERROR");
+            assert_eq!(
+                fs::read_to_string(data.path().join(STATE_FILE)).unwrap(),
+                text
+            );
+            assert!(!reports_declared_state("claude", root));
+            assert_eq!(list(root).len(), BUILTINS.len());
+        }
     }
 }

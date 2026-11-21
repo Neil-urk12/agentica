@@ -267,6 +267,9 @@ workspace can't choose what an agent tile runs. They run with your user account,
 so add only programs you trust. Edits apply the next time a tile starts. An
 agent whose program is missing or not executable is marked **Not executable**.
 
+Claude Code also has a **Show agent state** switch, off by default. See
+[Agent-reported state](#agent-reported-state).
+
 Tiles belong to their group and move with it. A session starts only when you
 press **Start**. It runs with your permissions in the project folder, which is
 the working directory, not a sandbox.
@@ -319,15 +322,17 @@ clearing attention. Focusing the terminal or **Mark seen** clears it.
 
 Labels describe only the signal received:
 
-| Signal             | Label                                                      |
-| ------------------ | ---------------------------------------------------------- |
-| Terminal bell      | **Waiting for you**                                        |
-| OSC 9 notification | The notification text, or **Sent a notification** if empty |
-| Process exit       | **Stopped**, with exit code or signal                      |
-| Launch failure     | **Failed**, with the error, or **Failed to start**         |
+| Signal             | Label                                                         |
+| ------------------ | ------------------------------------------------------------- |
+| Terminal bell      | **Waiting for you**                                           |
+| OSC 9 notification | The notification text, or **Sent a notification** if empty    |
+| Agent-reported     | **Claude Code reports: waiting for you** or **turn finished** |
+| Process exit       | **Stopped**, with exit code or signal                         |
+| Launch failure     | **Failed**, with the error, or **Failed to start**            |
 
-They do not claim the agent needs approval, is thinking, or finished a task.
-Title, directory, and progress escape sequences are ignored.
+Apart from what an agent reports about itself (below), they do not claim the
+agent needs approval, is thinking, or finished a task. Title, directory, and
+progress escape sequences are ignored.
 
 A running CLI-agent tile also shows when its terminal last printed anything:
 **Output just now**, **Last output 12 min ago**, or **No output yet**. Any
@@ -359,6 +364,37 @@ and exit attention work without it.
 Codex is the only agent with a verified notification setup. Other agents raise
 attention when they ring the terminal bell, send OSC 9, or exit; whether and when
 they do depends on the agent and its settings.
+
+### Agent-reported state
+
+Turn on **Settings → Advanced → Coding agents → Claude Code → Show agent state**
+to let Claude Code tell its tile what it is doing. The next **Start** or
+**Restart** adds hooks to that Claude Code process only: Agentica passes
+`--settings` with a file it writes under its own data folder. Your
+`~/.claude` settings and the project's `.claude` folder are not read or changed.
+Running tiles keep their current process until restarted.
+
+The tile then shows what Claude Code last reported and how long ago:
+
+| Claude Code event                         | Tile shows                               |
+| ----------------------------------------- | ---------------------------------------- |
+| You submit a prompt, or a tool finishes   | **Claude Code reports: working**         |
+| A permission prompt or a question for you | **Claude Code reports: waiting for you** |
+| The turn ends                             | **Claude Code reports: turn finished**   |
+
+**Waiting for you** and **turn finished** also raise attention when the terminal
+is not focused. Output age is still shown.
+
+This is a report, not something Agentica checks. It can be stale, for example
+after you deny a permission (the state stays **waiting for you** until your next
+prompt). Any program in that session could write the state file, so it only
+changes what is shown and whether attention is raised: it never marks a task
+done, never answers a prompt, and never sends anything. Nothing is shown before
+the first report, or when hooks do not run, for example when Claude Code hooks
+are disabled in your or your organization's settings or Claude Code runs with
+`--bare`. Agentica never shows **idle**. The setting is saved only on this
+machine. Verified on Linux with Claude Code 2.1.328; Windows and macOS are not
+yet verified.
 
 ## Changes review
 

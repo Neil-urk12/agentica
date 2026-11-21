@@ -143,6 +143,10 @@ export const BUILTIN_AGENT_LABELS: Record<BuiltinAgentId, string> = {
   droid: "Droid",
   kimi: "Kimi Code",
 };
+// Keep in sync with DECLARED_STATE_AGENTS in packages/agent-runtime/src/sessions/agents.rs.
+/** Built-ins that can report declared state through per-process hooks. */
+export const DECLARED_STATE_AGENT_IDS = ["claude"] as const;
+const DeclaredStateAgentId = z.enum(DECLARED_STATE_AGENT_IDS);
 // Custom agent limits shared with packages/agent-runtime/src/sessions/agents.rs.
 export const AGENT_LIMITS = {
   customAgents: 32,
@@ -995,6 +999,11 @@ const ParamSchemas = {
     ...CustomAgentDefinition,
   }),
   "agents.custom.remove": z.strictObject({ agentId: IdSchema }),
+  "agents.state.get": z.strictObject({}),
+  "agents.state.set": z.strictObject({
+    agentId: DeclaredStateAgentId,
+    enabled: z.boolean(),
+  }),
 } as const;
 
 export type RuntimeMethod = "runtime.ping" | keyof typeof ParamSchemas;
@@ -1331,6 +1340,12 @@ export const ResultSchemas = {
   "agents.custom.create": z.strictObject({ agent: CustomAgentSchema }),
   "agents.custom.update": z.strictObject({ agent: CustomAgentSchema }),
   "agents.custom.remove": z.strictObject({}),
+  "agents.state.get": z.strictObject({
+    enabled: z.array(DeclaredStateAgentId),
+  }),
+  "agents.state.set": z.strictObject({
+    enabled: z.array(DeclaredStateAgentId),
+  }),
 } as const satisfies Record<RuntimeMethod, z.ZodType>;
 
 export type RuntimeResult<M extends RuntimeMethod> = z.infer<
@@ -1459,12 +1474,16 @@ export const SessionAttentionSchema = z
     raised: z.boolean(),
     count: z.number().int().min(0).max(0xffffffff),
     sequence: Sequence,
-    kind: z.enum(["bell", "notification", "exited", "failed"]).nullable(),
+    kind: z
+      .enum(["bell", "notification", "declared", "exited", "failed"])
+      .nullable(),
     at: Sequence.nullable(),
     message: z
       .string()
       .refine((text) => [...text].length <= 256 && !/[\p{Cc}]/u.test(text))
       .nullable(),
+    // Only for `declared`: the state the agent's hook reported.
+    declaredState: z.enum(["waiting", "finished"]).nullable(),
   })
   .refine((value) =>
     value.raised
@@ -1474,11 +1493,15 @@ export const SessionAttentionSchema = z
         value.at !== null &&
         (value.kind === "notification"
           ? value.message !== null
-          : value.message === null)
+          : value.message === null) &&
+        (value.kind === "declared"
+          ? value.declaredState !== null
+          : value.declaredState === null)
       : value.count === 0 &&
         value.kind === null &&
         value.at === null &&
-        value.message === null,
+        value.message === null &&
+        value.declaredState === null,
   );
 export const SessionStatusSchema = z.strictObject({
   backendId: IdSchema,
@@ -1500,6 +1523,13 @@ export const SessionStatusSchema = z.strictObject({
   projectId: IdSchema.nullable(),
   attention: SessionAttentionSchema,
   lastOutputAt: z.number().int().nonnegative().nullable(),
+  // What the agent's own hooks last reported; null unless running.
+  declaredState: z
+    .strictObject({
+      state: z.enum(["working", "waiting", "finished"]),
+      at: z.number().int().nonnegative(),
+    })
+    .nullable(),
   ...TerminalDimensions,
 });
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
@@ -1516,6 +1546,8 @@ export const AgentCapabilitySchema = z.strictObject({
   reason: z.string().nullable(),
   // Present only for agents whose notification setup has been verified.
   setupHint: z.enum(["codex"]).nullable(),
+  // Null when the agent cannot report declared state.
+  declaredState: z.strictObject({ enabled: z.boolean() }).nullable(),
 });
 export type AgentCapability = z.infer<typeof AgentCapabilitySchema>;
 const StatusResult = z.strictObject({ status: SessionStatusSchema });
